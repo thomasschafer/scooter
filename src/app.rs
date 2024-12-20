@@ -415,8 +415,19 @@ impl App {
         self.current_screen = Screen::SearchFields;
     }
 
+    pub fn cancel_replacement(&mut self) {
+        if let Screen::PerformingReplacement(PerformingReplacementState {
+            handle: Some(ref mut handle),
+            ..
+        }) = &mut self.current_screen
+        {
+            handle.abort()
+        }
+    }
+
     pub fn reset(&mut self) {
         self.cancel_search();
+        self.cancel_replacement();
         *self = Self::new(
             Some(self.directory.clone()),
             self.include_hidden,
@@ -669,6 +680,7 @@ impl App {
             (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL)
                 if !self.search_fields.show_error_popup =>
             {
+                self.reset();
                 return Ok(EventHandlingResult {
                     exit: true,
                     rerender: true,
@@ -689,7 +701,7 @@ impl App {
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
                 self.handle_key_confirmation(key)
             }
-            Screen::PerformingReplacement(_) => false, // TODO: handle keys here
+            Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
         };
         Ok(EventHandlingResult {
