@@ -848,32 +848,37 @@ impl App {
         let mut line_map: HashMap<_, _> =
             HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
 
-        let input = File::open(file_path.clone()).await?;
-        let buffered = BufReader::new(input);
-
         let temp_file_path = file_path.with_extension("tmp");
-        let output = File::create(temp_file_path.clone()).await?;
-        let mut writer = BufWriter::new(output);
 
-        let mut lines = buffered.lines();
-        let mut index = 0;
-        while let Some(mut line) = lines.next_line().await? {
-            if let Some(res) = line_map.get_mut(&(index + 1)) {
-                if line == res.line {
-                    line.clone_from(&res.replacement);
-                    res.replace_result = Some(ReplaceResult::Success);
-                } else {
-                    res.replace_result = Some(ReplaceResult::Error(
-                        "File changed since last search".to_owned(),
-                    ));
+        // Scope the file operations so they're closed before rename
+        {
+            let input = File::open(&file_path).await?;
+            let buffered = BufReader::new(input);
+
+            let output = File::create(temp_file_path.clone()).await?;
+            let mut writer = BufWriter::new(output);
+
+            let mut lines = buffered.lines();
+            let mut index = 0;
+            while let Some(mut line) = lines.next_line().await? {
+                if let Some(res) = line_map.get_mut(&(index + 1)) {
+                    if line == res.line {
+                        line.clone_from(&res.replacement);
+                        res.replace_result = Some(ReplaceResult::Success);
+                    } else {
+                        res.replace_result = Some(ReplaceResult::Error(
+                            "File changed since last search".to_owned(),
+                        ));
+                    }
                 }
+                line.push('\n');
+                writer.write_all(line.as_bytes()).await?;
+                index += 1;
             }
-            writer.write_all(line.as_bytes()).await?;
-            writer.write_all(&[0xA]).await?;
-            index += 1;
+
+            writer.flush().await?;
         }
 
-        writer.flush().await?;
         fs::rename(temp_file_path, file_path).await?;
         Ok(())
     }
