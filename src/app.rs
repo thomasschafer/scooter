@@ -1,7 +1,6 @@
 use anyhow::Error;
 use fancy_regex::Regex as FancyRegex;
 use ignore::WalkState;
-use itertools::Itertools;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -9,12 +8,14 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use regex::Regex;
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Write},
     mem,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
+};
+use tokio::{
+    fs::{self, File},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
 };
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -87,10 +88,10 @@ impl ReplaceState {
             (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.scroll_replacement_errors_up();
             }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO
-            (KeyCode::PageDown, _) => {}                      // TODO
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO
-            (KeyCode::PageUp, _) => {}                        // TODO
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
+            (KeyCode::PageDown, _) => {}                      // TODO: scroll down a full page
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
+            (KeyCode::PageUp, _) => {}                        // TODO: scroll up a full page
             (KeyCode::Enter | KeyCode::Char('q'), _) => {
                 exit = true;
             }
@@ -412,7 +413,6 @@ impl App {
         {
             handle.abort();
         }
-        self.current_screen = Screen::SearchFields;
     }
 
     pub fn cancel_replacement(&mut self) {
@@ -532,19 +532,19 @@ impl App {
             }
         }
     }
+
     pub fn perform_replacement(
         mut search_state: SearchState,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            for (path, results) in &search_state
-                .results
-                .iter_mut()
-                .filter(|res| res.included)
-                .chunk_by(|res| res.path.clone())
-            {
-                let mut results = results.collect::<Vec<_>>();
-                if let Err(file_err) = Self::replace_in_file(path, &mut results) {
+            let mut path_groups: HashMap<PathBuf, Vec<&mut SearchResult>> = HashMap::new();
+            for res in search_state.results.iter_mut().filter(|res| res.included) {
+                path_groups.entry(res.path.clone()).or_default().push(res);
+            }
+
+            for (path, mut results) in path_groups {
+                if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
                     results.iter_mut().for_each(|res| {
                         res.replace_result = Some(ReplaceResult::Error(file_err.to_string()))
                     });
@@ -642,7 +642,6 @@ impl App {
                     .move_selected_down();
             }
             (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                // TODO: need to fix issue where screen gets out of sync with state
                 self.current_screen.search_results_mut().move_selected_up();
             }
             (KeyCode::Char(' '), _) => {
@@ -765,9 +764,10 @@ impl App {
         parsed_fields: ParsedFields,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> JoinHandle<()> {
-        let walker = parsed_fields.build_walker();
-
         tokio::spawn(async move {
+            let walker = parsed_fields.build_walker();
+
+            // TODO: this isn't immediately cancelled when we abort the thread
             walker.run(|| {
                 let parsed_fields = parsed_fields.clone();
 
@@ -841,22 +841,23 @@ impl App {
         }
     }
 
-    fn replace_in_file(
+    async fn replace_in_file(
         file_path: PathBuf,
         results: &mut [&mut SearchResult],
     ) -> anyhow::Result<()> {
         let mut line_map: HashMap<_, _> =
             HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
 
-        let input = File::open(file_path.clone())?;
+        let input = File::open(file_path.clone()).await?;
         let buffered = BufReader::new(input);
 
         let temp_file_path = file_path.with_extension("tmp");
-        let output = File::create(temp_file_path.clone())?;
+        let output = File::create(temp_file_path.clone()).await?;
         let mut writer = BufWriter::new(output);
 
-        for (index, line) in buffered.lines().enumerate() {
-            let mut line = line?;
+        let mut lines = buffered.lines();
+        let mut index = 0;
+        while let Some(mut line) = lines.next_line().await? {
             if let Some(res) = line_map.get_mut(&(index + 1)) {
                 if line == res.line {
                     line.clone_from(&res.replacement);
@@ -867,11 +868,13 @@ impl App {
                     ));
                 }
             }
-            writeln!(writer, "{}", line)?;
+            writer.write_all(line.as_bytes()).await?;
+            writer.write_all(&[0xA]).await?;
+            index += 1;
         }
 
-        writer.flush()?;
-        fs::rename(temp_file_path, file_path)?;
+        writer.flush().await?;
+        fs::rename(temp_file_path, file_path).await?;
         Ok(())
     }
 
