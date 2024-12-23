@@ -31,10 +31,10 @@ serde_json = "1.0.133"
 serial_test = "3.2.0"
 similar = "2.6.0"
 simple-log = "2.1.1"
+tempfile = "3.14.0"
 tokio = { version = "1.41.1", features = ["full"] }
 
 [dev-dependencies]
-tempfile = "3.14.0"
 rand = "0.8.5"
 
 [lib]

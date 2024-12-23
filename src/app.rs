@@ -13,11 +13,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tempfile::NamedTempFile;
 use tokio::{
-    fs::{self, File},
+    fs::File,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-};
-use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
 };
@@ -848,14 +847,14 @@ impl App {
         let mut line_map: HashMap<_, _> =
             HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
 
-        let temp_file_path = file_path.with_extension("tmp");
+        let temp_output_file = NamedTempFile::new()?;
 
         // Scope the file operations so they're closed before rename
         {
             let input = File::open(&file_path).await?;
             let buffered = BufReader::new(input);
 
-            let output = File::create(temp_file_path.clone()).await?;
+            let output = File::create(&temp_output_file.path()).await?;
             let mut writer = BufWriter::new(output);
 
             let mut lines = buffered.lines();
@@ -879,7 +878,7 @@ impl App {
             writer.flush().await?;
         }
 
-        fs::rename(temp_file_path, file_path).await?;
+        temp_output_file.persist(file_path)?;
         Ok(())
     }
 
