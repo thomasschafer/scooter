@@ -12,8 +12,8 @@ keywords = ["cli", "find", "search", "replace"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-anyhow = "1.0.93"
-clap = { version = "4.5.21", features = ["derive"] }
+anyhow = "1.0.95"
+clap = { version = "4.5.23", features = ["derive"] }
 content_inspector = "0.2.4"
 crossterm = { version = "0.27", features = ["event-stream"] }
 etcetera = "0.8.0"
@@ -28,7 +28,7 @@ regex = "1.11.1"
 similar = "2.6.0"
 simple-log = "2.1.1"
 tempfile = "3.14.0"
-tokio = { version = "1.41.1", features = ["full"] }
+tokio = { version = "1.42.0", features = ["full"] }
 
 [dev-dependencies]
 rand = "0.8.5"
