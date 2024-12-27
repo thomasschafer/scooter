@@ -3,12 +3,10 @@ use fancy_regex::Regex as FancyRegex;
 use ignore::{WalkBuilder, WalkParallel};
 use log::warn;
 use regex::Regex;
-use std::{
-    fs::File,
-    io::{BufRead, BufReader},
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::{fs::File, io::BufReader};
 
 use crate::{
     event::{BackgroundProcessingEvent, SearchResult},
@@ -53,7 +51,7 @@ impl ParsedFields {
         }
     }
 
-    pub fn handle_path(&self, path: &Path) {
+    pub async fn handle_path(&self, path: &Path) {
         if let Some(ref p) = self.path_pattern {
             let relative_path = relative_path_from(&self.root_dir, path);
             let relative_path = relative_path.as_str();
@@ -68,21 +66,23 @@ impl ParsedFields {
             }
         }
 
-        match File::open(path) {
+        match File::open(path).await {
             Ok(file) => {
                 let reader = BufReader::new(file);
 
-                for (line_number, line) in reader.lines().enumerate() {
-                    match line {
-                        Ok(line) => {
+                let mut lines = reader.lines();
+                let mut line_number = 0;
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            if let ContentType::BINARY = inspect(line.as_bytes()) {
+                                continue;
+                            }
                             if let Some(result) = self.replacement_if_match(
                                 path.to_path_buf(),
                                 line.clone(),
                                 line_number,
                             ) {
-                                if let ContentType::BINARY = inspect(line.as_bytes()) {
-                                    continue;
-                                }
                                 let send_result = self
                                     .background_processing_sender
                                     .send(BackgroundProcessingEvent::AddSearchResult(result));
@@ -92,10 +92,12 @@ impl ParsedFields {
                                 }
                             }
                         }
+                        Ok(None) => break,
                         Err(err) => {
                             warn!("Error retrieving line {} of {:?}: {err}", line_number, path);
                         }
                     }
+                    line_number += 1;
                 }
             }
             Err(err) => {

@@ -1,6 +1,6 @@
 use anyhow::Error;
 use fancy_regex::Regex as FancyRegex;
-use ignore::WalkState;
+use ignore::{DirEntry, WalkState};
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -764,33 +764,34 @@ impl App {
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let walker = parsed_fields.build_walker();
 
-            // TODO: this isn't immediately cancelled when we abort the thread
-            walker.run(|| {
-                let parsed_fields = parsed_fields.clone();
+            tokio::spawn(async move {
+                let tx = tx;
+                walker.run(|| {
+                    let tx = tx.clone();
+                    Box::new(move |result| {
+                        let entry = match result {
+                            Ok(entry) => entry,
+                            Err(_) => return WalkState::Continue,
+                        };
 
-                Box::new(move |entry| {
-                    let entry = match entry {
-                        Ok(entry) => entry,
-                        Err(_) => return WalkState::Continue,
-                    };
+                        let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
+                        if is_file && !Self::ignore_file(entry.path()) {
+                            let _ = tx.send(entry.path().to_owned());
+                        }
 
-                    if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                        return WalkState::Continue;
-                    };
-
-                    if Self::ignore_file(entry.path()) {
-                        return WalkState::Continue;
-                    }
-
-                    parsed_fields.handle_path(entry.path());
-
-                    WalkState::Continue
-                })
+                        WalkState::Continue
+                    })
+                });
             });
 
-            // Ignore error: we may have gone back to the previous screen
+            while let Some(path) = rx.recv().await {
+                parsed_fields.handle_path(&path).await;
+            }
+
+            // Ignore error: likely have gone back to previous screen
             let _ = background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted);
         })
     }
@@ -852,15 +853,15 @@ impl App {
         // Scope the file operations so they're closed before rename
         {
             let input = File::open(&file_path).await?;
-            let buffered = BufReader::new(input);
+            let reader = BufReader::new(input);
 
             let output = File::create(&temp_output_file.path()).await?;
             let mut writer = BufWriter::new(output);
 
-            let mut lines = buffered.lines();
-            let mut index = 0;
+            let mut lines = reader.lines();
+            let mut line_number = 0;
             while let Some(mut line) = lines.next_line().await? {
-                if let Some(res) = line_map.get_mut(&(index + 1)) {
+                if let Some(res) = line_map.get_mut(&(line_number + 1)) {
                     if line == res.line {
                         line.clone_from(&res.replacement);
                         res.replace_result = Some(ReplaceResult::Success);
@@ -872,7 +873,7 @@ impl App {
                 }
                 line.push('\n');
                 writer.write_all(line.as_bytes()).await?;
-                index += 1;
+                line_number += 1;
             }
 
             writer.flush().await?;
