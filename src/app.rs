@@ -1,6 +1,7 @@
 use anyhow::Error;
 use fancy_regex::Regex as FancyRegex;
-use ignore::{DirEntry, WalkState};
+use ignore::WalkState;
+use log::warn;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -779,7 +780,10 @@ impl App {
 
                         let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
                         if is_file && !Self::ignore_file(entry.path()) {
-                            let _ = tx.send(entry.path().to_owned());
+                            let send_res = tx.send(entry.path().to_owned());
+                            if send_res.is_err() {
+                                return WalkState::Quit;
+                            }
                         }
 
                         WalkState::Continue
@@ -791,8 +795,15 @@ impl App {
                 parsed_fields.handle_path(&path).await;
             }
 
-            // Ignore error: likely have gone back to previous screen
-            let _ = background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted);
+            if let Err(err) =
+                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
+            {
+                // Log and ignore error: likely have gone back to previous screen
+                warn!(
+                    "Found error when attempting to send SearchCompleted event: {}",
+                    err
+                );
+            }
         })
     }
 
