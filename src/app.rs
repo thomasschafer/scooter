@@ -1,12 +1,14 @@
 use anyhow::Error;
 use fancy_regex::Regex as FancyRegex;
 use ignore::WalkState;
-use log::warn;
+use log::{warn, LevelFilter};
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use regex::Regex;
+use std::io;
 use std::{
     collections::HashMap,
     mem,
@@ -23,11 +25,15 @@ use tokio::{
 };
 
 use crate::{
-    event::{AppEvent, BackgroundProcessingEvent, ReplaceResult, SearchResult},
+    event::{
+        AppEvent, BackgroundProcessingEvent, Event, EventHandler, EventHandlingResult,
+        ReplaceResult, SearchResult,
+    },
     fields::{CheckboxField, Field, FieldError, TextField},
+    logging::setup_logging,
     parsed_fields::{ParsedFields, SearchType},
-    utils::relative_path_from,
-    EventHandlingResult,
+    tui::Tui,
+    utils::{relative_path_from, validate_directory},
 };
 
 #[derive(Debug, Eq, PartialEq)]
@@ -915,12 +921,96 @@ impl App {
     }
 }
 
+pub struct AppConfig {
+    pub directory: Option<String>,
+    pub hidden: bool,
+    pub advanced_regex: bool,
+    pub log_level: LevelFilter,
+}
+
+pub struct AppRunner {
+    app: App,
+    tui: Tui<CrosstermBackend<io::Stdout>>,
+}
+
+impl AppRunner {
+    pub fn new(config: AppConfig) -> anyhow::Result<Self> {
+        setup_logging(config.log_level)?;
+
+        let directory = match config.directory {
+            None => None,
+            Some(d) => Some(validate_directory(&d)?),
+        };
+
+        let event_handler = EventHandler::new();
+        let app = App::new(
+            directory,
+            config.hidden,
+            config.advanced_regex,
+            event_handler.app_event_sender.clone(),
+        );
+
+        let backend = CrosstermBackend::new(io::stdout());
+        let terminal = Terminal::new(backend)?;
+        let tui = Tui::new(terminal, event_handler);
+
+        Ok(Self { app, tui })
+    }
+
+    pub fn init(&mut self) -> anyhow::Result<()> {
+        self.tui.init()?;
+        self.tui.draw(&mut self.app)?;
+        Ok(())
+    }
+
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<()> {
+        loop {
+            let EventHandlingResult { exit, rerender } = tokio::select! {
+                Some(event) = self.tui.events.receiver.recv() => {
+                    match event {
+                        Event::Key(key_event) => self.app.handle_key_events(&key_event)?,
+                        Event::App(app_event) => self.app.handle_app_event(app_event).await,
+                        Event::Mouse(_) | Event::Resize(_, _) => EventHandlingResult {
+                            exit: false,
+                            rerender: true,
+                        },
+                    }
+                }
+                Some(event) = self.app.background_processing_recv() => {
+                    self.app.handle_background_processing_event(event)}
+            };
+
+            if rerender {
+                self.tui.draw(&mut self.app)?;
+            }
+
+            if exit {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn cleanup(&mut self) -> anyhow::Result<()> {
+        self.tui.exit()
+    }
+}
+
+pub async fn run_app(config: AppConfig) -> anyhow::Result<()> {
+    let mut runner = AppRunner::new(config)?;
+    runner.init()?;
+    runner.run_event_loop().await?;
+    runner.cleanup()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::EventHandler;
+    use crate::event::EventHandler;
 
     fn random_num() -> usize {
         let mut rng = rand::thread_rng();

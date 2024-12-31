@@ -1,12 +1,11 @@
-use crate::app::App;
-use crate::event::EventHandler;
-use crate::ui;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::io;
 use std::panic;
+
+use crate::{app::App, event::EventHandler, ui};
 
 #[derive(Debug)]
 pub struct Tui<B: Backend> {
