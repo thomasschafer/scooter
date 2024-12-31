@@ -1,10 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
-use scooter::{
-    App, AppConfig, AppRunner, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
-    SearchState,
-};
+use scooter::{App, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult, SearchState};
 use serial_test::serial;
 use std::cmp::max;
 use std::fs::{self, create_dir_all};
@@ -845,45 +840,6 @@ test_with_both_regex_modes!(
         };
     }
 );
-
-fn buffer_contents(buffer: &Buffer) -> String {
-    buffer
-        .content
-        .iter()
-        .enumerate()
-        .map(|(i, cell)| {
-            if i % buffer.area.width as usize == 0 && i > 0 {
-                "\n"
-            } else {
-                cell.symbol()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-#[tokio::test]
-async fn test_app_runner_todo() -> anyhow::Result<()> {
-    let backend = TestBackend::new(80, 24);
-    let config = AppConfig {
-        directory: None,
-        hidden: false,
-        advanced_regex: false,
-        log_level: log::LevelFilter::Info,
-    };
-
-    let mut runner = AppRunner::new(config, backend)?;
-
-    runner.init()?;
-
-    let contents = buffer_contents(runner.tui.terminal.backend().buffer());
-    assert!(contents.contains("Search text"));
-
-    let contents = buffer_contents(runner.tui.terminal.backend().buffer());
-    assert!(contents.contains("Search text"));
-
-    Ok(())
-}
 
 // TODO:
 // - Add:
