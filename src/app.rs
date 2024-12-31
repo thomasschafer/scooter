@@ -1,14 +1,13 @@
 use anyhow::Error;
+use crossterm::event::KeyEvent;
 use fancy_regex::Regex as FancyRegex;
 use ignore::WalkState;
-use log::{warn, LevelFilter};
+use log::warn;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
-use std::io;
 use std::{
     collections::HashMap,
     mem,
@@ -25,16 +24,45 @@ use tokio::{
 };
 
 use crate::{
-    event::{
-        AppEvent, BackgroundProcessingEvent, Event, EventHandler, EventHandlingResult,
-        ReplaceResult, SearchResult,
-    },
     fields::{CheckboxField, Field, FieldError, TextField},
-    logging::setup_logging,
     parsed_fields::{ParsedFields, SearchType},
-    tui::Tui,
-    utils::{relative_path_from, validate_directory},
+    utils::relative_path_from,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplaceResult {
+    Success,
+    Error(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchResult {
+    pub path: PathBuf,
+    pub line_number: usize,
+    pub line: String,
+    pub replacement: String,
+    pub included: bool,
+    pub replace_result: Option<ReplaceResult>,
+}
+
+#[derive(Debug)]
+pub enum AppEvent {
+    Rerender,
+    PerformSearch,
+}
+
+#[derive(Debug)]
+pub enum BackgroundProcessingEvent {
+    AddSearchResult(SearchResult),
+    SearchCompleted,
+    ReplacementCompleted(ReplaceState),
+}
+
+#[derive(Debug)]
+pub struct EventHandlingResult {
+    pub exit: bool,
+    pub rerender: bool,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SearchState {
@@ -398,7 +426,7 @@ pub struct App {
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
 impl App {
-    pub fn new(
+    fn new(
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
@@ -419,6 +447,16 @@ impl App {
 
             app_event_sender,
         }
+    }
+
+    pub fn new_with_receiver(
+        directory: Option<PathBuf>,
+        include_hidden: bool,
+        advanced_regex: bool,
+    ) -> (Self, UnboundedReceiver<AppEvent>) {
+        let (app_event_sender, app_event_receiver) = mpsc::unbounded_channel();
+        let app = Self::new(directory, include_hidden, advanced_regex, app_event_sender);
+        (app, app_event_receiver)
     }
 
     pub fn cancel_search(&mut self) {
@@ -689,7 +727,7 @@ impl App {
         false
     }
 
-    pub fn handle_key_events(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
+    pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
         if key.kind == KeyEventKind::Release {
             return Ok(EventHandlingResult {
                 exit: false,
@@ -921,96 +959,11 @@ impl App {
     }
 }
 
-pub struct AppConfig {
-    pub directory: Option<String>,
-    pub hidden: bool,
-    pub advanced_regex: bool,
-    pub log_level: LevelFilter,
-}
-
-pub struct AppRunner {
-    app: App,
-    tui: Tui<CrosstermBackend<io::Stdout>>,
-}
-
-impl AppRunner {
-    pub fn new(config: AppConfig) -> anyhow::Result<Self> {
-        setup_logging(config.log_level)?;
-
-        let directory = match config.directory {
-            None => None,
-            Some(d) => Some(validate_directory(&d)?),
-        };
-
-        let event_handler = EventHandler::new();
-        let app = App::new(
-            directory,
-            config.hidden,
-            config.advanced_regex,
-            event_handler.app_event_sender.clone(),
-        );
-
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
-        let tui = Tui::new(terminal, event_handler);
-
-        Ok(Self { app, tui })
-    }
-
-    pub fn init(&mut self) -> anyhow::Result<()> {
-        self.tui.init()?;
-        self.tui.draw(&mut self.app)?;
-        Ok(())
-    }
-
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<()> {
-        loop {
-            let EventHandlingResult { exit, rerender } = tokio::select! {
-                Some(event) = self.tui.events.receiver.recv() => {
-                    match event {
-                        Event::Key(key_event) => self.app.handle_key_events(&key_event)?,
-                        Event::App(app_event) => self.app.handle_app_event(app_event).await,
-                        Event::Mouse(_) | Event::Resize(_, _) => EventHandlingResult {
-                            exit: false,
-                            rerender: true,
-                        },
-                    }
-                }
-                Some(event) = self.app.background_processing_recv() => {
-                    self.app.handle_background_processing_event(event)}
-            };
-
-            if rerender {
-                self.tui.draw(&mut self.app)?;
-            }
-
-            if exit {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn cleanup(&mut self) -> anyhow::Result<()> {
-        self.tui.exit()
-    }
-}
-
-pub async fn run_app(config: AppConfig) -> anyhow::Result<()> {
-    let mut runner = AppRunner::new(config)?;
-    runner.init()?;
-    runner.run_event_loop().await?;
-    runner.cleanup()?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::event::EventHandler;
 
     fn random_num() -> usize {
         let mut rng = rand::thread_rng();
@@ -1142,8 +1095,8 @@ mod tests {
     }
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
-        let event_handler = EventHandler::new();
-        let mut app = App::new(None, false, false, event_handler.app_event_sender);
+        let (app_event_sender, _) = mpsc::unbounded_channel();
+        let mut app = App::new(None, false, false, app_event_sender);
         app.current_screen = Screen::SearchComplete(SearchState {
             results,
             selected: 0,

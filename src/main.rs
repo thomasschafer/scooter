@@ -1,10 +1,11 @@
-use app::{run_app, AppConfig};
+use app_runner::{run_app, AppConfig};
 use clap::Parser;
 use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
 use std::str::FromStr;
 
 mod app;
+mod app_runner;
 mod event;
 mod fields;
 mod logging;

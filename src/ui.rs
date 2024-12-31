@@ -11,9 +11,9 @@ use std::{cmp::min, iter};
 
 use crate::{
     app::{
-        App, FieldName, ReplaceState, Screen, SearchField, SearchInProgressState, NUM_SEARCH_FIELDS,
+        App, FieldName, ReplaceResult, ReplaceState, Screen, SearchField, SearchInProgressState,
+        SearchResult, NUM_SEARCH_FIELDS,
     },
-    event::{ReplaceResult, SearchResult},
     utils::{first_chars, group_by},
 };
 

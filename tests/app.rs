@@ -1,6 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use scooter::{
-    App, EventHandler, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult, SearchState,
+    App, AppConfig, AppRunner, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
+    SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -121,8 +124,7 @@ async fn test_replace_state() {
 
 #[tokio::test]
 async fn test_app_reset() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender);
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -137,8 +139,7 @@ async fn test_app_reset() {
 
 #[tokio::test]
 async fn test_back_from_results() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender);
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchComplete(SearchState {
         results: vec![],
         selected: 0,
@@ -146,7 +147,7 @@ async fn test_back_from_results() {
     app.search_fields = SearchFields::with_values("foo", "bar", true, "pattern");
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Char('o'),
             modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
@@ -164,8 +165,7 @@ async fn test_back_from_results() {
 // TODO: replace this (and other tests?) with end-to-end tests
 #[tokio::test]
 async fn test_error_popup() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender.clone());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
     app.search_fields =
         SearchFields::with_values("search invalid regex(", "replacement", false, "");
@@ -176,7 +176,7 @@ async fn test_error_popup() {
     assert!(app.search_fields.show_error_popup);
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Esc,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
@@ -187,7 +187,7 @@ async fn test_error_popup() {
     assert!(!app.search_fields.show_error_popup);
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Esc,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
@@ -316,13 +316,8 @@ macro_rules! wait_for_screen {
 }
 
 fn setup_app(temp_dir: &TempDir, search_fields: SearchFields, include_hidden: bool) -> App {
-    let events = EventHandler::new();
-    let mut app = App::new(
-        Some(temp_dir.path().to_path_buf()),
-        include_hidden,
-        false,
-        events.app_event_sender,
-    );
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(Some(temp_dir.path().to_path_buf()), include_hidden, false);
     app.search_fields = search_fields;
     app
 }
@@ -850,6 +845,45 @@ test_with_both_regex_modes!(
         };
     }
 );
+
+fn buffer_contents(buffer: &Buffer) -> String {
+    buffer
+        .content
+        .iter()
+        .enumerate()
+        .map(|(i, cell)| {
+            if i % buffer.area.width as usize == 0 && i > 0 {
+                "\n"
+            } else {
+                cell.symbol()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+#[tokio::test]
+async fn test_app_runner_todo() -> anyhow::Result<()> {
+    let backend = TestBackend::new(80, 24);
+    let config = AppConfig {
+        directory: None,
+        hidden: false,
+        advanced_regex: false,
+        log_level: log::LevelFilter::Info,
+    };
+
+    let mut runner = AppRunner::new(config, backend)?;
+
+    runner.init()?;
+
+    let contents = buffer_contents(runner.tui.terminal.backend().buffer());
+    assert!(contents.contains("Search text"));
+
+    let contents = buffer_contents(runner.tui.terminal.backend().buffer());
+    assert!(contents.contains("Search text"));
+
+    Ok(())
+}
 
 // TODO:
 // - Add:
