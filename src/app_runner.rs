@@ -3,10 +3,11 @@ use futures::Stream;
 use futures::StreamExt;
 use log::LevelFilter;
 use ratatui::backend::Backend;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use std::pin::Pin;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -17,33 +18,6 @@ use crate::{
     tui::Tui,
 };
 
-pub trait EventStream:
-    Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin
-{
-}
-
-pub struct CrosstermEventStream(event::EventStream);
-
-impl CrosstermEventStream {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self(event::EventStream::new())
-    }
-}
-
-impl Stream for CrosstermEventStream {
-    type Item = Result<CrosstermEvent, std::io::Error>;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        Pin::new(&mut self.0).poll_next(cx)
-    }
-}
-
-impl EventStream for CrosstermEventStream {}
-
 pub struct AppConfig {
     pub directory: Option<String>,
     pub hidden: bool,
@@ -51,13 +25,36 @@ pub struct AppConfig {
     pub log_level: LevelFilter,
 }
 
-pub struct AppRunner<B: Backend, E: EventStream> {
-    pub app: App,
-    app_event_receiver: UnboundedReceiver<AppEvent>,
-    pub tui: Tui<B>,
-    pub event_stream: E,
+pub trait EventStream:
+    Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin
+{
+}
+impl<T: Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin> EventStream for T {}
 
+pub type CrosstermEventStream = event::EventStream;
+
+pub struct AppRunner<B: Backend, E: EventStream> {
+    app: App,
+    app_event_receiver: UnboundedReceiver<AppEvent>,
+    tui: Tui<B>,
+    event_stream: E,
     buffer_snapshot_sender: Option<UnboundedSender<String>>,
+}
+
+pub trait BufferProvider {
+    fn get_buffer(&mut self) -> &Buffer;
+}
+
+impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+    fn get_buffer(&mut self) -> &Buffer {
+        self.tui.terminal.current_buffer_mut()
+    }
+}
+
+impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
+    fn get_buffer(&mut self) -> &Buffer {
+        self.tui.terminal.backend().buffer()
+    }
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
@@ -68,7 +65,10 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     }
 }
 
-impl<B: Backend + 'static, E: EventStream> AppRunner<B, E> {
+impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
+where
+    Self: BufferProvider,
+{
     pub fn new(config: AppConfig, backend: B, event_stream: E) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
@@ -102,23 +102,13 @@ impl<B: Backend + 'static, E: EventStream> AppRunner<B, E> {
     pub fn init(&mut self) -> anyhow::Result<()> {
         self.tui.init()?;
         self.tui.draw(&mut self.app)?;
-
-        if self.buffer_snapshot_sender.is_some() {
-            self.send_snapshot();
-        }
+        self.send_snapshot();
 
         Ok(())
     }
 
-    fn send_snapshot(&mut self) {
-        let contents = self.buffer_contents();
-        if let Some(sender) = &self.buffer_snapshot_sender {
-            let _ = sender.send(contents);
-        }
-    }
-
     fn buffer_contents(&mut self) -> String {
-        let buffer = self.tui.terminal.current_buffer_mut();
+        let buffer = self.get_buffer();
         buffer
             .content
             .iter()
@@ -132,6 +122,17 @@ impl<B: Backend + 'static, E: EventStream> AppRunner<B, E> {
             })
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    fn send_snapshot(&mut self) {
+        if self.buffer_snapshot_sender.is_none() {
+            return;
+        }
+
+        let contents = self.buffer_contents();
+        if let Some(sender) = &self.buffer_snapshot_sender {
+            let _ = sender.send(contents);
+        }
     }
 
     pub async fn run_event_loop(&mut self) -> anyhow::Result<()> {
@@ -152,21 +153,20 @@ impl<B: Backend + 'static, E: EventStream> AppRunner<B, E> {
                         },
                     }
                 }
-                Some(app_event) = self.app_event_receiver.recv() => {
-                    self.app.handle_app_event(app_event).await
+                Some(event) = self.app_event_receiver.recv() => {
+                    self.app.handle_app_event(event).await
                 }
                 Some(event) = self.app.background_processing_recv() => {
                     self.app.handle_background_processing_event(event)
                 }
-                else => break,
+                else => {
+                    break;
+                }
             };
 
             if rerender {
                 self.tui.draw(&mut self.app)?;
-
-                if self.buffer_snapshot_sender.is_some() {
-                    self.send_snapshot();
-                }
+                self.send_snapshot();
             }
 
             if exit {
