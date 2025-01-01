@@ -101,9 +101,14 @@ where
 
     pub fn init(&mut self) -> anyhow::Result<()> {
         self.tui.init()?;
+        self.draw()?;
+
+        Ok(())
+    }
+
+    pub fn draw(&mut self) -> anyhow::Result<()> {
         self.tui.draw(&mut self.app)?;
         self.send_snapshot();
-
         Ok(())
     }
 
@@ -137,20 +142,14 @@ where
 
     pub async fn run_event_loop(&mut self) -> anyhow::Result<()> {
         loop {
-            let EventHandlingResult { exit, rerender } = tokio::select! {
+            let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
                     match event {
                         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                             self.app.handle_key_event(&key)?
                         },
-                        CrosstermEvent::Resize(_, _) => EventHandlingResult {
-                            exit: false,
-                            rerender: true,
-                        },
-                        _ => EventHandlingResult {
-                            exit: false,
-                            rerender: false,
-                        },
+                        CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
+                        _ => EventHandlingResult::None,
                     }
                 }
                 Some(event) = self.app_event_receiver.recv() => {
@@ -164,13 +163,10 @@ where
                 }
             };
 
-            if rerender {
-                self.tui.draw(&mut self.app)?;
-                self.send_snapshot();
-            }
-
-            if exit {
-                break;
+            match event_handling_result {
+                EventHandlingResult::Rerender => self.draw()?,
+                EventHandlingResult::Exit => break,
+                EventHandlingResult::None => {}
             }
         }
 

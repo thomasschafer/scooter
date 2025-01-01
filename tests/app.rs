@@ -1,5 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use scooter::{App, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult, SearchState};
+use scooter::{
+    App, EventHandlingResult, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
+    SearchState,
+};
 use serial_test::serial;
 use std::cmp::max;
 use std::fs::{self, create_dir_all};
@@ -149,7 +152,7 @@ async fn test_back_from_results() {
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
     assert!(app.search_fields.fixed_strings().checked);
@@ -166,7 +169,7 @@ async fn test_error_popup() {
         SearchFields::with_values("search invalid regex(", "replacement", false, "");
 
     let res = app.perform_search_if_valid();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert!(matches!(app.current_screen, Screen::SearchFields));
     assert!(app.search_fields.show_error_popup);
 
@@ -178,7 +181,7 @@ async fn test_error_popup() {
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert!(!app.search_fields.show_error_popup);
 
     let res = app
@@ -189,7 +192,7 @@ async fn test_error_popup() {
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(res.exit);
+    assert_eq!(res, EventHandlingResult::Exit);
 }
 
 macro_rules! create_test_files {
@@ -331,7 +334,7 @@ async fn search_and_replace_test(
 
     let mut app = setup_app(temp_dir, search_fields, include_hidden);
     let res = app.perform_search_if_valid();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
 
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
@@ -593,7 +596,7 @@ test_with_both_regex_modes!(
         let mut app = setup_app(temp_dir, search_fields, false);
 
         let res = app.perform_search_if_valid();
-        assert!(!res.exit);
+        assert!(res != EventHandlingResult::Exit);
         assert!(matches!(app.current_screen, Screen::SearchFields));
         process_bp_events(&mut app).await;
         assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there

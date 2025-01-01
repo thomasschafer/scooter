@@ -58,10 +58,11 @@ pub enum BackgroundProcessingEvent {
     ReplacementCompleted(ReplaceState),
 }
 
-#[derive(Debug)]
-pub struct EventHandlingResult {
-    pub exit: bool,
-    pub rerender: bool,
+#[derive(Debug, PartialEq, Eq)]
+pub enum EventHandlingResult {
+    Rerender,
+    Exit,
+    None,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -518,10 +519,7 @@ impl App {
 
     pub async fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
         match event {
-            AppEvent::Rerender => EventHandlingResult {
-                exit: false,
-                rerender: true,
-            },
+            AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
         }
     }
@@ -550,10 +548,7 @@ impl App {
             }
         };
 
-        EventHandlingResult {
-            exit: false,
-            rerender: true,
-        }
+        EventHandlingResult::Rerender
     }
 
     pub fn trigger_replacement(&mut self) {
@@ -630,9 +625,10 @@ impl App {
                         search_in_progress_state.last_render = Instant::now();
                     }
                 }
-                EventHandlingResult {
-                    exit: false,
-                    rerender,
+                if rerender {
+                    EventHandlingResult::Rerender
+                } else {
+                    EventHandlingResult::None
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
@@ -641,17 +637,11 @@ impl App {
                 {
                     self.current_screen = Screen::SearchComplete(search_state);
                 }
-                EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                }
+                EventHandlingResult::Rerender
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 self.current_screen = Screen::Results(replace_state);
-                EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                }
+                EventHandlingResult::Rerender
             }
         }
     }
@@ -729,10 +719,7 @@ impl App {
 
     pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
         if key.kind == KeyEventKind::Release {
-            return Ok(EventHandlingResult {
-                exit: false,
-                rerender: true,
-            });
+            return Ok(EventHandlingResult::Rerender);
         }
 
         match (key.code, key.modifiers) {
@@ -740,17 +727,11 @@ impl App {
                 if !self.search_fields.show_error_popup =>
             {
                 self.reset();
-                return Ok(EventHandlingResult {
-                    exit: true,
-                    rerender: true,
-                });
+                return Ok(EventHandlingResult::Exit);
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
-                return Ok(EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                });
+                return Ok(EventHandlingResult::Rerender);
             }
             (_, _) => {}
         }
@@ -763,9 +744,10 @@ impl App {
             Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
         };
-        Ok(EventHandlingResult {
-            exit,
-            rerender: true,
+        Ok(if exit {
+            EventHandlingResult::Exit
+        } else {
+            EventHandlingResult::Rerender
         })
     }
 
