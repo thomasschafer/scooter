@@ -5,13 +5,12 @@ use scooter::{
 };
 use serial_test::serial;
 use std::cmp::max;
-use std::fs::{self, create_dir_all};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+
+mod utils;
 
 fn build_test_search_state() -> SearchState {
     SearchState {
@@ -195,91 +194,6 @@ async fn test_error_popup() {
     assert_eq!(res, EventHandlingResult::Exit);
 }
 
-macro_rules! create_test_files {
-    ($($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
-        {
-            let temp_dir = TempDir::new().unwrap();
-            $(
-                let contents = concat!($($line,"\n",)+);
-                let path = [temp_dir.path().to_str().unwrap(), $name].join("/");
-                let path = Path::new(&path);
-                create_dir_all(path.parent().unwrap()).unwrap();
-                {
-                    let mut file = File::create(path).await.unwrap();
-                    file.write_all(contents.as_bytes()).await.unwrap();
-                    file.sync_all().await.unwrap();
-                }
-            )+
-
-            #[cfg(windows)]
-            sleep(Duration::from_millis(100));
-            temp_dir
-        }
-    };
-}
-fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) {
-    for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_file() {
-            let rel_path = path
-                .strip_prefix(base)
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-                .replace('\\', "/");
-            files.push(rel_path);
-        } else if path.is_dir() {
-            collect_files(&path, base, files);
-        }
-    }
-}
-
-macro_rules! assert_test_files {
-    ($temp_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
-        {
-            use std::fs;
-            use std::path::Path;
-
-            $(
-                let expected_contents = concat!($($line,"\n",)+);
-                let path = Path::new($temp_dir.path()).join($name);
-
-                assert!(path.exists(), "File {} does not exist", $name);
-
-                let actual_contents = fs::read_to_string(&path)
-                    .unwrap_or_else(|e| panic!("Failed to read file {}: {}", $name, e));
-                assert_eq!(
-                    actual_contents,
-                    expected_contents,
-                    "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
-                    $name,
-                    expected_contents,
-                    actual_contents
-                );
-            )+
-
-            let mut expected_files: Vec<String> = vec![$($name.to_string()),+];
-            expected_files.sort();
-
-            let mut actual_files = Vec::new();
-            collect_files(
-                $temp_dir.path(),
-                $temp_dir.path(),
-                &mut actual_files
-            );
-            actual_files.sort();
-
-            assert_eq!(
-                actual_files,
-                expected_files,
-                "Directory contains unexpected files.\nExpected files: {:?}\nActual files: {:?}",
-                expected_files,
-                actual_files
-            );
-        }
-    };
-}
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
 where
     F: Fn() -> bool,
@@ -436,7 +350,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             &temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -453,7 +367,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+examplebar)(baz 456",
                 "something",
             }
-        };
+        );
     }
 );
 
@@ -492,7 +406,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -509,7 +423,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "VERB",
             }
-        };
+        );
     }
 );
 
@@ -549,7 +463,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -566,7 +480,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
     }
 );
 
@@ -639,7 +553,7 @@ async fn test_advanced_regex_negative_lookahead() {
     )
     .await;
 
-    assert_test_files! {
+    assert_test_files!(
         temp_dir,
         "file1.txt" => {
             "This is a BAR file",
@@ -656,7 +570,7 @@ async fn test_advanced_regex_negative_lookahead() {
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
         }
-    };
+    );
 }
 
 test_with_both_regex_modes!(
@@ -694,7 +608,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This is a test file",
@@ -711,7 +625,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something f",
             }
-        };
+        );
     }
 );
 
@@ -742,7 +656,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     )
     .await;
 
-    assert_test_files! {
+    assert_test_files!(
         temp_dir,
         "dir1/file1.txt" => {
             "Th  a text file",
@@ -753,7 +667,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         "file3.txt" => {
             "Th  a text file",
         }
-    };
+    );
 });
 
 test_with_both_regex_modes!(
@@ -785,7 +699,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This REPLACED a text file",
@@ -796,7 +710,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
     }
 );
 
@@ -829,7 +743,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This REPLACED a text file",
@@ -840,7 +754,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This REPLACED a hidden text file",
             }
-        };
+        );
     }
 );
 
@@ -848,4 +762,3 @@ test_with_both_regex_modes!(
 // - Add:
 //   - more tests for replacing in files
 //   - tests for passing in directory via CLI arg
-// - Tidy up tests - lots of duplication
