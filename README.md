@@ -30,6 +30,7 @@ scooter ../foo/bar
 
 A set of keymappings will be shown at the bottom of the window: these vary slightly depending on the screen you're on.
 
+
 ### Search fields
 
 When on the search screen the following fields are available:
