@@ -9,7 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
 
 use crate::{
-    event::{BackgroundProcessingEvent, SearchResult},
+    app::{BackgroundProcessingEvent, SearchResult},
     utils::relative_path_from,
 };
 

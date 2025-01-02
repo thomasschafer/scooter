@@ -1,11 +1,12 @@
 use anyhow::Error;
+use crossterm::event::KeyEvent;
 use fancy_regex::Regex as FancyRegex;
 use ignore::WalkState;
 use log::warn;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
 use std::{
     collections::HashMap,
@@ -23,12 +24,46 @@ use tokio::{
 };
 
 use crate::{
-    event::{AppEvent, BackgroundProcessingEvent, ReplaceResult, SearchResult},
     fields::{CheckboxField, Field, FieldError, TextField},
     parsed_fields::{ParsedFields, SearchType},
     utils::relative_path_from,
-    EventHandlingResult,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplaceResult {
+    Success,
+    Error(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchResult {
+    pub path: PathBuf,
+    pub line_number: usize,
+    pub line: String,
+    pub replacement: String,
+    pub included: bool,
+    pub replace_result: Option<ReplaceResult>,
+}
+
+#[derive(Debug)]
+pub enum AppEvent {
+    Rerender,
+    PerformSearch,
+}
+
+#[derive(Debug)]
+pub enum BackgroundProcessingEvent {
+    AddSearchResult(SearchResult),
+    SearchCompleted,
+    ReplacementCompleted(ReplaceState),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum EventHandlingResult {
+    Rerender,
+    Exit,
+    None,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SearchState {
@@ -392,7 +427,7 @@ pub struct App {
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
 impl App {
-    pub fn new(
+    fn new(
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
@@ -413,6 +448,16 @@ impl App {
 
             app_event_sender,
         }
+    }
+
+    pub fn new_with_receiver(
+        directory: Option<PathBuf>,
+        include_hidden: bool,
+        advanced_regex: bool,
+    ) -> (Self, UnboundedReceiver<AppEvent>) {
+        let (app_event_sender, app_event_receiver) = mpsc::unbounded_channel();
+        let app = Self::new(directory, include_hidden, advanced_regex, app_event_sender);
+        (app, app_event_receiver)
     }
 
     pub fn cancel_search(&mut self) {
@@ -474,10 +519,7 @@ impl App {
 
     pub async fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
         match event {
-            AppEvent::Rerender => EventHandlingResult {
-                exit: false,
-                rerender: true,
-            },
+            AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
         }
     }
@@ -506,10 +548,7 @@ impl App {
             }
         };
 
-        EventHandlingResult {
-            exit: false,
-            rerender: true,
-        }
+        EventHandlingResult::Rerender
     }
 
     pub fn trigger_replacement(&mut self) {
@@ -586,9 +625,10 @@ impl App {
                         search_in_progress_state.last_render = Instant::now();
                     }
                 }
-                EventHandlingResult {
-                    exit: false,
-                    rerender,
+                if rerender {
+                    EventHandlingResult::Rerender
+                } else {
+                    EventHandlingResult::None
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
@@ -597,17 +637,11 @@ impl App {
                 {
                     self.current_screen = Screen::SearchComplete(search_state);
                 }
-                EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                }
+                EventHandlingResult::Rerender
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 self.current_screen = Screen::Results(replace_state);
-                EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                }
+                EventHandlingResult::Rerender
             }
         }
     }
@@ -683,12 +717,9 @@ impl App {
         false
     }
 
-    pub fn handle_key_events(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
+    pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
         if key.kind == KeyEventKind::Release {
-            return Ok(EventHandlingResult {
-                exit: false,
-                rerender: true,
-            });
+            return Ok(EventHandlingResult::Rerender);
         }
 
         match (key.code, key.modifiers) {
@@ -696,17 +727,11 @@ impl App {
                 if !self.search_fields.show_error_popup =>
             {
                 self.reset();
-                return Ok(EventHandlingResult {
-                    exit: true,
-                    rerender: true,
-                });
+                return Ok(EventHandlingResult::Exit);
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
-                return Ok(EventHandlingResult {
-                    exit: false,
-                    rerender: true,
-                });
+                return Ok(EventHandlingResult::Rerender);
             }
             (_, _) => {}
         }
@@ -719,9 +744,10 @@ impl App {
             Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
         };
-        Ok(EventHandlingResult {
-            exit,
-            rerender: true,
+        Ok(if exit {
+            EventHandlingResult::Exit
+        } else {
+            EventHandlingResult::Rerender
         })
     }
 
@@ -920,7 +946,6 @@ mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::EventHandler;
 
     fn random_num() -> usize {
         let mut rng = rand::thread_rng();
@@ -1052,8 +1077,8 @@ mod tests {
     }
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
-        let event_handler = EventHandler::new();
-        let mut app = App::new(None, false, false, event_handler.app_event_sender);
+        let (app_event_sender, _) = mpsc::unbounded_channel();
+        let mut app = App::new(None, false, false, app_event_sender);
         app.current_screen = Screen::SearchComplete(SearchState {
             results,
             selected: 0,
