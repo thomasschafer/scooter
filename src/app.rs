@@ -52,6 +52,14 @@ impl SearchState {
         }
     }
 
+    pub fn move_selected_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn move_selected_bottom(&mut self) {
+        self.selected = self.results.len().saturating_sub(1);
+    }
+
     pub fn toggle_selected_inclusion(&mut self) {
         if self.selected < self.results.len() {
             let selected_result = &mut self.results[self.selected];
@@ -643,6 +651,14 @@ impl App {
             }
             (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.current_screen.search_results_mut().move_selected_up();
+            }
+            (KeyCode::Char('g'), _) => {
+                self.current_screen.search_results_mut().move_selected_top();
+            }
+            (KeyCode::Char('G'), _) => {
+                self.current_screen
+                    .search_results_mut()
+                    .move_selected_bottom();
             }
             (KeyCode::Char(' '), _) => {
                 self.current_screen

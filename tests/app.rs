@@ -12,9 +12,8 @@ use tempfile::TempDir;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-#[tokio::test]
-async fn test_search_state() {
-    let mut state = SearchState {
+fn build_test_search_state() -> SearchState {
+    SearchState {
         results: vec![
             SearchResult {
                 path: PathBuf::from("test1.txt"),
@@ -29,27 +28,67 @@ async fn test_search_state() {
                 line_number: 2,
                 line: "test line 2".to_string(),
                 replacement: "replacement 2".to_string(),
-                included: false,
+                included: true,
+                replace_result: None,
+            },
+            SearchResult {
+                path: PathBuf::from("test3.txt"),
+                line_number: 3,
+                line: "test line 3".to_string(),
+                replacement: "replacement 3".to_string(),
+                included: true,
                 replace_result: None,
             },
         ],
         selected: 0,
-    };
+    }
+}
+
+#[tokio::test]
+async fn test_search_state_toggling() {
+    let mut state = build_test_search_state();
+
+    fn included(state: &SearchState) -> Vec<bool> {
+        state.results.iter().map(|r| r.included).collect::<Vec<_>>()
+    }
+
+    assert_eq!(included(&state), [true, true, true]);
+    state.toggle_selected_inclusion();
+    assert_eq!(included(&state), [false, true, true]);
+    state.toggle_selected_inclusion();
+    assert_eq!(included(&state), [true, true, true]);
+    state.toggle_selected_inclusion();
+    assert_eq!(included(&state), [false, true, true]);
+    state.move_selected_down();
+    state.toggle_selected_inclusion();
+    assert_eq!(included(&state), [false, false, true]);
+    state.toggle_selected_inclusion();
+    assert_eq!(included(&state), [false, true, true]);
+}
+
+#[tokio::test]
+async fn test_search_state_movement() {
+    let mut state = build_test_search_state();
 
     state.move_selected_down();
     assert_eq!(state.selected, 1);
     state.move_selected_down();
+    assert_eq!(state.selected, 2);
+    state.move_selected_down();
     assert_eq!(state.selected, 0);
-    state.move_selected_up();
+    state.move_selected_down();
     assert_eq!(state.selected, 1);
     state.move_selected_up();
     assert_eq!(state.selected, 0);
+    state.move_selected_up();
+    assert_eq!(state.selected, 2);
+    state.move_selected_up();
+    assert_eq!(state.selected, 1);
 
-    state.toggle_selected_inclusion();
-    assert!(!state.results[0].included);
-    state.move_selected_down();
-    state.toggle_selected_inclusion();
-    assert!(state.results[1].included);
+    state.move_selected_top();
+    assert_eq!(state.selected, 0);
+    state.move_selected_bottom();
+    assert_eq!(state.selected, 2);
 }
 
 #[tokio::test]
