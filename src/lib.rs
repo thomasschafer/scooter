@@ -1,6 +1,5 @@
 pub mod app;
 pub mod app_runner;
-pub mod event;
 pub mod fields;
 pub mod logging;
 pub mod parsed_fields;

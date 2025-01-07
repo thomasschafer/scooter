@@ -6,7 +6,6 @@ use std::str::FromStr;
 
 mod app;
 mod app_runner;
-mod event;
 mod fields;
 mod logging;
 mod parsed_fields;
