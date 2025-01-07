@@ -148,7 +148,7 @@ async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
             "and special ? characters 1! @@ # and number 890",
             "        some    tabs  and - more % special   **** characters ())",
         },
-        "file2.txt" => {
+        "file2.py" => {
             "from datetime import datetime as dt, timedelta as td",
             "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
             "class TestClass:",
@@ -180,7 +180,7 @@ async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
             "and special ? characters 1! @@ # and number 890",
             "        some    tabs  and - more % special   **** characters ())",
         },
-        "file2.txt" => {
+        "file2.py" => {
             "from datetime import datetime as dt, timedelta as td",
             "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
             "class TestClass:",
@@ -203,13 +203,57 @@ async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
             "and special ? characters 1! @@ # and number 890",
             "        some    tabs  and - more % special   **** characters ())",
         },
-        "file2.txt" => {
+        "file2.py" => {
             "from datetime import datetime as dt, timedelta as td",
             "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
             "class TestClass:",
             "    super_long_name_really_after_long_name_very_long_name = 123",
             "    return super_long_name_really_after_long_name_very_long_name",
             "test_dict = {\"key1\": [1,2,3], 123: \"num key\", (\"a\",\"b\"): True, \"after\": 1, \"test-key\": None}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_search_and_replace_no_matches() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files! {
+        "dir1/file1.txt" => {
+            "This is some test content 123",
+        },
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(Some(temp_dir.path()))?;
+
+    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+
+    send_chars("before", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("after", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+
+    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+
+    // Nothing should have changed yet
+    assert_test_files!(
+        &temp_dir,
+        "dir1/file1.txt" => {
+            "This is some test content 123",
+        },
+    );
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+
+    // Verify that nothing has changed
+    assert_test_files!(
+        &temp_dir,
+        "dir1/file1.txt" => {
+            "This is some test content 123",
         },
     );
 
