@@ -1,25 +1,28 @@
-use crate::app::App;
-use crate::event::EventHandler;
-use crate::ui;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::backend::Backend;
+use ratatui::backend::{Backend, TestBackend};
 use ratatui::Terminal;
+use std::any::TypeId;
 use std::io;
 use std::panic;
 
+use crate::{app::App, ui};
+
 #[derive(Debug)]
 pub struct Tui<B: Backend> {
-    terminal: Terminal<B>,
-    pub events: EventHandler,
+    pub terminal: Terminal<B>,
 }
 
-impl<B: Backend> Tui<B> {
-    pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
-        Self { terminal, events }
+impl<B: Backend + 'static> Tui<B> {
+    pub fn new(terminal: Terminal<B>) -> Self {
+        Self { terminal }
     }
 
     pub fn init(&mut self) -> anyhow::Result<()> {
+        if TypeId::of::<B>() == TypeId::of::<TestBackend>() {
+            return Ok(());
+        }
+
         terminal::enable_raw_mode()?;
         crossterm::execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
 
@@ -31,6 +34,7 @@ impl<B: Backend> Tui<B> {
 
         self.terminal.hide_cursor()?;
         self.terminal.clear()?;
+
         Ok(())
     }
 

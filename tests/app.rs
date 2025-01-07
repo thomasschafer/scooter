@@ -1,16 +1,16 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
-    App, EventHandler, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult, SearchState,
+    App, EventHandlingResult, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
+    SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
-use std::fs::{self, create_dir_all};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+
+mod utils;
 
 fn build_test_search_state() -> SearchState {
     SearchState {
@@ -121,8 +121,7 @@ async fn test_replace_state() {
 
 #[tokio::test]
 async fn test_app_reset() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender);
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -137,8 +136,7 @@ async fn test_app_reset() {
 
 #[tokio::test]
 async fn test_back_from_results() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender);
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchComplete(SearchState {
         results: vec![],
         selected: 0,
@@ -146,14 +144,14 @@ async fn test_back_from_results() {
     app.search_fields = SearchFields::with_values("foo", "bar", true, "pattern");
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Char('o'),
             modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
     assert!(app.search_fields.fixed_strings().checked);
@@ -164,124 +162,38 @@ async fn test_back_from_results() {
 // TODO: replace this (and other tests?) with end-to-end tests
 #[tokio::test]
 async fn test_error_popup() {
-    let events = EventHandler::new();
-    let mut app = App::new(None, false, false, events.app_event_sender.clone());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
     app.search_fields =
         SearchFields::with_values("search invalid regex(", "replacement", false, "");
 
     let res = app.perform_search_if_valid();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert!(matches!(app.current_screen, Screen::SearchFields));
     assert!(app.search_fields.show_error_popup);
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Esc,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
     assert!(!app.search_fields.show_error_popup);
 
     let res = app
-        .handle_key_events(&KeyEvent {
+        .handle_key_event(&KeyEvent {
             code: KeyCode::Esc,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         })
         .unwrap();
-    assert!(res.exit);
+    assert_eq!(res, EventHandlingResult::Exit);
 }
 
-macro_rules! create_test_files {
-    ($($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
-        {
-            let temp_dir = TempDir::new().unwrap();
-            $(
-                let contents = concat!($($line,"\n",)+);
-                let path = [temp_dir.path().to_str().unwrap(), $name].join("/");
-                let path = Path::new(&path);
-                create_dir_all(path.parent().unwrap()).unwrap();
-                {
-                    let mut file = File::create(path).await.unwrap();
-                    file.write_all(contents.as_bytes()).await.unwrap();
-                    file.sync_all().await.unwrap();
-                }
-            )+
-
-            #[cfg(windows)]
-            sleep(Duration::from_millis(100));
-            temp_dir
-        }
-    };
-}
-fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) {
-    for entry in fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_file() {
-            let rel_path = path
-                .strip_prefix(base)
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-                .replace('\\', "/");
-            files.push(rel_path);
-        } else if path.is_dir() {
-            collect_files(&path, base, files);
-        }
-    }
-}
-
-macro_rules! assert_test_files {
-    ($temp_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
-        {
-            use std::fs;
-            use std::path::Path;
-
-            $(
-                let expected_contents = concat!($($line,"\n",)+);
-                let path = Path::new($temp_dir.path()).join($name);
-
-                assert!(path.exists(), "File {} does not exist", $name);
-
-                let actual_contents = fs::read_to_string(&path)
-                    .unwrap_or_else(|e| panic!("Failed to read file {}: {}", $name, e));
-                assert_eq!(
-                    actual_contents,
-                    expected_contents,
-                    "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
-                    $name,
-                    expected_contents,
-                    actual_contents
-                );
-            )+
-
-            let mut expected_files: Vec<String> = vec![$($name.to_string()),+];
-            expected_files.sort();
-
-            let mut actual_files = Vec::new();
-            collect_files(
-                $temp_dir.path(),
-                $temp_dir.path(),
-                &mut actual_files
-            );
-            actual_files.sort();
-
-            assert_eq!(
-                actual_files,
-                expected_files,
-                "Directory contains unexpected files.\nExpected files: {:?}\nActual files: {:?}",
-                expected_files,
-                actual_files
-            );
-        }
-    };
-}
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
 where
     F: Fn() -> bool,
@@ -316,13 +228,8 @@ macro_rules! wait_for_screen {
 }
 
 fn setup_app(temp_dir: &TempDir, search_fields: SearchFields, include_hidden: bool) -> App {
-    let events = EventHandler::new();
-    let mut app = App::new(
-        Some(temp_dir.path().to_path_buf()),
-        include_hidden,
-        false,
-        events.app_event_sender,
-    );
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(Some(temp_dir.path().to_path_buf()), include_hidden, false);
     app.search_fields = search_fields;
     app
 }
@@ -341,7 +248,7 @@ async fn search_and_replace_test(
 
     let mut app = setup_app(temp_dir, search_fields, include_hidden);
     let res = app.perform_search_if_valid();
-    assert!(!res.exit);
+    assert!(res != EventHandlingResult::Exit);
 
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
@@ -443,7 +350,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             &temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -460,7 +367,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+examplebar)(baz 456",
                 "something",
             }
-        };
+        );
     }
 );
 
@@ -499,7 +406,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -516,7 +423,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "VERB",
             }
-        };
+        );
     }
 );
 
@@ -556,7 +463,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "file1.txt" => {
                 "This is a test file",
@@ -573,7 +480,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
     }
 );
 
@@ -603,7 +510,7 @@ test_with_both_regex_modes!(
         let mut app = setup_app(temp_dir, search_fields, false);
 
         let res = app.perform_search_if_valid();
-        assert!(!res.exit);
+        assert!(res != EventHandlingResult::Exit);
         assert!(matches!(app.current_screen, Screen::SearchFields));
         process_bp_events(&mut app).await;
         assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there
@@ -646,7 +553,7 @@ async fn test_advanced_regex_negative_lookahead() {
     )
     .await;
 
-    assert_test_files! {
+    assert_test_files!(
         temp_dir,
         "file1.txt" => {
             "This is a BAR file",
@@ -663,7 +570,7 @@ async fn test_advanced_regex_negative_lookahead() {
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
         }
-    };
+    );
 }
 
 test_with_both_regex_modes!(
@@ -701,7 +608,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This is a test file",
@@ -718,7 +625,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something f",
             }
-        };
+        );
     }
 );
 
@@ -749,7 +656,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     )
     .await;
 
-    assert_test_files! {
+    assert_test_files!(
         temp_dir,
         "dir1/file1.txt" => {
             "Th  a text file",
@@ -760,7 +667,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         "file3.txt" => {
             "Th  a text file",
         }
-    };
+    );
 });
 
 test_with_both_regex_modes!(
@@ -792,7 +699,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This REPLACED a text file",
@@ -803,7 +710,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
     }
 );
 
@@ -836,7 +743,7 @@ test_with_both_regex_modes!(
         )
         .await;
 
-        assert_test_files! {
+        assert_test_files!(
             temp_dir,
             "dir1/file1.txt" => {
                 "This REPLACED a text file",
@@ -847,7 +754,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This REPLACED a hidden text file",
             }
-        };
+        );
     }
 );
 
@@ -855,4 +762,3 @@ test_with_both_regex_modes!(
 // - Add:
 //   - more tests for replacing in files
 //   - tests for passing in directory via CLI arg
-// - Tidy up tests - lots of duplication
