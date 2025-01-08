@@ -102,6 +102,17 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
     }
 }
 
+fn strip_control_chars(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\t' => String::from("  "),
+            '\n' => String::from(" "),
+            c if c.is_control() => String::from("�"),
+            c => String::from(c),
+        })
+        .collect()
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Diff {
     pub text: String,
@@ -112,7 +123,7 @@ pub struct Diff {
 fn diff_to_line(diff: Vec<Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
         let style = Style::new().fg(d.fg_colour).bg(d.bg_colour);
-        Span::styled(d.text, style)
+        Span::styled(strip_control_chars(&d.text), style)
     });
     Line::from_iter(diff_iter)
 }
@@ -708,5 +719,44 @@ mod tests {
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
+    }
+
+    #[test]
+    fn test_sanitize_normal_text() {
+        assert_eq!(strip_control_chars("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_sanitize_tabs() {
+        assert_eq!(strip_control_chars("hello\tworld"), "hello  world");
+        assert_eq!(strip_control_chars("\t\t"), "    ");
+    }
+
+    #[test]
+    fn test_sanitize_newlines() {
+        assert_eq!(strip_control_chars("hello\nworld"), "hello world");
+        assert_eq!(strip_control_chars("\n\n"), "  ");
+    }
+
+    #[test]
+    fn test_sanitize_control_chars() {
+        assert_eq!(strip_control_chars("hello\u{4}world"), "hello�world");
+        assert_eq!(strip_control_chars("test\u{7}"), "test�");
+        assert_eq!(strip_control_chars("\u{1b}[0m"), "�[0m");
+    }
+
+    #[test]
+    fn test_sanitize_unicode() {
+        assert_eq!(strip_control_chars("héllo→世界"), "héllo→世界");
+    }
+
+    #[test]
+    fn test_sanitize_empty_string() {
+        assert_eq!(strip_control_chars(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_only_control_chars() {
+        assert_eq!(strip_control_chars("\u{1}\u{2}\u{3}\u{4}"), "����");
     }
 }
