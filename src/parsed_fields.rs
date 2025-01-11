@@ -13,6 +13,25 @@ use crate::{
     utils::relative_path_from,
 };
 
+pub fn replace_whole_word_if_match(
+    haystack: &str,
+    search: &str,
+    replacement: &str,
+) -> Option<String> {
+    if haystack.is_empty() || search.is_empty() {
+        return None;
+    }
+    let pattern = format!(
+        r"(?<![a-zA-Z0-9_]){}(?![a-zA-Z0-9_])",
+        fancy_regex::escape(search)
+    );
+    let re = FancyRegex::new(&pattern).unwrap();
+    match re.is_match(haystack) {
+        Ok(true) => Some(re.replace_all(haystack, replacement).to_string()),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SearchType {
     Pattern(Regex),
@@ -24,6 +43,7 @@ pub enum SearchType {
 pub struct ParsedFields {
     search_pattern: SearchType,
     replace_string: String,
+    whole_word: bool,
     path_pattern: Option<SearchType>,
     // TODO: `root_dir` and `include_hidden` are duplicated across this and App
     root_dir: PathBuf,
@@ -36,6 +56,7 @@ impl ParsedFields {
     pub fn new(
         search_pattern: SearchType,
         replace_string: String,
+        whole_word: bool,
         path_pattern: Option<SearchType>,
         root_dir: PathBuf,
         include_hidden: bool,
@@ -44,6 +65,7 @@ impl ParsedFields {
         Self {
             search_pattern,
             replace_string,
+            whole_word,
             path_pattern,
             root_dir,
             include_hidden,
@@ -112,12 +134,17 @@ impl ParsedFields {
         line: String,
         line_number: usize,
     ) -> Option<SearchResult> {
+        #[allow(clippy::collapsible_else_if)]
         let maybe_replacement = match self.search_pattern {
             SearchType::Fixed(ref s) => {
-                if line.contains(s) {
-                    Some(line.replace(s, &self.replace_string))
+                if self.whole_word {
+                    replace_whole_word_if_match(&line, s, &self.replace_string)
                 } else {
-                    None
+                    if line.contains(s) {
+                        Some(line.replace(s, &self.replace_string))
+                    } else {
+                        None
+                    }
                 }
             }
             SearchType::Pattern(ref p) => {
@@ -127,13 +154,10 @@ impl ParsedFields {
                     None
                 }
             }
-            SearchType::PatternAdvanced(ref p) => {
-                // TODO: try catch
-                match p.is_match(&line) {
-                    Ok(true) => Some(p.replace_all(&line, &self.replace_string).to_string()),
-                    _ => None,
-                }
-            }
+            SearchType::PatternAdvanced(ref p) => match p.is_match(&line) {
+                Ok(true) => Some(p.replace_all(&line, &self.replace_string).to_string()),
+                _ => None,
+            },
         };
 
         maybe_replacement.map(|replacement| SearchResult {
@@ -151,5 +175,99 @@ impl ParsedFields {
             .hidden(!self.include_hidden)
             .filter_entry(|entry| entry.file_name() != ".git")
             .build_parallel()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_replacement() {
+        assert_eq!(
+            replace_whole_word_if_match("hello world", "world", "earth"),
+            Some("hello earth".to_string())
+        );
+    }
+
+    #[test]
+    fn test_multiple_replacements() {
+        assert_eq!(
+            replace_whole_word_if_match("world hello world", "world", "earth"),
+            Some("earth hello earth".to_string())
+        );
+    }
+
+    #[test]
+    fn test_no_match() {
+        assert_eq!(
+            replace_whole_word_if_match("worldwide", "world", "earth"),
+            None
+        );
+        assert_eq!(
+            replace_whole_word_if_match("_world_", "world", "earth"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_word_boundaries() {
+        assert_eq!(
+            replace_whole_word_if_match(",world-", "world", "earth"),
+            Some(",earth-".to_string())
+        );
+        assert_eq!(
+            replace_whole_word_if_match("world-word", "world", "earth"),
+            Some("earth-word".to_string())
+        );
+        assert_eq!(
+            replace_whole_word_if_match("Hello-world!", "world", "earth"),
+            Some("Hello-earth!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_case_sensitive() {
+        assert_eq!(
+            replace_whole_word_if_match("Hello WORLD", "world", "earth"),
+            None
+        );
+        assert_eq!(
+            replace_whole_word_if_match("Hello world", "wOrld", "earth"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_empty_strings() {
+        assert_eq!(replace_whole_word_if_match("", "world", "earth"), None);
+        assert_eq!(
+            replace_whole_word_if_match("hello world", "", "earth"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_substring_no_match() {
+        assert_eq!(
+            replace_whole_word_if_match("worldwide web", "world", "earth"),
+            None
+        );
+        assert_eq!(
+            replace_whole_word_if_match("underworld", "world", "earth"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_special_regex_chars() {
+        assert_eq!(
+            replace_whole_word_if_match("hello (world)", "(world)", "earth"),
+            Some("hello earth".to_string())
+        );
+        assert_eq!(
+            replace_whole_word_if_match("hello world.*", "world.*", "ea+rth"),
+            Some("hello ea+rth".to_string())
+        );
     }
 }

@@ -240,6 +240,7 @@ pub enum FieldName {
     Search,
     Replace,
     FixedStrings,
+    WholeWord,
     PathPattern,
 }
 
@@ -248,7 +249,7 @@ pub struct SearchField {
     pub field: Arc<RwLock<Field>>,
 }
 
-pub const NUM_SEARCH_FIELDS: usize = 4;
+pub const NUM_SEARCH_FIELDS: usize = 5;
 
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
@@ -297,6 +298,7 @@ macro_rules! define_field_accessor_mut {
     };
 }
 impl SearchFields {
+    // TODO: generate these automatically?
     define_field_accessor!(search, FieldName::Search, Text, TextField);
     define_field_accessor!(replace, FieldName::Replace, Text, TextField);
     define_field_accessor!(
@@ -305,6 +307,7 @@ impl SearchFields {
         Checkbox,
         CheckboxField
     );
+    define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, CheckboxField);
     define_field_accessor!(path_pattern, FieldName::PathPattern, Text, TextField);
 
     define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
@@ -314,6 +317,7 @@ impl SearchFields {
         search: impl Into<String>,
         replace: impl Into<String>,
         fixed_strings: bool,
+        whole_word: bool,
         filename_pattern: impl Into<String>,
     ) -> Self {
         Self {
@@ -329,6 +333,10 @@ impl SearchFields {
                 SearchField {
                     name: FieldName::FixedStrings,
                     field: Arc::new(RwLock::new(Field::checkbox(fixed_strings))),
+                },
+                SearchField {
+                    name: FieldName::WholeWord,
+                    field: Arc::new(RwLock::new(Field::checkbox(whole_word))),
                 },
                 SearchField {
                     name: FieldName::PathPattern,
@@ -438,7 +446,7 @@ impl App {
             None => std::env::current_dir().unwrap(),
         };
         let search_fields =
-            SearchFields::with_values("", "", false, "").with_advanced_regex(advanced_regex);
+            SearchFields::with_values("", "", false, false, "").with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
@@ -795,6 +803,7 @@ impl App {
         Ok(Some(ParsedFields::new(
             search_pattern,
             self.search_fields.replace().text(),
+            self.search_fields.whole_word().checked,
             path_pattern,
             self.directory.clone(),
             self.include_hidden,

@@ -141,7 +141,7 @@ async fn test_back_from_results() {
         results: vec![],
         selected: 0,
     });
-    app.search_fields = SearchFields::with_values("foo", "bar", true, "pattern");
+    app.search_fields = SearchFields::with_values("foo", "bar", true, false, "pattern");
 
     let res = app
         .handle_key_event(&KeyEvent {
@@ -165,7 +165,7 @@ async fn test_error_popup() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
     app.search_fields =
-        SearchFields::with_values("search invalid regex(", "replacement", false, "");
+        SearchFields::with_values("search invalid regex(", "replacement", false, false, "");
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
@@ -336,7 +336,7 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values(".*", "example", true, "")
+        let search_fields = SearchFields::with_values(".*", "example", true, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             &temp_dir,
@@ -392,7 +392,7 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values(r"\b\w+ing\b", "VERB", false, "")
+        let search_fields = SearchFields::with_values(r"\b\w+ing\b", "VERB", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -449,7 +449,7 @@ test_with_both_regex_modes!(
         };
 
         let search_fields =
-            SearchFields::with_values("nonexistent-string", "replacement", true, "")
+            SearchFields::with_values("nonexistent-string", "replacement", true, false, "")
                 .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -505,8 +505,9 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values("[invalid regex", "replacement", false, "")
-            .with_advanced_regex(advanced_regex);
+        let search_fields =
+            SearchFields::with_values("[invalid regex", "replacement", false, false, "")
+                .with_advanced_regex(advanced_regex);
         let mut app = setup_app(temp_dir, search_fields, false);
 
         let res = app.perform_search_if_valid();
@@ -539,8 +540,8 @@ async fn test_advanced_regex_negative_lookahead() {
         }
     };
 
-    let search_fields =
-        SearchFields::with_values("(test)(?!ing)", "BAR", false, "").with_advanced_regex(true);
+    let search_fields = SearchFields::with_values("(test)(?!ing)", "BAR", false, false, "")
+        .with_advanced_regex(true);
     search_and_replace_test(
         temp_dir,
         search_fields,
@@ -594,7 +595,7 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values("testing", "f", false, "dir2")
+        let search_fields = SearchFields::with_values("testing", "f", false, false, "dir2")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -643,7 +644,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     };
 
     let search_fields =
-        SearchFields::with_values("is", "", false, "").with_advanced_regex(advanced_regex);
+        SearchFields::with_values("is", "", false, false, "").with_advanced_regex(advanced_regex);
     search_and_replace_test(
         temp_dir,
         search_fields,
@@ -685,7 +686,7 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, "")
+        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -729,7 +730,7 @@ test_with_both_regex_modes!(
             }
         };
 
-        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, "")
+        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
