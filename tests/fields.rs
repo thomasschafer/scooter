@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::{parsed_fields::SearchType, CheckboxField, SearchFields, TextField};
+use scooter::{replace::SearchType, CheckboxField, SearchFields, TextField};
 
 #[test]
 fn test_text_field_operations() {

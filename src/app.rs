@@ -25,7 +25,7 @@ use tokio::{
 
 use crate::{
     fields::{CheckboxField, Field, FieldError, TextField},
-    parsed_fields::{ParsedFields, SearchType},
+    replace::{ParsedFields, SearchType},
     utils::relative_path_from,
 };
 
