@@ -14,7 +14,7 @@ use crate::{
         App, FieldName, ReplaceResult, ReplaceState, Screen, SearchField, SearchInProgressState,
         SearchResult, NUM_SEARCH_FIELDS,
     },
-    utils::{first_chars, group_by},
+    utils::group_by,
 };
 
 impl FieldName {
@@ -120,7 +120,7 @@ pub struct Diff {
     pub bg_colour: Color,
 }
 
-fn diff_to_line(diff: Vec<Diff>) -> Line<'static> {
+fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
         let style = Style::new().fg(d.fg_colour).bg(d.bg_colour);
         Span::styled(strip_control_chars(&d.text), style)
@@ -229,9 +229,9 @@ fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
 
     let search_results = results_iter.flat_map(|(idx, result)| {
         let width = list_area.width;
-        let before = first_chars(&result.line, width as usize);
-        let after = first_chars(&result.replacement, width as usize);
-        let (old_line, new_line) = line_diff(before, after);
+        let (old_line, new_line) = line_diff(&result.line, &result.replacement);
+        let old_line = old_line.iter().take(width as usize).collect::<Vec<_>>();
+        let new_line = new_line.iter().take(width as usize).collect::<Vec<_>>();
 
         let file_path_style = if search_results.selected == idx {
             Style::new().bg(if result.included {
