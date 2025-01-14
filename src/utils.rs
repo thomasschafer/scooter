@@ -51,13 +51,6 @@ pub fn validate_directory(dir_str: &str) -> Result<PathBuf> {
     }
 }
 
-pub fn first_chars(s: &str, n: usize) -> &str {
-    match s.char_indices().nth(n) {
-        Some((idx, _)) => &s[..idx],
-        None => s,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,15 +197,5 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);
-    }
-
-    #[test]
-    fn test_first_chars() {
-        let text = "Hello, 世界!";
-        assert_eq!(first_chars(text, 0), "");
-        assert_eq!(first_chars(text, 3), "Hel");
-        assert_eq!(first_chars(text, 6), "Hello,");
-        assert_eq!(first_chars(text, 8), "Hello, 世");
-        assert_eq!(first_chars(text, 100), "Hello, 世界!");
     }
 }
