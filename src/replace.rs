@@ -26,7 +26,6 @@ fn replace_whole_word_if_match_regex(
     }
 
     if search.is_match(haystack).unwrap() {
-        // TODO: make same changes as above
         let replaced = search.replace_all(haystack, replacement);
         Some(replaced.to_string())
     } else {
@@ -619,23 +618,4 @@ mod tests {
             Some("test NEW end".to_string())
         );
     }
-
-    // TODO: delete
-    // #[test]
-    // fn test_multiple_matches() {
-    //     let re = FancyRegex::new(r"a+b+").unwrap();
-    //     assert_eq!(
-    //         replace_whole_word_if_match("foo aab abb", &re, "X"),
-    //         Some("foo X X".to_string())
-    //     );
-    //     // More thorough cases
-    //     assert_eq!(
-    //         replace_whole_word_if_match("aab,abb;aabb", &re, "X"),
-    //         Some("X,X;X".to_string())
-    //     );
-    //     assert_eq!(
-    //         replace_whole_word_if_match("foo.aab!abb", &re, "X"),
-    //         Some("foo.X!X".to_string())
-    //     );
-    // }
 }
