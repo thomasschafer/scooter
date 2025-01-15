@@ -288,4 +288,4 @@ async fn test_search_and_replace_empty_dir() -> anyhow::Result<()> {
     shutdown(event_sender, run_handle).await
 }
 
-// TODO: add tests for whole word matching
+// TODO: add tests for whole word matching, using fixed strings, standard + fancy regex

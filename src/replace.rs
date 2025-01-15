@@ -33,7 +33,6 @@ fn replace_whole_word_if_match_regex(
     }
 }
 
-// TODO: add unit tests
 fn replacement_if_match_any(line: &str, search: &SearchType, replacement: &str) -> Option<String> {
     match search {
         SearchType::Fixed(ref fixed_str) => {
@@ -207,415 +206,669 @@ impl ParsedFields {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_basic_replacement() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "hello world",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            Some("hello earth".to_string())
-        );
+    mod replace_whole_word {
+        use super::*;
+
+        #[test]
+        fn test_basic_replacement() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "hello world",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                Some("hello earth".to_string())
+            );
+        }
+
+        #[test]
+        fn test_multiple_replacements() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "world hello world",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                Some("earth hello earth".to_string())
+            );
+        }
+
+        #[test]
+        fn test_no_match() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "worldwide",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "_world_",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_word_boundaries() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    ",world-",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                Some(",earth-".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "world-word",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                Some("earth-word".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "Hello-world!",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                Some("Hello-earth!".to_string())
+            );
+        }
+
+        #[test]
+        fn test_case_sensitive() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "Hello WORLD",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "Hello world",
+                    &add_boundaries(SearchType::Fixed("wOrld".to_string())),
+                    "earth"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_empty_strings() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "hello world",
+                    &add_boundaries(SearchType::Fixed("".to_string())),
+                    "earth"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_substring_no_match() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "worldwide web",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "underworld",
+                    &add_boundaries(SearchType::Fixed("world".to_string())),
+                    "earth"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_special_regex_chars() {
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "hello (world)",
+                    &add_boundaries(SearchType::Fixed("(world)".to_string())),
+                    "earth"
+                ),
+                Some("hello earth".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "hello world.*",
+                    &add_boundaries(SearchType::Fixed("world.*".to_string())),
+                    "ea+rth"
+                ),
+                Some("hello ea+rth".to_string())
+            );
+        }
+
+        #[test]
+        fn test_basic_regex_patterns() {
+            let re = Regex::new(r"ax*b").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "foo axxxxb bar",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "NEW"
+                ),
+                Some("foo NEW bar".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "fooaxxxxb bar",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "NEW"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_patterns_with_spaces() {
+            let re = Regex::new(r"hel+o world").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "say hello world!",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "hi earth"
+                ),
+                Some("say hi earth!".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "helloworld",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "hi earth"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_multiple_matches() {
+            let re = Regex::new(r"a+b+").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "foo aab abb",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                Some("foo X X".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "ab abaab abb",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                Some("X abaab X".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "ababaababb",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                None
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "ab ab aab abb",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                Some("X X X X".to_string())
+            );
+        }
+
+        #[test]
+        fn test_boundary_cases() {
+            let re = Regex::new(r"foo\s*bar").unwrap();
+            // At start of string
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "foo bar baz",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "TEST"
+                ),
+                Some("TEST baz".to_string())
+            );
+            // At end of string
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "baz foo bar",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "TEST"
+                ),
+                Some("baz TEST".to_string())
+            );
+            // With punctuation
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "(foo bar)",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "TEST"
+                ),
+                Some("(TEST)".to_string())
+            );
+        }
+
+        #[test]
+        fn test_with_punctuation() {
+            let re = Regex::new(r"a\d+b").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "(a123b)",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                Some("(X)".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "foo.a123b!bar",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                Some("foo.X!bar".to_string())
+            );
+        }
+
+        #[test]
+        fn test_complex_patterns() {
+            let re = Regex::new(r"[a-z]+\d+[a-z]+").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "test9 abc123def 8xyz",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "NEW"
+                ),
+                Some("test9 NEW 8xyz".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "test9abc123def8xyz",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "NEW"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_optional_patterns() {
+            let re = Regex::new(r"colou?r").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "my color and colour",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                Some("my X and X".to_string())
+            );
+        }
+
+        #[test]
+        fn test_empty_haystack() {
+            let re = Regex::new(r"test").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "NEW"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_empty_search_regex() {
+            let re = Regex::new(r"").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "search",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "NEW"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_single_char() {
+            let re = Regex::new(r"a").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "b a c",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                Some("b X c".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "bac",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_escaped_chars() {
+            let re = Regex::new(r"\(\d+\)").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "test (123) foo",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                Some("test X foo".to_string())
+            );
+        }
+
+        #[test]
+        fn test_with_unicode() {
+            let re = Regex::new(r"λ\d+").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "calc λ123 β",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "X"
+                ),
+                Some("calc X β".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "calcλ123",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "X"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn test_multiline_patterns() {
+            let re = Regex::new(r"foo\s*\n\s*bar").unwrap();
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "test foo\nbar end",
+                    &add_boundaries(SearchType::Pattern(re.clone())),
+                    "NEW"
+                ),
+                Some("test NEW end".to_string())
+            );
+            assert_eq!(
+                replace_whole_word_if_match_regex(
+                    "test foo\n  bar end",
+                    &add_boundaries(SearchType::Pattern(re)),
+                    "NEW"
+                ),
+                Some("test NEW end".to_string())
+            );
+        }
     }
 
-    #[test]
-    fn test_multiple_replacements() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "world hello world",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            Some("earth hello earth".to_string())
-        );
-    }
+    mod replace_any {
+        use super::*;
 
-    #[test]
-    fn test_no_match() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "worldwide",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "_world_",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_simple_match_subword() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::Fixed("bar".to_string()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::Pattern(Regex::new(r"bar").unwrap()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"bar").unwrap()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+        }
 
-    #[test]
-    fn test_word_boundaries() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                ",world-",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            Some(",earth-".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "world-word",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            Some("earth-word".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "Hello-world!",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            Some("Hello-earth!".to_string())
-        );
-    }
+        #[test]
+        fn test_no_match() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::Fixed("xyz".to_string()),
+                    "REPL"
+                ),
+                None
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::Pattern(Regex::new(r"xyz").unwrap()),
+                    "REPL"
+                ),
+                None
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foobarbaz",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"xyz").unwrap()),
+                    "REPL"
+                ),
+                None
+            );
+        }
 
-    #[test]
-    fn test_case_sensitive() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "Hello WORLD",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "Hello world",
-                &add_boundaries(SearchType::Fixed("wOrld".to_string())),
-                "earth"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_word_boundaries() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "foo bar baz",
+                    &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
+                    "REPL"
+                ),
+                Some("foo REPL baz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "embargo",
+                    &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
+                    "REPL"
+                ),
+                None
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foo bar baz",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
+                    "REPL"
+                ),
+                Some("foo REPL baz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "embargo",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
+                    "REPL"
+                ),
+                None
+            );
+        }
 
-    #[test]
-    fn test_empty_strings() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "hello world",
-                &add_boundaries(SearchType::Fixed("".to_string())),
-                "earth"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_capture_groups() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "John Doe",
+                    &SearchType::Pattern(Regex::new(r"(\w+)\s+(\w+)").unwrap()),
+                    "$2, $1"
+                ),
+                Some("Doe, John".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "John Doe",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"(\w+)\s+(\w+)").unwrap()),
+                    "$2, $1"
+                ),
+                Some("Doe, John".to_string())
+            );
+        }
 
-    #[test]
-    fn test_substring_no_match() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "worldwide web",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "underworld",
-                &add_boundaries(SearchType::Fixed("world".to_string())),
-                "earth"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_lookaround() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "123abc456",
+                    &SearchType::PatternAdvanced(
+                        FancyRegex::new(r"(?<=\d{3})abc(?=\d{3})").unwrap()
+                    ),
+                    "REPL"
+                ),
+                Some("123REPL456".to_string())
+            );
+        }
 
-    #[test]
-    fn test_special_regex_chars() {
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "hello (world)",
-                &add_boundaries(SearchType::Fixed("(world)".to_string())),
-                "earth"
-            ),
-            Some("hello earth".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "hello world.*",
-                &add_boundaries(SearchType::Fixed("world.*".to_string())),
-                "ea+rth"
-            ),
-            Some("hello ea+rth".to_string())
-        );
-    }
+        #[test]
+        fn test_quantifiers() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "aaa123456bbb",
+                    &SearchType::Pattern(Regex::new(r"\d+").unwrap()),
+                    "REPL"
+                ),
+                Some("aaaREPLbbb".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "abc123def456",
+                    &SearchType::Pattern(Regex::new(r"\d{3}").unwrap()),
+                    "REPL"
+                ),
+                Some("abcREPLdefREPL".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "aaa123456bbb",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"\d+").unwrap()),
+                    "REPL"
+                ),
+                Some("aaaREPLbbb".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "abc123def456",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"\d{3}").unwrap()),
+                    "REPL"
+                ),
+                Some("abcREPLdefREPL".to_string())
+            );
+        }
 
-    #[test]
-    fn test_basic_regex_patterns() {
-        let re = Regex::new(r"ax*b").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "foo axxxxb bar",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "NEW"
-            ),
-            Some("foo NEW bar".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "fooaxxxxb bar",
-                &add_boundaries(SearchType::Pattern(re)),
-                "NEW"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_special_characters() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "foo.bar*baz",
+                    &SearchType::Fixed(".bar*".to_string()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foo.bar*baz",
+                    &SearchType::Pattern(Regex::new(r"\.bar\*").unwrap()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "foo.bar*baz",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"\.bar\*").unwrap()),
+                    "REPL"
+                ),
+                Some("fooREPLbaz".to_string())
+            );
+        }
 
-    #[test]
-    fn test_patterns_with_spaces() {
-        let re = Regex::new(r"hel+o world").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "say hello world!",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "hi earth"
-            ),
-            Some("say hi earth!".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "helloworld",
-                &add_boundaries(SearchType::Pattern(re)),
-                "hi earth"
-            ),
-            None
-        );
-    }
+        #[test]
+        fn test_unicode() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "Hello 世界!",
+                    &SearchType::Fixed("世界".to_string()),
+                    "REPL"
+                ),
+                Some("Hello REPL!".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "Hello 世界!",
+                    &SearchType::Pattern(Regex::new(r"世界").unwrap()),
+                    "REPL"
+                ),
+                Some("Hello REPL!".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "Hello 世界!",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"世界").unwrap()),
+                    "REPL"
+                ),
+                Some("Hello REPL!".to_string())
+            );
+        }
 
-    #[test]
-    fn test_multiple_matches() {
-        let re = Regex::new(r"a+b+").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "foo aab abb",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            Some("foo X X".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "ab abaab abb",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            Some("X abaab X".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "ababaababb",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            None
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "ab ab aab abb",
-                &add_boundaries(SearchType::Pattern(re)),
-                "X"
-            ),
-            Some("X X X X".to_string())
-        );
-    }
-
-    #[test]
-    fn test_boundary_cases() {
-        let re = Regex::new(r"foo\s*bar").unwrap();
-        // At start of string
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "foo bar baz",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "TEST"
-            ),
-            Some("TEST baz".to_string())
-        );
-        // At end of string
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "baz foo bar",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "TEST"
-            ),
-            Some("baz TEST".to_string())
-        );
-        // With punctuation
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "(foo bar)",
-                &add_boundaries(SearchType::Pattern(re)),
-                "TEST"
-            ),
-            Some("(TEST)".to_string())
-        );
-    }
-
-    #[test]
-    fn test_with_punctuation() {
-        let re = Regex::new(r"a\d+b").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "(a123b)",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            Some("(X)".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "foo.a123b!bar",
-                &add_boundaries(SearchType::Pattern(re)),
-                "X"
-            ),
-            Some("foo.X!bar".to_string())
-        );
-    }
-
-    #[test]
-    fn test_complex_patterns() {
-        let re = Regex::new(r"[a-z]+\d+[a-z]+").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "test9 abc123def 8xyz",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "NEW"
-            ),
-            Some("test9 NEW 8xyz".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "test9abc123def8xyz",
-                &add_boundaries(SearchType::Pattern(re)),
-                "NEW"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn test_optional_patterns() {
-        let re = Regex::new(r"colou?r").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "my color and colour",
-                &add_boundaries(SearchType::Pattern(re)),
-                "X"
-            ),
-            Some("my X and X".to_string())
-        );
-    }
-
-    #[test]
-    fn test_empty_haystack() {
-        let re = Regex::new(r"test").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex("", &add_boundaries(SearchType::Pattern(re)), "NEW"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_empty_search_regex() {
-        let re = Regex::new(r"").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "search",
-                &add_boundaries(SearchType::Pattern(re)),
-                "NEW"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn test_single_char() {
-        let re = Regex::new(r"a").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "b a c",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            Some("b X c".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex("bac", &add_boundaries(SearchType::Pattern(re)), "X"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_escaped_chars() {
-        let re = Regex::new(r"\(\d+\)").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "test (123) foo",
-                &add_boundaries(SearchType::Pattern(re)),
-                "X"
-            ),
-            Some("test X foo".to_string())
-        );
-    }
-
-    #[test]
-    fn test_with_unicode() {
-        let re = Regex::new(r"λ\d+").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "calc λ123 β",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "X"
-            ),
-            Some("calc X β".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "calcλ123",
-                &add_boundaries(SearchType::Pattern(re)),
-                "X"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn test_multiline_patterns() {
-        let re = Regex::new(r"foo\s*\n\s*bar").unwrap();
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "test foo\nbar end",
-                &add_boundaries(SearchType::Pattern(re.clone())),
-                "NEW"
-            ),
-            Some("test NEW end".to_string())
-        );
-        assert_eq!(
-            replace_whole_word_if_match_regex(
-                "test foo\n  bar end",
-                &add_boundaries(SearchType::Pattern(re)),
-                "NEW"
-            ),
-            Some("test NEW end".to_string())
-        );
+        #[test]
+        fn test_case_insensitive() {
+            assert_eq!(
+                replacement_if_match_any(
+                    "HELLO world",
+                    &SearchType::Pattern(Regex::new(r"(?i)hello").unwrap()),
+                    "REPL"
+                ),
+                Some("REPL world".to_string())
+            );
+            assert_eq!(
+                replacement_if_match_any(
+                    "HELLO world",
+                    &SearchType::PatternAdvanced(FancyRegex::new(r"(?i)hello").unwrap()),
+                    "REPL"
+                ),
+                Some("REPL world".to_string())
+            );
+        }
     }
 }
