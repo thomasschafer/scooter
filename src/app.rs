@@ -10,6 +10,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
 use std::{
     collections::HashMap,
+    env::current_dir,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
@@ -443,7 +444,7 @@ impl App {
     ) -> Self {
         let directory = match directory {
             Some(d) => d,
-            None => std::env::current_dir().unwrap(),
+            None => current_dir().unwrap(),
         };
         let search_fields =
             SearchFields::with_values("", "", false, false, "").with_advanced_regex(advanced_regex);

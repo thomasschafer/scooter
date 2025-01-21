@@ -318,7 +318,7 @@ macro_rules! test_with_both_regex_modes {
 test_with_both_regex_modes!(
     test_perform_search_fixed_string,
     |advanced_regex: bool| async move {
-        let temp_dir = create_test_files! {
+        let temp_dir = create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -334,7 +334,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
         let search_fields = SearchFields::with_values(".*", "example", true, false, "")
             .with_advanced_regex(advanced_regex);
@@ -374,7 +374,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -390,7 +390,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
         let search_fields = SearchFields::with_values(r"\b\w+ing\b", "VERB", false, false, "")
             .with_advanced_regex(advanced_regex);
@@ -430,7 +430,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_no_matches,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -446,7 +446,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
         let search_fields =
             SearchFields::with_values("nonexistent-string", "replacement", true, false, "")
@@ -487,7 +487,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_invalid_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -503,7 +503,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
         let search_fields =
             SearchFields::with_values("[invalid regex", "replacement", false, false, "")
@@ -522,7 +522,7 @@ test_with_both_regex_modes!(
 #[tokio::test]
 #[serial]
 async fn test_advanced_regex_negative_lookahead() {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "file1.txt" => {
             "This is a test file",
             "It contains some test content",
@@ -538,7 +538,7 @@ async fn test_advanced_regex_negative_lookahead() {
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
         }
-    };
+    );
 
     let search_fields = SearchFields::with_values("(test)(?!ing)", "BAR", false, false, "")
         .with_advanced_regex(true);
@@ -577,7 +577,7 @@ async fn test_advanced_regex_negative_lookahead() {
 test_with_both_regex_modes!(
     test_update_search_results_filtered_dir,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -593,7 +593,7 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something testing",
             }
-        };
+        );
 
         let search_fields = SearchFields::with_values("testing", "f", false, false, "dir2")
             .with_advanced_regex(advanced_regex);
@@ -631,7 +631,7 @@ test_with_both_regex_modes!(
 );
 
 test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async move {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "dir1/file1.txt" => {
             "This is a text file",
         },
@@ -641,7 +641,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         "file3.txt" => {
             "This is a text file",
         }
-    };
+    );
 
     let search_fields =
         SearchFields::with_values("is", "", false, false, "").with_advanced_regex(advanced_regex);
@@ -674,7 +674,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
 test_with_both_regex_modes!(
     test_ignores_hidden_files_by_default,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -684,7 +684,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
 
         let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);
@@ -718,7 +718,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_includes_hidden_files_with_flag,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -728,7 +728,7 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
 
         let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);

@@ -73,12 +73,12 @@ type TestRunner = (
     UnboundedReceiver<String>,
 );
 
-fn build_test_runner(directory: Option<&Path>) -> anyhow::Result<TestRunner> {
+fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
     let backend = TestBackend::new(80, 24);
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
         hidden: false,
-        advanced_regex: false,
+        advanced_regex,
         log_level: LevelFilter::Warn,
     };
 
@@ -126,7 +126,7 @@ fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
 
 #[tokio::test]
 async fn test_search_current_dir() -> anyhow::Result<()> {
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None)?;
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
     wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
 
@@ -141,7 +141,7 @@ async fn test_search_current_dir() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "dir1/file1.txt" => {
             "This is some test content before 123",
             "  with some spaces at the start",
@@ -156,9 +156,10 @@ async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
             "    return super_long_name_really_before_long_name_very_long_name",
             "test_dict = {\"key1\": [1,2,3], 123: \"num key\", (\"a\",\"b\"): True, \"before\": 1, \"test-key\": None}",
         },
-    };
+    );
 
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(Some(temp_dir.path()))?;
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?; // TODO: test with both false and true
 
     wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
 
@@ -218,13 +219,14 @@ async fn test_search_and_replace_simple_dir() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_search_and_replace_no_matches() -> anyhow::Result<()> {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "dir1/file1.txt" => {
             "This is some test content 123",
         },
-    };
+    );
 
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(Some(temp_dir.path()))?;
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?; // TODO: test with both false and true
 
     wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
 
@@ -262,9 +264,10 @@ async fn test_search_and_replace_no_matches() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_search_and_replace_empty_dir() -> anyhow::Result<()> {
-    let temp_dir = &create_test_files! {};
+    let temp_dir = &create_test_files!();
 
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(Some(temp_dir.path()))?;
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?; // TODO: test with both false and true
 
     wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
 
@@ -288,4 +291,216 @@ async fn test_search_and_replace_empty_dir() -> anyhow::Result<()> {
     shutdown(event_sender, run_handle).await
 }
 
-// TODO: add tests for whole word matching, using fixed strings, standard + fancy regex
+#[tokio::test]
+async fn test_search_and_replace_whole_words() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "dir1/file1.txt" => {
+            "this is something",
+            "some text someone abcsome123",
+            "some",
+            "dashes-some-text",
+            "slashes and commas/some,text",
+            "moresometext",
+            "text some",
+        },
+        "file2.py" => {
+            "print('Hello, some world!')",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?; // TODO: test with both false and true
+
+    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+
+    send_chars("some", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("REPLACE", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars(" ", &event_sender); // Toggle on whole word matching
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+
+    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+
+    // Nothing should have changed yet
+    assert_test_files!(
+        &temp_dir,
+        "dir1/file1.txt" => {
+            "this is something",
+            "some text someone abcsome123",
+            "some",
+            "dashes-some-text",
+            "slashes and commas/some,text",
+            "moresometext",
+            "text some",
+        },
+        "file2.py" => {
+            "print('Hello, some world!')",
+        },
+    );
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+
+    // Verify that "before" has been replaced with "after"
+    assert_test_files!(
+        &temp_dir,
+        "dir1/file1.txt" => {
+            "this is something",
+            "REPLACE text someone abcsome123",
+            "REPLACE",
+            "dashes-REPLACE-text",
+            "slashes and commas/REPLACE,text",
+            "moresometext",
+            "text REPLACE",
+        },
+        "file2.py" => {
+            "print('Hello, REPLACE world!')",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_search_and_replace_regex_capture_group() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "phones.txt" => {
+            "Phone: (020) 7123-4567",
+            "Another: (0161) 4969-8523",
+            "Different format: 020.7123.4567",
+            "Also different: 020-7123-4567",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?; // TODO: use both false and true
+
+    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+
+    send_chars(r"\((\d{3,4})\)\s(\d{4})-(\d{4})", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("+44 $2 $1-$3", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+
+    // Nothing should have changed yet
+    assert_test_files!(
+        &temp_dir,
+        "phones.txt" => {
+            "Phone: (020) 7123-4567",
+            "Another: (0161) 4969-8523",
+            "Different format: 020.7123.4567",
+            "Also different: 020-7123-4567",
+        },
+    );
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+
+    // Verify only matching phone numbers are reformatted
+    assert_test_files!(
+        &temp_dir,
+        "phones.txt" => {
+            "Phone: +44 7123 020-4567",
+            "Another: +44 4969 0161-8523",
+            "Different format: 020.7123.4567",
+            "Also different: 020-7123-4567",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+
+    // Match 'let' declarations that aren't mutable
+    // Use negative lookbehind for function parameters and negative lookahead for mut
+    send_chars(r"(?<!mut\s)let\s(?!mut\s)(\w+)", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("let /* immutable */ $1", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+
+    // Nothing should have changed yet
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+
+    // Verify only non-mutable declarations are modified
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let /* immutable */ total = 0;",
+            "    let /* immutable */ values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let /* immutable */ result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let /* immutable */ multiplier = 2;",
+            "    let /* immutable */ base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+// TODO: add tests for using fixed strings, standard + fancy regex
