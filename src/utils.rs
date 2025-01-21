@@ -73,6 +73,40 @@ macro_rules! test_with_both_regex_modes {
     };
 }
 
+#[macro_export]
+macro_rules! test_with_both_regex_modes_and_fixed_strings {
+    ($name:ident, $test_fn:expr) => {
+        mod $name {
+            use super::*;
+            use serial_test::serial;
+
+            #[tokio::test]
+            #[serial]
+            async fn with_advanced_regex_no_fixed_strings() -> anyhow::Result<()> {
+                ($test_fn)(true, false).await
+            }
+
+            #[tokio::test]
+            #[serial]
+            async fn with_advanced_regex_fixed_strings() -> anyhow::Result<()> {
+                ($test_fn)(true, true).await
+            }
+
+            #[tokio::test]
+            #[serial]
+            async fn without_advanced_regex_no_fixed_strings() -> anyhow::Result<()> {
+                ($test_fn)(false, false).await
+            }
+
+            #[tokio::test]
+            #[serial]
+            async fn without_advanced_regex_fixed_strings() -> anyhow::Result<()> {
+                ($test_fn)(false, true).await
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

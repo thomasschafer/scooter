@@ -5,7 +5,7 @@ use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use scooter::{
     app_runner::{AppConfig, AppRunner},
-    test_with_both_regex_modes,
+    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
 };
 use std::{io, path::Path, pin::Pin, task::Poll};
 use tokio::{
@@ -269,9 +269,9 @@ test_with_both_regex_modes!(
     }
 );
 
-test_with_both_regex_modes!(
+test_with_both_regex_modes_and_fixed_strings!(
     test_search_and_replace_empty_dir,
-    |advanced_regex| async move {
+    |advanced_regex, fixed_strings| async move {
         let temp_dir = &create_test_files!();
 
         let (run_handle, event_sender, mut snapshot_rx) =
@@ -282,6 +282,10 @@ test_with_both_regex_modes!(
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("after", &event_sender);
+        if fixed_strings {
+            send_key(KeyCode::Tab, &event_sender);
+            send_chars(" ", &event_sender); // Toggle on fixed strings
+        }
         send_key(KeyCode::Enter, &event_sender);
 
         wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
@@ -300,9 +304,9 @@ test_with_both_regex_modes!(
     }
 );
 
-test_with_both_regex_modes!(
+test_with_both_regex_modes_and_fixed_strings!(
     test_search_and_replace_whole_words,
-    |advanced_regex| async move {
+    |advanced_regex, fixed_strings| async move {
         let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "this is something",
@@ -327,6 +331,9 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Tab, &event_sender);
         send_chars("REPLACE", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
+        if fixed_strings {
+            send_chars(" ", &event_sender); // Toggle on fixed strings
+        }
         send_key(KeyCode::Tab, &event_sender);
         send_chars(" ", &event_sender); // Toggle on whole word matching
         send_key(KeyCode::Enter, &event_sender);
