@@ -13,7 +13,6 @@ use crate::{
     utils::relative_path_from,
 };
 
-// TODO: add end-to-end tests for this
 fn replace_whole_word_if_match_regex(
     haystack: &str,
     search: &FancyRegexWithBoundaries,

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
-    App, EventHandlingResult, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
-    SearchState,
+    test_with_both_regex_modes, App, EventHandlingResult, ReplaceResult, ReplaceState, Screen,
+    SearchFields, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -294,27 +294,6 @@ async fn search_and_replace_test(
     }
 }
 
-macro_rules! test_with_both_regex_modes {
-    ($name:ident, $test_fn:expr) => {
-        mod $name {
-            use super::*;
-
-            // TODO: run max n at a time, rather than serially
-            #[tokio::test]
-            #[serial]
-            async fn with_advanced_regex() {
-                ($test_fn)(true).await;
-            }
-
-            #[tokio::test]
-            #[serial]
-            async fn without_advanced_regex() {
-                ($test_fn)(false).await;
-            }
-        }
-    };
-}
-
 test_with_both_regex_modes!(
     test_perform_search_fixed_string,
     |advanced_regex: bool| async move {
@@ -368,6 +347,7 @@ test_with_both_regex_modes!(
                 "something",
             }
         );
+        Ok(())
     }
 );
 
@@ -424,6 +404,7 @@ test_with_both_regex_modes!(
                 "VERB",
             }
         );
+        Ok(())
     }
 );
 
@@ -481,6 +462,7 @@ test_with_both_regex_modes!(
                 "something",
             }
         );
+        Ok(())
     }
 );
 
@@ -516,6 +498,7 @@ test_with_both_regex_modes!(
         process_bp_events(&mut app).await;
         assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there
         assert!(matches!(app.current_screen, Screen::SearchFields));
+        Ok(())
     }
 );
 
@@ -627,6 +610,7 @@ test_with_both_regex_modes!(
                 "something f",
             }
         );
+        Ok(())
     }
 );
 
@@ -669,6 +653,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
             "Th  a text file",
         }
     );
+    Ok(())
 });
 
 test_with_both_regex_modes!(
@@ -712,6 +697,7 @@ test_with_both_regex_modes!(
                 "This is a hidden text file",
             }
         );
+        Ok(())
     }
 );
 
@@ -756,6 +742,7 @@ test_with_both_regex_modes!(
                 "This REPLACED a hidden text file",
             }
         );
+        Ok(())
     }
 );
 

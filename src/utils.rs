@@ -51,6 +51,28 @@ pub fn validate_directory(dir_str: &str) -> Result<PathBuf> {
     }
 }
 
+#[macro_export]
+macro_rules! test_with_both_regex_modes {
+    ($name:ident, $test_fn:expr) => {
+        mod $name {
+            use super::*;
+            use serial_test::serial;
+
+            #[tokio::test]
+            #[serial]
+            async fn with_advanced_regex() -> anyhow::Result<()> {
+                ($test_fn)(true).await
+            }
+
+            #[tokio::test]
+            #[serial]
+            async fn without_advanced_regex() -> anyhow::Result<()> {
+                ($test_fn)(false).await
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
