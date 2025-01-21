@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::{parsed_fields::SearchType, CheckboxField, SearchFields, TextField};
+use scooter::{replace::SearchType, CheckboxField, SearchFields, TextField};
 
 #[test]
 fn test_text_field_operations() {
@@ -67,7 +67,7 @@ fn test_checkbox_field() {
 
 #[test]
 fn test_search_fields() {
-    let mut search_fields = SearchFields::with_values("", "", false, "");
+    let mut search_fields = SearchFields::with_values("", "", false, false, "");
 
     // Test focus navigation
     assert_eq!(search_fields.highlighted, 0);
@@ -78,9 +78,11 @@ fn test_search_fields() {
     search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 3);
     search_fields.focus_next();
+    assert_eq!(search_fields.highlighted, 4);
+    search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 0);
     search_fields.focus_prev();
-    assert_eq!(search_fields.highlighted, 3);
+    assert_eq!(search_fields.highlighted, 4);
     search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 0);
 

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
-    App, EventHandlingResult, ReplaceResult, ReplaceState, Screen, SearchFields, SearchResult,
-    SearchState,
+    test_with_both_regex_modes, App, EventHandlingResult, ReplaceResult, ReplaceState, Screen,
+    SearchFields, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -141,7 +141,7 @@ async fn test_back_from_results() {
         results: vec![],
         selected: 0,
     });
-    app.search_fields = SearchFields::with_values("foo", "bar", true, "pattern");
+    app.search_fields = SearchFields::with_values("foo", "bar", true, false, "pattern");
 
     let res = app
         .handle_key_event(&KeyEvent {
@@ -165,7 +165,7 @@ async fn test_error_popup() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
     app.search_fields =
-        SearchFields::with_values("search invalid regex(", "replacement", false, "");
+        SearchFields::with_values("search invalid regex(", "replacement", false, false, "");
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
@@ -294,31 +294,10 @@ async fn search_and_replace_test(
     }
 }
 
-macro_rules! test_with_both_regex_modes {
-    ($name:ident, $test_fn:expr) => {
-        mod $name {
-            use super::*;
-
-            // TODO: run max n at a time, rather than serially
-            #[tokio::test]
-            #[serial]
-            async fn with_advanced_regex() {
-                ($test_fn)(true).await;
-            }
-
-            #[tokio::test]
-            #[serial]
-            async fn without_advanced_regex() {
-                ($test_fn)(false).await;
-            }
-        }
-    };
-}
-
 test_with_both_regex_modes!(
     test_perform_search_fixed_string,
     |advanced_regex: bool| async move {
-        let temp_dir = create_test_files! {
+        let temp_dir = create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -334,9 +313,9 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values(".*", "example", true, "")
+        let search_fields = SearchFields::with_values(".*", "example", true, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             &temp_dir,
@@ -368,13 +347,14 @@ test_with_both_regex_modes!(
                 "something",
             }
         );
+        Ok(())
     }
 );
 
 test_with_both_regex_modes!(
     test_update_search_results_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -390,9 +370,9 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values(r"\b\w+ing\b", "VERB", false, "")
+        let search_fields = SearchFields::with_values(r"\b\w+ing\b", "VERB", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -424,13 +404,14 @@ test_with_both_regex_modes!(
                 "VERB",
             }
         );
+        Ok(())
     }
 );
 
 test_with_both_regex_modes!(
     test_update_search_results_no_matches,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -446,10 +427,10 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
         let search_fields =
-            SearchFields::with_values("nonexistent-string", "replacement", true, "")
+            SearchFields::with_values("nonexistent-string", "replacement", true, false, "")
                 .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -481,13 +462,14 @@ test_with_both_regex_modes!(
                 "something",
             }
         );
+        Ok(())
     }
 );
 
 test_with_both_regex_modes!(
     test_update_search_results_invalid_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -503,10 +485,11 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values("[invalid regex", "replacement", false, "")
-            .with_advanced_regex(advanced_regex);
+        let search_fields =
+            SearchFields::with_values("[invalid regex", "replacement", false, false, "")
+                .with_advanced_regex(advanced_regex);
         let mut app = setup_app(temp_dir, search_fields, false);
 
         let res = app.perform_search_if_valid();
@@ -515,13 +498,14 @@ test_with_both_regex_modes!(
         process_bp_events(&mut app).await;
         assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there
         assert!(matches!(app.current_screen, Screen::SearchFields));
+        Ok(())
     }
 );
 
 #[tokio::test]
 #[serial]
 async fn test_advanced_regex_negative_lookahead() {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "file1.txt" => {
             "This is a test file",
             "It contains some test content",
@@ -537,10 +521,10 @@ async fn test_advanced_regex_negative_lookahead() {
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
         }
-    };
+    );
 
-    let search_fields =
-        SearchFields::with_values("(test)(?!ing)", "BAR", false, "").with_advanced_regex(true);
+    let search_fields = SearchFields::with_values("(test)(?!ing)", "BAR", false, false, "")
+        .with_advanced_regex(true);
     search_and_replace_test(
         temp_dir,
         search_fields,
@@ -576,7 +560,7 @@ async fn test_advanced_regex_negative_lookahead() {
 test_with_both_regex_modes!(
     test_update_search_results_filtered_dir,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -592,9 +576,9 @@ test_with_both_regex_modes!(
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something testing",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values("testing", "f", false, "dir2")
+        let search_fields = SearchFields::with_values("testing", "f", false, false, "dir2")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -626,11 +610,12 @@ test_with_both_regex_modes!(
                 "something f",
             }
         );
+        Ok(())
     }
 );
 
 test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async move {
-    let temp_dir = &create_test_files! {
+    let temp_dir = &create_test_files!(
         "dir1/file1.txt" => {
             "This is a text file",
         },
@@ -640,10 +625,10 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         "file3.txt" => {
             "This is a text file",
         }
-    };
+    );
 
     let search_fields =
-        SearchFields::with_values("is", "", false, "").with_advanced_regex(advanced_regex);
+        SearchFields::with_values("is", "", false, false, "").with_advanced_regex(advanced_regex);
     search_and_replace_test(
         temp_dir,
         search_fields,
@@ -668,12 +653,13 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
             "Th  a text file",
         }
     );
+    Ok(())
 });
 
 test_with_both_regex_modes!(
     test_ignores_hidden_files_by_default,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -683,9 +669,9 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, "")
+        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -711,13 +697,14 @@ test_with_both_regex_modes!(
                 "This is a hidden text file",
             }
         );
+        Ok(())
     }
 );
 
 test_with_both_regex_modes!(
     test_includes_hidden_files_with_flag,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files! {
+        let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -727,9 +714,9 @@ test_with_both_regex_modes!(
             ".file3.txt" => {
                 "This is a hidden text file",
             }
-        };
+        );
 
-        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, "")
+        let search_fields = SearchFields::with_values(r"\bis\b", "REPLACED", false, false, "")
             .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -755,6 +742,7 @@ test_with_both_regex_modes!(
                 "This REPLACED a hidden text file",
             }
         );
+        Ok(())
     }
 );
 

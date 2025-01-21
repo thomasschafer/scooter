@@ -2,7 +2,7 @@ pub mod app;
 pub mod app_runner;
 pub mod fields;
 pub mod logging;
-pub mod parsed_fields;
+pub mod replace;
 pub mod tui;
 pub mod ui;
 pub mod utils;
