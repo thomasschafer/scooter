@@ -243,6 +243,7 @@ pub enum FieldName {
     FixedStrings,
     WholeWord,
     PathPattern,
+    MatchCase,
 }
 
 pub struct SearchField {
@@ -250,7 +251,7 @@ pub struct SearchField {
     pub field: Arc<RwLock<Field>>,
 }
 
-pub const NUM_SEARCH_FIELDS: usize = 5;
+pub const NUM_SEARCH_FIELDS: usize = 6;
 
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
@@ -309,6 +310,7 @@ impl SearchFields {
         CheckboxField
     );
     define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, CheckboxField);
+    define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, CheckboxField);
     define_field_accessor!(path_pattern, FieldName::PathPattern, Text, TextField);
 
     define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
@@ -319,6 +321,7 @@ impl SearchFields {
         replace: impl Into<String>,
         fixed_strings: bool,
         whole_word: bool,
+        match_case: bool,
         filename_pattern: impl Into<String>,
     ) -> Self {
         Self {
@@ -338,6 +341,10 @@ impl SearchFields {
                 SearchField {
                     name: FieldName::WholeWord,
                     field: Arc::new(RwLock::new(Field::checkbox(whole_word))),
+                },
+                SearchField {
+                    name: FieldName::MatchCase,
+                    field: Arc::new(RwLock::new(Field::checkbox(match_case))),
                 },
                 SearchField {
                     name: FieldName::PathPattern,
@@ -446,8 +453,8 @@ impl App {
             Some(d) => d,
             None => current_dir().unwrap(),
         };
-        let search_fields =
-            SearchFields::with_values("", "", false, false, "").with_advanced_regex(advanced_regex);
+        let search_fields = SearchFields::with_values("", "", false, false, false, "")
+            .with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
@@ -805,6 +812,7 @@ impl App {
             search_pattern,
             self.search_fields.replace().text(),
             self.search_fields.whole_word().checked,
+            self.search_fields.match_case().checked,
             path_pattern,
             self.directory.clone(),
             self.include_hidden,

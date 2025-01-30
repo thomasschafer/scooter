@@ -98,15 +98,18 @@ pub struct ParsedFields {
 
 impl ParsedFields {
     // TODO: add tests for instantiating and handling paths
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         search: SearchType,
         replace: String,
         whole_word: bool,
+        match_case: bool,
         path_pattern: Option<SearchType>,
         root_dir: PathBuf,
         include_hidden: bool,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> Self {
+        // TODO: use match_case
         let search_match_type = if whole_word {
             SearchMatchType::WholeWord(add_boundaries(search))
         } else {
