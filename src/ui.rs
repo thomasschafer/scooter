@@ -24,6 +24,7 @@ impl FieldName {
             FieldName::Replace => "Replace text",
             FieldName::FixedStrings => "Fixed strings",
             FieldName::WholeWord => "Match whole word",
+            FieldName::MatchCase => "Match case",
             FieldName::PathPattern => "Path pattern (regex)",
         }
     }

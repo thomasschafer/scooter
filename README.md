@@ -38,6 +38,7 @@ When on the search screen the following fields are available:
 - **Replace text**: Text to replace the search text with. If searching with regex, this can include capture groups.
 - **Fixed strings**: If enabled, search with plain case-sensitive strings. If disabled, search with regex.
 - **Match whole word**: If enabled, only match when the search string forms the entire word and not a substring in a larger word. For instance, if the search string is "foo", "foo bar" would be matched but not "foobar".
+- **Match case**: If enabled, match the case of the search string exactly, e.g. a search string of `Bar` would match `foo Bar baz` but not `foo bar baz`.
 - **Path pattern (regex)**: Regex pattern that file paths must match. The relative path of the file is matched against: for instance, if searching in `/foo/`, if the path pattern is set to `bar` then `/foo/bar.txt` and `/foo/bar/file.rs` will be included. In the same example, if the path pattern is set to `foo` then `/foo/bar.txt` will *not* be included, but `/foo/foo.txt` will be.
 
 ## Installation
