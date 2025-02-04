@@ -911,14 +911,20 @@ impl App {
         let mut line_map: HashMap<_, _> =
             HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
 
-        let temp_output_file = NamedTempFile::new()?;
+        let parent_dir = file_path.parent().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot create temp file: target path '{}' has no parent directory",
+                file_path.display()
+            )
+        })?;
+        let temp_output_file = NamedTempFile::new_in(parent_dir)?;
 
         // Scope the file operations so they're closed before rename
         {
             let input = File::open(&file_path).await?;
             let reader = BufReader::new(input);
 
-            let output = File::create(&temp_output_file.path()).await?;
+            let output = File::create(temp_output_file.path()).await?;
             let mut writer = BufWriter::new(output);
 
             let mut lines = reader.lines();
@@ -942,7 +948,7 @@ impl App {
             writer.flush().await?;
         }
 
-        temp_output_file.persist(file_path)?;
+        temp_output_file.persist(&file_path)?;
         Ok(())
     }
 
