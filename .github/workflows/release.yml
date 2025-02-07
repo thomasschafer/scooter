@@ -118,12 +118,10 @@ jobs:
         VERSION="${{ needs.prepare-release.outputs.version }}"
         if [ "${{ runner.os }}" = "Windows" ]; then
           ARCHIVE="${{ env.BINARY_NAME }}-v${VERSION}-${{ matrix.target }}.zip"
-          mv "${{ env.BINARY_NAME }}.exe" "${{ env.BINARY_NAME }}-${{ matrix.target }}.exe"
-          7z a "$ARCHIVE" "${{ env.BINARY_NAME }}-${{ matrix.target }}.exe"
+          7z a "$ARCHIVE" "${{ env.BINARY_NAME }}.exe"
         else
           ARCHIVE="${{ env.BINARY_NAME }}-v${VERSION}-${{ matrix.target }}.tar.gz"
-          mv "${{ env.BINARY_NAME }}" "${{ env.BINARY_NAME }}-${{ matrix.target }}"
-          tar -czvf "$ARCHIVE" "${{ env.BINARY_NAME }}-${{ matrix.target }}"
+          tar -czvf "$ARCHIVE" "${{ env.BINARY_NAME }}"
         fi
 
         # Generate checksums
@@ -139,12 +137,12 @@ jobs:
         case "${{ matrix.target }}" in
           *windows*)
             7z x -y "$ASSET"
-            ./${{ env.BINARY_NAME }}-${{ matrix.target }}.exe --version ;;
+            ./${{ env.BINARY_NAME }}.exe --version ;;
           aarch64*)
             echo "Can't test an ARM binary on a AMD64 runner" ;;
           *)
             tar -xvzf "$ASSET"
-            ./${{ env.BINARY_NAME }}-${{ matrix.target }} --version ;;
+            ./${{ env.BINARY_NAME }} --version ;;
         esac
 
     - name: Upload to release
