@@ -286,44 +286,41 @@ impl Field {
             block = block.border_style(Style::new().green());
         }
 
-        let outer_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(1)])
-            .split(area);
+        let (title_with_error, title_style) = if let Some(error) = self.error() {
+            (format!("{title} (Error: {})", error.short), Color::Red)
+        } else {
+            (
+                title.to_string(),
+                if highlighted {
+                    Color::Green
+                } else {
+                    Color::Reset
+                },
+            )
+        };
 
         match self {
             Field::Text(f) => {
-                block = block.title(title);
-                frame.render_widget(Paragraph::new(f.text()).block(block), outer_chunks[0]);
+                block = block.title(title_with_error).title_style(title_style);
+                frame.render_widget(Paragraph::new(f.text()).block(block), area);
             }
             Field::Checkbox(f) => {
                 let inner_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Length(5), Constraint::Min(0)])
-                    .split(outer_chunks[0]);
+                    .split(area);
                 frame.render_widget(
                     Paragraph::new(if f.checked { " X " } else { "" }).block(block),
                     inner_chunks[0],
                 );
                 frame.render_widget(
                     Paragraph::new(Text::styled(
-                        format!("\n {}", title),
-                        if highlighted {
-                            Color::Green
-                        } else {
-                            Color::Reset
-                        },
+                        format!("\n {}", title_with_error),
+                        title_style,
                     )),
                     inner_chunks[1],
                 );
             }
         }
-
-        if let Some(error) = self.error() {
-            frame.render_widget(
-                Paragraph::new(Text::styled(format!("Error: {}", error.short), Color::Red)),
-                outer_chunks[1],
-            );
-        };
     }
 }

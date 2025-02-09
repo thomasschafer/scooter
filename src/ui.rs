@@ -35,7 +35,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
         .flex(Flex::Center)
         .areas(rect);
     let areas: [Rect; NUM_SEARCH_FIELDS] =
-        Layout::vertical(iter::repeat(Constraint::Length(4)).take(app.search_fields.fields.len()))
+        Layout::vertical(iter::repeat(Constraint::Length(3)).take(app.search_fields.fields.len()))
             .flex(Flex::Center)
             .areas(area);
 
