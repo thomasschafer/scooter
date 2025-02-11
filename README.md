@@ -42,13 +42,7 @@ When on the search screen the following fields are available:
 
 ## Installation
 
-### Cargo
-
-Ensure you have cargo installed (see [here](https://doc.rust-lang.org/cargo/getting-started/installation.html)), then run:
-
-```sh
-cargo install scooter
-```
+[![Packaging status](https://repology.org/badge/vertical-allrepos/scooter.svg)](https://repology.org/project/scooter/versions)
 
 ### Homebrew
 
@@ -74,6 +68,14 @@ You can download binaries from the [releases page](https://github.com/thomasscha
   - Intel: `*-x86_64-apple-darwin.tar.gz`
 - **Windows**
   - `*-x86_64-pc-windows-msvc.zip`
+
+### Cargo
+
+Ensure you have cargo installed (see [here](https://doc.rust-lang.org/cargo/getting-started/installation.html)), then run:
+
+```sh
+cargo install scooter
+```
 
 ### Building from source
 
