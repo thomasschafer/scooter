@@ -42,6 +42,8 @@ When on the search screen the following fields are available:
 
 ## Installation
 
+[![Packaging status](https://repology.org/badge/vertical-allrepos/scooter.svg)](https://repology.org/project/scooter/versions)
+
 ### Cargo
 
 Ensure you have cargo installed (see [here](https://doc.rust-lang.org/cargo/getting-started/installation.html)), then run:
