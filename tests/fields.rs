@@ -80,9 +80,11 @@ fn test_search_fields() {
     search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 4);
     search_fields.focus_next();
+    assert_eq!(search_fields.highlighted, 5);
+    search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 0);
     search_fields.focus_prev();
-    assert_eq!(search_fields.highlighted, 4);
+    assert_eq!(search_fields.highlighted, 5);
     search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 0);
 
