@@ -9,7 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
 
 use crate::{
-    app::{BackgroundProcessingEvent, SearchResult},
+    app::{BackgroundProcessingEvent, SearchFieldValues, SearchResult},
     utils::relative_path_from,
 };
 
@@ -66,10 +66,11 @@ fn convert_regex(search: SearchType, whole_word: bool, match_case: bool) -> Sear
     };
 
     if whole_word {
-        search_regex_str = format!(r"(?<![a-zA-Z0-9_]){}(?![a-zA-Z0-9_])", search_regex_str);
+        search_regex_str = format!(r"(?<![a-zA-Z0-9_]){search_regex_str}(?![a-zA-Z0-9_])");
     }
-
-    assert!(!match_case); // TODO: implement
+    if !match_case {
+        search_regex_str = format!(r"(?i){search_regex_str}");
+    }
 
     let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
     SearchType::PatternAdvanced(fancy_regex)
@@ -100,10 +101,12 @@ impl ParsedFields {
         include_hidden: bool,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> Self {
-        let search = match (whole_word, match_case) {
-            (false, false) => search,
-            // TODO: use struct for `whole_word`and `match_case` rather than passing in bools
-            (_, _) => convert_regex(search, whole_word, match_case),
+        let search = if whole_word == SearchFieldValues::whole_word_default()
+            && match_case == SearchFieldValues::match_case_default()
+        {
+            search
+        } else {
+            convert_regex(search, whole_word, match_case)
         };
         Self {
             search,
@@ -271,7 +274,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "Hello WORLD",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(SearchType::Fixed("world".to_string()), true, true),
                     "earth"
                 ),
                 None
@@ -279,7 +282,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "Hello world",
-                    &convert_regex(SearchType::Fixed("wOrld".to_string()), true, false),
+                    &convert_regex(SearchType::Fixed("wOrld".to_string()), true, true),
                     "earth"
                 ),
                 None

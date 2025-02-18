@@ -246,6 +246,43 @@ pub enum FieldName {
     MatchCase,
 }
 
+pub struct SearchFieldValues<'a> {
+    pub search: &'a str,
+    pub replace: &'a str,
+    pub fixed_strings: bool,
+    pub whole_word: bool,
+    pub match_case: bool,
+    pub filename_pattern: &'a str,
+}
+
+impl<'a> SearchFieldValues<'a> {
+    const DEFAULT_SEARCH: &'static str = "";
+    const DEFAULT_REPLACE: &'static str = "";
+    const DEFAULT_FIXED_STRINGS: bool = false;
+    const DEFAULT_WHOLE_WORD: bool = false;
+    const DEFAULT_MATCH_CASE: bool = true;
+    const DEFAULT_FILENAME_PATTERN: &'static str = "";
+
+    pub fn default() -> SearchFieldValues<'a> {
+        Self {
+            search: Self::DEFAULT_SEARCH,
+            replace: Self::DEFAULT_REPLACE,
+            fixed_strings: Self::DEFAULT_FIXED_STRINGS,
+            whole_word: Self::DEFAULT_WHOLE_WORD,
+            match_case: Self::DEFAULT_MATCH_CASE,
+            filename_pattern: Self::DEFAULT_FILENAME_PATTERN,
+        }
+    }
+
+    pub fn whole_word_default() -> bool {
+        Self::DEFAULT_WHOLE_WORD
+    }
+
+    pub fn match_case_default() -> bool {
+        Self::DEFAULT_MATCH_CASE
+    }
+}
+
 pub struct SearchField {
     pub name: FieldName,
     pub field: Arc<RwLock<Field>>,
@@ -299,6 +336,7 @@ macro_rules! define_field_accessor_mut {
         }
     };
 }
+
 impl SearchFields {
     // TODO: generate these automatically?
     define_field_accessor!(search, FieldName::Search, Text, TextField);
@@ -316,45 +354,46 @@ impl SearchFields {
     define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
     define_field_accessor_mut!(path_pattern_mut, FieldName::PathPattern, Text, TextField);
 
-    pub fn with_values(
-        search: impl Into<String>,
-        replace: impl Into<String>,
-        fixed_strings: bool,
-        whole_word: bool,
-        match_case: bool,
-        filename_pattern: impl Into<String>,
-    ) -> Self {
+    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         Self {
             fields: [
                 SearchField {
                     name: FieldName::Search,
-                    field: Arc::new(RwLock::new(Field::text(search.into()))),
+                    field: Arc::new(RwLock::new(Field::text(search_field_values.search))),
                 },
                 SearchField {
                     name: FieldName::Replace,
-                    field: Arc::new(RwLock::new(Field::text(replace.into()))),
+                    field: Arc::new(RwLock::new(Field::text(search_field_values.replace))),
                 },
                 SearchField {
                     name: FieldName::FixedStrings,
-                    field: Arc::new(RwLock::new(Field::checkbox(fixed_strings))),
+                    field: Arc::new(RwLock::new(Field::checkbox(
+                        search_field_values.fixed_strings,
+                    ))),
                 },
                 SearchField {
                     name: FieldName::WholeWord,
-                    field: Arc::new(RwLock::new(Field::checkbox(whole_word))),
+                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.whole_word))),
                 },
                 SearchField {
                     name: FieldName::MatchCase,
-                    field: Arc::new(RwLock::new(Field::checkbox(match_case))),
+                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.match_case))),
                 },
                 SearchField {
                     name: FieldName::PathPattern,
-                    field: Arc::new(RwLock::new(Field::text(filename_pattern.into()))),
+                    field: Arc::new(RwLock::new(Field::text(
+                        search_field_values.filename_pattern,
+                    ))),
                 },
             ],
             highlighted: 0,
             show_error_popup: false,
             advanced_regex: false,
         }
+    }
+
+    pub fn with_default_values() -> Self {
+        Self::with_values(SearchFieldValues::default())
     }
 
     pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
@@ -453,8 +492,7 @@ impl App {
             Some(d) => d,
             None => current_dir().unwrap(),
         };
-        let search_fields = SearchFields::with_values("", "", false, false, false, "")
-            .with_advanced_regex(advanced_regex);
+        let search_fields = SearchFields::with_default_values().with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
