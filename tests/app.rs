@@ -309,7 +309,7 @@ async fn search_and_replace_test(
 }
 
 test_with_both_regex_modes!(
-    test_perform_search_fixed_string,
+    test_search_replace_fixed_string,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
             "file1.txt" => {
@@ -365,6 +365,151 @@ test_with_both_regex_modes!(
             "file3.txt" => {
                 "something",
                 "123 bar[a-b]+examplebar)(baz 456",
+                "something",
+            }
+        );
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_search_replace_match_case,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT test",
+                "TestbTESTctEsTdtesTetest",
+                " test ",
+            },
+            "file2.txt" => {
+                "Another test file",
+                "With different content",
+                "Also for testing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "test-TEST-tESt",
+                "something",
+            }
+        );
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "test",
+            replace: "REPLACEMENT",
+            fixed_strings: true,
+            whole_word: false,
+            match_case: true,
+            filename_pattern: "",
+        })
+        .with_advanced_regex(advanced_regex);
+        search_and_replace_test(
+            &temp_dir,
+            search_fields,
+            false,
+            vec![
+                // TODO
+                (Path::new("file1.txt"), 5),
+                (Path::new("file2.txt"), 2),
+                (Path::new("file3.txt"), 1),
+            ],
+        )
+        .await;
+
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "This is a REPLACEMENT file",
+                "It contains some REPLACEMENT content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT REPLACEMENT",
+                "TestbTESTctEsTdtesTeREPLACEMENT",
+                " REPLACEMENT ",
+            },
+            "file2.txt" => {
+                "Another REPLACEMENT file",
+                "With different content",
+                "Also for REPLACEMENTing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "REPLACEMENT-TEST-tESt",
+                "something",
+            }
+        );
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_search_replace_dont_match_case,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT test",
+                "TestbTESTctEsTdtesTetest",
+                " test ",
+            },
+            "file2.txt" => {
+                "Another test file",
+                "With different content",
+                "Also for testing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "test-TEST-tESt",
+                "something",
+            }
+        );
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "test",
+            replace: "REPLACEMENT",
+            fixed_strings: true,
+            whole_word: false,
+            match_case: false,
+            filename_pattern: "",
+        })
+        .with_advanced_regex(advanced_regex);
+        search_and_replace_test(
+            &temp_dir,
+            search_fields,
+            false,
+            vec![
+                (Path::new("file1.txt"), 6),
+                (Path::new("file2.txt"), 2),
+                (Path::new("file3.txt"), 1),
+            ],
+        )
+        .await;
+
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "This is a REPLACEMENT file",
+                "It contains some REPLACEMENT content",
+                "For REPLACEMENTING purposes",
+                "REPLACEMENT REPLACEMENT REPLACEMENT REPLACEMENT REPLACEMENT",
+                "REPLACEMENTbREPLACEMENTcREPLACEMENTdREPLACEMENTeREPLACEMENT",
+                " REPLACEMENT ",
+            },
+            "file2.txt" => {
+                "Another REPLACEMENT file",
+                "With different content",
+                "Also for REPLACEMENTing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "REPLACEMENT-REPLACEMENT-REPLACEMENT",
                 "something",
             }
         );
