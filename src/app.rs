@@ -254,16 +254,8 @@ pub struct SearchFieldValues<'a> {
     pub match_case: bool,
     pub filename_pattern: &'a str,
 }
-
-impl<'a> SearchFieldValues<'a> {
-    const DEFAULT_SEARCH: &'static str = "";
-    const DEFAULT_REPLACE: &'static str = "";
-    const DEFAULT_FIXED_STRINGS: bool = false;
-    const DEFAULT_WHOLE_WORD: bool = false;
-    const DEFAULT_MATCH_CASE: bool = true;
-    const DEFAULT_FILENAME_PATTERN: &'static str = "";
-
-    pub fn default() -> SearchFieldValues<'a> {
+impl<'a> Default for SearchFieldValues<'a> {
+    fn default() -> SearchFieldValues<'a> {
         Self {
             search: Self::DEFAULT_SEARCH,
             replace: Self::DEFAULT_REPLACE,
@@ -273,6 +265,15 @@ impl<'a> SearchFieldValues<'a> {
             filename_pattern: Self::DEFAULT_FILENAME_PATTERN,
         }
     }
+}
+
+impl SearchFieldValues<'_> {
+    const DEFAULT_SEARCH: &'static str = "";
+    const DEFAULT_REPLACE: &'static str = "";
+    const DEFAULT_FIXED_STRINGS: bool = false;
+    const DEFAULT_WHOLE_WORD: bool = false;
+    const DEFAULT_MATCH_CASE: bool = true;
+    const DEFAULT_FILENAME_PATTERN: &'static str = "";
 
     pub fn whole_word_default() -> bool {
         Self::DEFAULT_WHOLE_WORD
