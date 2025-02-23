@@ -141,7 +141,6 @@ async fn test_back_from_results() {
         results: vec![],
         selected: 0,
     });
-    // TODO: use defaults in tests rather than hardcoding
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: "foo",
         replace: "bar",
@@ -167,7 +166,6 @@ async fn test_back_from_results() {
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-// TODO: replace this (and other tests?) with end-to-end tests
 #[tokio::test]
 async fn test_error_popup() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
@@ -308,6 +306,72 @@ async fn search_and_replace_test(
     }
 }
 
+#[tokio::test]
+#[serial]
+async fn test_search_replace_defaults() {
+    let temp_dir = create_test_files!(
+        "file1.txt" => {
+            "This is a test file",
+            "It contains some test content",
+            "For TESTING purposes",
+            "Test TEST tEsT tesT test",
+            "TestbTESTctEsTdtesTetest",
+            " test ",
+        },
+        "file2.txt" => {
+            "Another test file",
+            "With different content",
+            "Also for testing",
+        },
+        "file3.txt" => {
+            "something",
+            "123 bar[a-b]+.*bar)(baz 456",
+            "test-TEST-tESt",
+            "something",
+        }
+    );
+
+    let search_fields = SearchFields::with_values(SearchFieldValues {
+        search: "t[esES]+t",
+        replace: "123,",
+        ..SearchFieldValues::default()
+    });
+    search_and_replace_test(
+        &temp_dir,
+        search_fields,
+        false,
+        vec![
+            (Path::new("file1.txt"), 5),
+            (Path::new("file2.txt"), 2),
+            (Path::new("file3.txt"), 1),
+        ],
+    )
+    .await;
+
+    assert_test_files!(
+        &temp_dir,
+        "file1.txt" => {
+            "This is a 123, file",
+            "It contains some 123, content",
+            "For TESTING purposes",
+            "Test TEST tEsT tesT 123,",
+            "TestbTESTctEsTdtesTe123,",
+            " 123, ",
+        },
+        "file2.txt" => {
+            "Another 123, file",
+            "With different content",
+            "Also for 123,ing",
+        },
+        "file3.txt" => {
+            "something",
+            "123 bar[a-b]+.*bar)(baz 456",
+            "123,-TEST-123,",
+            "something",
+        }
+    );
+}
+
 test_with_both_regex_modes!(
     test_search_replace_fixed_string,
     |advanced_regex: bool| async move {
@@ -411,7 +475,6 @@ test_with_both_regex_modes!(
             search_fields,
             false,
             vec![
-                // TODO
                 (Path::new("file1.txt"), 5),
                 (Path::new("file2.txt"), 2),
                 (Path::new("file3.txt"), 1),
@@ -966,7 +1029,4 @@ test_with_both_regex_modes!(
     }
 );
 
-// TODO:
-// - Add:
-//   - more tests for replacing in files
-//   - tests for passing in directory via CLI arg
+// TODO: tests for passing in directory via CLI arg
