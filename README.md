@@ -10,7 +10,7 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ## Features
 
-Scooter respects both `.gitignore` and `.ignore` files. By default hidden files (such as those starting with a `.`) are ignored, but can be included with the `--hidden` flag.
+Scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
@@ -30,6 +30,10 @@ scooter ../foo/bar
 
 A set of keymappings will be shown at the bottom of the window: these vary slightly depending on the screen you're on.
 
+By default, Scooter uses a regex engine that supports only a subset of features to maximise performance. To use the full range of regex features, such as negative lookahead, start Scooter with the `-a` (`--advanced-regex`) flag.
+
+Hidden files (such as those starting with a `.`) are ignored by default, but can be included by using the `--hidden` flag.
+
 ### Search fields
 
 When on the search screen the following fields are available:
@@ -38,6 +42,7 @@ When on the search screen the following fields are available:
 - **Replace text**: Text to replace the search text with. If searching with regex, this can include capture groups.
 - **Fixed strings**: If enabled, search with plain case-sensitive strings. If disabled, search with regex.
 - **Match whole word**: If enabled, only match when the search string forms the entire word and not a substring in a larger word. For instance, if the search string is "foo", "foo bar" would be matched but not "foobar".
+- **Match case**: If enabled, match the case of the search string exactly, e.g. a search string of `Bar` would match `foo Bar baz` but not `foo bar baz`.
 - **Path pattern (regex)**: Regex pattern that file paths must match. The relative path of the file is matched against: for instance, if searching in `/foo/`, if the path pattern is set to `bar` then `/foo/bar.txt` and `/foo/bar/file.rs` will be included. In the same example, if the path pattern is set to `foo` then `/foo/bar.txt` will *not* be included, but `/foo/foo.txt` will be.
 
 ## Installation

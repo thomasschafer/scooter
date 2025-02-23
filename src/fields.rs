@@ -2,7 +2,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::Text,
+    text::{Line, Span},
     widgets::{Block, Paragraph},
     Frame,
 };
@@ -280,50 +280,54 @@ impl Field {
         }
     }
 
+    fn create_title_spans<'a>(&self, title: &'a str, highlighted: bool) -> Vec<Span<'a>> {
+        let title_style = Style::new().fg(if highlighted {
+            Color::Green
+        } else {
+            Color::Reset
+        });
+
+        let mut spans = vec![Span::styled(title, title_style)];
+        if let Some(error) = self.error() {
+            spans.push(Span::styled(
+                format!(" (Error: {})", error.short),
+                Style::new().fg(Color::Red),
+            ));
+        };
+        spans
+    }
+
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, title: String, highlighted: bool) {
         let mut block = Block::bordered();
         if highlighted {
             block = block.border_style(Style::new().green());
         }
 
-        let outer_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(1)])
-            .split(area);
+        let title_spans = self.create_title_spans(&title, highlighted);
 
         match self {
             Field::Text(f) => {
-                block = block.title(title);
-                frame.render_widget(Paragraph::new(f.text()).block(block), outer_chunks[0]);
+                block = block.title(Line::from(title_spans));
+                frame.render_widget(Paragraph::new(f.text()).block(block), area);
             }
             Field::Checkbox(f) => {
                 let inner_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Length(5), Constraint::Min(0)])
-                    .split(outer_chunks[0]);
+                    .split(area);
+
                 frame.render_widget(
                     Paragraph::new(if f.checked { " X " } else { "" }).block(block),
                     inner_chunks[0],
                 );
-                frame.render_widget(
-                    Paragraph::new(Text::styled(
-                        format!("\n {}", title),
-                        if highlighted {
-                            Color::Green
-                        } else {
-                            Color::Reset
-                        },
-                    )),
-                    inner_chunks[1],
-                );
+
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(title_spans);
+
+                let checkbox_text = vec![Line::from(Span::raw("")), Line::from(spans)];
+
+                frame.render_widget(Paragraph::new(checkbox_text), inner_chunks[1]);
             }
         }
-
-        if let Some(error) = self.error() {
-            frame.render_widget(
-                Paragraph::new(Text::styled(format!("Error: {}", error.short), Color::Red)),
-                outer_chunks[1],
-            );
-        };
     }
 }
