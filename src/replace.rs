@@ -1,5 +1,6 @@
 use content_inspector::{inspect, ContentType};
 use fancy_regex::Regex as FancyRegex;
+use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkParallel};
 use log::warn;
 use regex::Regex;
@@ -8,10 +9,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
 
-use crate::{
-    app::{BackgroundProcessingEvent, SearchFieldValues, SearchResult},
-    utils::relative_path_from,
-};
+use crate::app::{BackgroundProcessingEvent, SearchFieldValues, SearchResult};
 
 fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {
@@ -80,7 +78,7 @@ fn convert_regex(search: SearchType, whole_word: bool, match_case: bool) -> Sear
 pub struct ParsedFields {
     search: SearchType,
     replace: String,
-    path_pattern: Option<SearchType>,
+    overrides: Override,
     // TODO: `root_dir` and `include_hidden` are duplicated across this and App
     root_dir: PathBuf,
     include_hidden: bool,
@@ -96,7 +94,7 @@ impl ParsedFields {
         replace: String,
         whole_word: bool,
         match_case: bool,
-        path_pattern: Option<SearchType>,
+        overrides: Override,
         root_dir: PathBuf,
         include_hidden: bool,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
@@ -111,7 +109,7 @@ impl ParsedFields {
         Self {
             search,
             replace,
-            path_pattern,
+            overrides,
             root_dir,
             include_hidden,
             background_processing_sender,
@@ -119,12 +117,6 @@ impl ParsedFields {
     }
 
     pub async fn handle_path(&self, path: &Path) {
-        if let Some(ref p) = self.path_pattern {
-            if !self.matches_pattern(path, p) {
-                return;
-            }
-        }
-
         match File::open(path).await {
             Ok(file) => {
                 let reader = BufReader::new(file);
@@ -171,20 +163,10 @@ impl ParsedFields {
         }
     }
 
-    fn matches_pattern(&self, path: &Path, p: &SearchType) -> bool {
-        let relative_path = relative_path_from(&self.root_dir, path);
-        let relative_path = relative_path.as_str();
-
-        match p {
-            SearchType::Pattern(ref p) => p.is_match(relative_path),
-            SearchType::PatternAdvanced(ref p) => p.is_match(relative_path).unwrap(),
-            SearchType::Fixed(ref s) => relative_path.contains(s),
-        }
-    }
-
     pub(crate) fn build_walker(&self) -> WalkParallel {
         WalkBuilder::new(&self.root_dir)
             .hidden(!self.include_hidden)
+            .overrides(self.overrides.clone())
             .filter_entry(|entry| entry.file_name() != ".git")
             .build_parallel()
     }

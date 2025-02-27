@@ -25,7 +25,8 @@ impl FieldName {
             FieldName::FixedStrings => "Fixed strings",
             FieldName::WholeWord => "Match whole word",
             FieldName::MatchCase => "Match case",
-            FieldName::PathPattern => "Path pattern (regex)",
+            FieldName::IncludeFiles => "Files to include",
+            FieldName::ExcludeFiles => "Files to exclude",
         }
     }
 }
