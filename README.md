@@ -61,6 +61,20 @@ brew install scooter
 
 Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=scooter), currently on the unstable channel.
 
+### AUR
+
+Install from the Arch User Repository with:
+
+```
+yay -S scooter
+```
+
+Or, to build from the latest commit:
+
+```
+yay -S scooter-git
+```
+
 ### Prebuilt binaries
 
 You can download binaries from the [releases page](https://github.com/thomasschafer/scooter/releases/latest). After downloading, unzip the binary and move it to a directory in your `PATH`.
