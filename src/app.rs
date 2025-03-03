@@ -361,7 +361,6 @@ impl SearchFields {
     define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, TextField);
 
     define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
-    // TODO: use to set and clear errors
     define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
@@ -828,6 +827,7 @@ impl App {
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> anyhow::Result<Option<ParsedFields>> {
         let search_pattern = match self.search_fields.search_type() {
+            Ok(p) => ValidatedField::Parsed(p),
             Err(e) => {
                 if Self::is_regex_error(&e) {
                     self.search_fields
@@ -838,10 +838,9 @@ impl App {
                     return Err(e);
                 }
             }
-            Ok(p) => ValidatedField::Parsed(p),
         };
 
-        let (search_pattern, overrides) = match (search_pattern, self.overrides()) {
+        let (search_pattern, overrides) = match (search_pattern, self.validate_overrides()) {
             (ValidatedField::Parsed(s), Ok(overrides)) => (s, overrides),
             _ => {
                 self.search_fields.show_error_popup = true;
@@ -861,20 +860,48 @@ impl App {
         )))
     }
 
-    fn overrides(&mut self) -> anyhow::Result<Override> {
+    fn add_overrides(
+        &self,
+        overrides: &mut OverrideBuilder,
+        files: String,
+        prefix: &str,
+    ) -> anyhow::Result<()> {
+        for file in files.split(",") {
+            let file = file.trim();
+            if !file.is_empty() {
+                overrides.add(&format!("{}{}", prefix, file))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_overrides(&mut self) -> anyhow::Result<Override> {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
-        // TODO: check this works
-        for f in self.search_fields.include_files().text().split(",") {
-            if !f.is_empty() {
-                overrides.add(f.trim())?;
-            }
-        }
-        // TODO: reduce duplication
-        for f in self.search_fields.exclude_files().text().split(",") {
-            if !f.is_empty() {
-                overrides.add(&format!("!{}", f.trim()))?;
-            }
-        }
+
+        let include_res = self.add_overrides(
+            &mut overrides,
+            self.search_fields.include_files().text(),
+            "",
+        );
+        if let Err(e) = include_res {
+            self.search_fields
+                .include_files_mut()
+                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
+            return Err(e);
+        };
+
+        let exlude_res = self.add_overrides(
+            &mut overrides,
+            self.search_fields.exclude_files().text(),
+            "!",
+        );
+        if let Err(e) = exlude_res {
+            self.search_fields
+                .exclude_files_mut()
+                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
+            return Err(e);
+        };
+
         let overrides = overrides.build()?;
         Ok(overrides)
     }
