@@ -147,7 +147,8 @@ async fn test_back_from_results() {
         fixed_strings: true,
         whole_word: false,
         match_case: true,
-        filename_pattern: "pattern",
+        include_files: "pattern",
+        exclude_files: "",
     });
 
     let res = app
@@ -162,7 +163,8 @@ async fn test_back_from_results() {
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
     assert!(app.search_fields.fixed_strings().checked);
-    assert_eq!(app.search_fields.path_pattern().text, "pattern");
+    assert_eq!(app.search_fields.include_files().text, "pattern");
+    assert_eq!(app.search_fields.exclude_files().text, "");
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
@@ -176,7 +178,8 @@ async fn test_error_popup() {
         fixed_strings: false,
         whole_word: false,
         match_case: true,
-        filename_pattern: "",
+        include_files: "",
+        exclude_files: "",
     });
 
     let res = app.perform_search_if_valid();
@@ -399,7 +402,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -467,7 +471,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -539,7 +544,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: false,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -607,7 +613,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -671,7 +678,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -735,7 +743,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         let mut app = setup_app(temp_dir, search_fields, false);
@@ -777,7 +786,8 @@ async fn test_advanced_regex_negative_lookahead() {
         fixed_strings: false,
         whole_word: false,
         match_case: true,
-        filename_pattern: "",
+        include_files: "",
+        exclude_files: "",
     })
     .with_advanced_regex(true);
     search_and_replace_test(
@@ -839,7 +849,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "dir2",
+            include_files: "dir2/*",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -895,7 +906,8 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         fixed_strings: false,
         whole_word: false,
         match_case: true,
-        filename_pattern: "",
+        include_files: "",
+        exclude_files: "",
     })
     .with_advanced_regex(advanced_regex);
     search_and_replace_test(
@@ -946,7 +958,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -998,7 +1011,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
