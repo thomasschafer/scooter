@@ -44,7 +44,9 @@ When on the search screen the following fields are available:
 - **Match whole word**: If enabled, only match when the search string forms the entire word and not a substring in a larger word. For instance, if the search string is "foo", "foo bar" would be matched but not "foobar".
 - **Match case**: If enabled, match the case of the search string exactly, e.g. a search string of `Bar` would match `foo Bar baz` but not `foo bar baz`.
 - **Files to include**: Glob pattern that file paths must match: for instance, `*.rs` matches all files with the `.rs` extension.
-- **Files to exclude**: Glob pattern that file paths must not match: for instance, `env/` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
+- **Files to exclude**: Glob pattern that file paths must not match: for instance, `env/**` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
+
+Note that the glob matching library used in Scooter comes from the author of the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
 
 ## Installation
 

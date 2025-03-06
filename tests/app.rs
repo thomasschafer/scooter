@@ -875,7 +875,16 @@ test_with_both_regex_modes!(
                 "something testing",
             },
             "dir3/file4.txt" => {
-                "some testing text",
+                "some testing text from dir3/file4.txt, blah",
+            },
+            "dir3/subdir1/file5.txt" => {
+                "some testing text from dir3/subdir1/file5.txt, blah",
+            },
+            "dir4/subdir2/file6.txt" => {
+                "some testing text from dir4/subdir2/file6.txt, blah",
+            },
+            "dir4/subdir3/file7.txt" => {
+                "some testing text from dir4/subdir3/file7.txt, blah",
             },
         );
 
@@ -885,8 +894,7 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            // TODO: why do we need the /* ???
-            include_files: "dir2/*, dir3",
+            include_files: "dir2/*, dir3/**, */subdir3/*",
             exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
@@ -899,6 +907,9 @@ test_with_both_regex_modes!(
                 (&Path::new("dir2").join("file2.txt"), 1),
                 (&Path::new("dir2").join("file3.txt"), 1),
                 (&Path::new("dir3").join("file4.txt"), 1),
+                (&Path::new("dir3").join("subdir1").join("file5.txt"), 1),
+                (&Path::new("dir4").join("subdir2").join("file6.txt"), 0),
+                (&Path::new("dir4").join("subdir3").join("file7.txt"), 1),
             ],
         )
         .await;
@@ -921,14 +932,22 @@ test_with_both_regex_modes!(
                 "something f",
             },
             "dir3/file4.txt" => {
-                "some f text",
+                "some f text from dir3/file4.txt, blah",
+            },
+            "dir3/subdir1/file5.txt" => {
+                "some f text from dir3/subdir1/file5.txt, blah",
+            },
+            "dir4/subdir2/file6.txt" => {
+                "some testing text from dir4/subdir2/file6.txt, blah",
+            },
+            "dir4/subdir3/file7.txt" => {
+                "some f text from dir4/subdir3/file7.txt, blah",
             },
         );
         Ok(())
     }
 );
 
-// TODO
 test_with_both_regex_modes!(
     test_update_search_results_exclude_dir,
     |advanced_regex: bool| async move {
@@ -1133,6 +1152,11 @@ test_with_both_regex_modes!(
                 r#"  "testing2""#,
                 "}",
             },
+            "dir1/subdir1/subdir2/file3.rs" => {
+                "func testing3() {",
+                r#"  "testing3""#,
+                "}",
+            },
             "dir2/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -1172,6 +1196,13 @@ test_with_both_regex_modes!(
                 (&Path::new("dir1").join("file1.txt"), 1),
                 (&Path::new("dir1").join("file1.rs"), 2),
                 (&Path::new("dir1").join("file2.rs"), 0),
+                (
+                    &Path::new("dir1")
+                        .join("subdir1")
+                        .join("subdir2")
+                        .join("file3.rs"),
+                    2,
+                ),
                 (&Path::new("dir2").join("file1.txt"), 0),
                 (&Path::new("dir2").join("file2.rs"), 0),
                 (&Path::new("dir2").join("file3.rs"), 1),
@@ -1195,6 +1226,11 @@ test_with_both_regex_modes!(
             "dir1/file2.rs" => {
                 "func testing2() {",
                 r#"  "testing2""#,
+                "}",
+            },
+            "dir1/subdir1/subdir2/file3.rs" => {
+                "func REPL3() {",
+                r#"  "REPL3""#,
                 "}",
             },
             "dir2/file1.txt" => {
