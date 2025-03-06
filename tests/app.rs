@@ -168,19 +168,10 @@ async fn test_back_from_results() {
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-#[tokio::test]
-async fn test_error_popup() {
+async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
-    app.search_fields = SearchFields::with_values(SearchFieldValues {
-        search: "search invalid regex(",
-        replace: "replacement",
-        fixed_strings: false,
-        whole_word: false,
-        match_case: true,
-        include_files: "",
-        exclude_files: "",
-    });
+    app.search_fields = SearchFields::with_values(search_fields);
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
@@ -207,6 +198,48 @@ async fn test_error_popup() {
         })
         .unwrap();
     assert_eq!(res, EventHandlingResult::Exit);
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_search() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search invalid regex(",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "",
+        exclude_files: "",
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_include_files() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "foo{",
+        exclude_files: "",
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_exclude_files() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "",
+        exclude_files: "bar{",
+    })
+    .await;
 }
 
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
