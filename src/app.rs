@@ -53,6 +53,7 @@ pub struct SearchResult {
 pub enum AppEvent {
     Rerender,
     PerformSearch,
+    LaunchEditor((PathBuf, usize)),
 }
 
 #[derive(Debug)]
@@ -101,7 +102,7 @@ impl SearchState {
 
     pub fn toggle_selected_inclusion(&mut self) {
         if self.selected < self.results.len() {
-            let selected_result = &mut self.results[self.selected];
+            let selected_result = self.selected_field();
             selected_result.included = !selected_result.included;
         } else {
             self.selected = self.results.len().saturating_sub(1);
@@ -113,6 +114,10 @@ impl SearchState {
         self.results
             .iter_mut()
             .for_each(|res| res.included = !all_included);
+    }
+
+    fn selected_field(&mut self) -> &mut SearchResult {
+        &mut self.results[self.selected]
     }
 }
 
@@ -571,6 +576,7 @@ impl App {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
+            AppEvent::LaunchEditor(_) => panic!("LaunchEditor should be handled by app_runner"), // TODO(editor): encode this in the event type
         }
     }
 
@@ -761,6 +767,15 @@ impl App {
                 self.cancel_search();
                 self.current_screen = Screen::SearchFields;
                 self.app_event_sender.send(AppEvent::Rerender).unwrap();
+            }
+            (KeyCode::Char('o'), KeyModifiers::NONE) => {
+                let selected = self.current_screen.search_results_mut().selected_field();
+                self.app_event_sender
+                    .send(AppEvent::LaunchEditor((
+                        selected.path.clone(),
+                        selected.line_number,
+                    )))
+                    .unwrap();
             }
             _ => {}
         };

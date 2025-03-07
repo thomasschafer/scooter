@@ -49,6 +49,10 @@ impl<B: Backend + 'static> Tui<B> {
         Ok(())
     }
 
+    pub(crate) fn reset_static(&self) -> anyhow::Result<()> {
+        Self::reset()
+    }
+
     pub fn exit(&mut self) -> anyhow::Result<()> {
         Self::reset()?;
         self.terminal.show_cursor()?;

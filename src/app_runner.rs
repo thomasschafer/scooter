@@ -7,7 +7,9 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::env;
 use std::io;
+use std::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -153,7 +155,33 @@ where
                     }
                 }
                 Some(event) = self.app_event_receiver.recv() => {
-                    self.app.handle_app_event(event).await
+                    if let AppEvent::LaunchEditor((file_path, line)) = event {
+                            let editor = env::var("EDITOR").unwrap_or_else(|_| {
+                                env::var("VISUAL").unwrap_or_else(|_| {
+                                    if cfg!(windows) {
+                                        "notepad".to_string()
+                                    } else {
+                                        "vi".to_string()
+                                    }
+                                })
+                            });
+
+                            self.tui.reset_static().unwrap(); // TODO(editor): no unwrap
+
+                            // TODO(editor): for VSCode, use `code --goto file:line`
+                            // TODO(editor): let users override editor
+                            let _status = Command::new(&editor).arg(format!("{}:{}", file_path.to_string_lossy(), line)).status().unwrap(); // TODO(editor): no unwrap
+
+                            self.tui.init().unwrap(); // TODO(editor): no unwrap
+
+                            // TODO(editor)
+                            // if !status.success() {
+                            //     eprintln!("Editor exited with status: {}", status);
+                            // }
+                        EventHandlingResult::Rerender
+                    } else {
+                        self.app.handle_app_event(event).await
+                    }
                 }
                 Some(event) = self.app.background_processing_recv() => {
                     self.app.handle_background_processing_event(event)
