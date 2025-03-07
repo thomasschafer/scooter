@@ -302,18 +302,20 @@ async fn search_and_replace_test(
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
 
     if let Screen::SearchComplete(search_state) = &mut app.current_screen {
-        for (file_path, num_matches) in &expected_matches {
+        for (file_path, num_expected_matches) in &expected_matches {
+            let num_actual_matches = search_state
+                .results
+                .iter()
+                .filter(|result| {
+                    let result_path = result.path.to_str().unwrap();
+                    let file_path = file_path.to_str().unwrap();
+                    result_path == temp_dir.path().join(file_path).to_string_lossy()
+                })
+                .count();
+            let num_expected_matches = *num_expected_matches;
             assert_eq!(
-                search_state
-                    .results
-                    .iter()
-                    .filter(|result| {
-                        let result_path = result.path.to_str().unwrap();
-                        let file_path = file_path.to_str().unwrap();
-                        result_path.contains(file_path)
-                    })
-                    .count(),
-                *num_matches
+                num_actual_matches, num_expected_matches,
+                "{file_path:?}: expected {num_expected_matches}, found {num_actual_matches}",
             );
         }
 
