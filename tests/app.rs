@@ -147,7 +147,8 @@ async fn test_back_from_results() {
         fixed_strings: true,
         whole_word: false,
         match_case: true,
-        filename_pattern: "pattern",
+        include_files: "pattern",
+        exclude_files: "",
     });
 
     let res = app
@@ -162,22 +163,15 @@ async fn test_back_from_results() {
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
     assert!(app.search_fields.fixed_strings().checked);
-    assert_eq!(app.search_fields.path_pattern().text, "pattern");
+    assert_eq!(app.search_fields.include_files().text, "pattern");
+    assert_eq!(app.search_fields.exclude_files().text, "");
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-#[tokio::test]
-async fn test_error_popup() {
+async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
-    app.search_fields = SearchFields::with_values(SearchFieldValues {
-        search: "search invalid regex(",
-        replace: "replacement",
-        fixed_strings: false,
-        whole_word: false,
-        match_case: true,
-        filename_pattern: "",
-    });
+    app.search_fields = SearchFields::with_values(search_fields);
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
@@ -204,6 +198,48 @@ async fn test_error_popup() {
         })
         .unwrap();
     assert_eq!(res, EventHandlingResult::Exit);
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_search() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search invalid regex(",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "",
+        exclude_files: "",
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_include_files() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "foo{",
+        exclude_files: "",
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn test_error_popup_invalid_exclude_files() {
+    test_error_popup_invalid_input_impl(SearchFieldValues {
+        search: "search",
+        replace: "replacement",
+        fixed_strings: false,
+        whole_word: false,
+        match_case: true,
+        include_files: "",
+        exclude_files: "bar{",
+    })
+    .await;
 }
 
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
@@ -266,18 +302,20 @@ async fn search_and_replace_test(
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
 
     if let Screen::SearchComplete(search_state) = &mut app.current_screen {
-        for (file_path, num_matches) in &expected_matches {
+        for (file_path, num_expected_matches) in &expected_matches {
+            let num_actual_matches = search_state
+                .results
+                .iter()
+                .filter(|result| {
+                    let result_path = result.path.to_str().unwrap();
+                    let file_path = file_path.to_str().unwrap();
+                    result_path == temp_dir.path().join(file_path).to_string_lossy()
+                })
+                .count();
+            let num_expected_matches = *num_expected_matches;
             assert_eq!(
-                search_state
-                    .results
-                    .iter()
-                    .filter(|result| {
-                        let result_path = result.path.to_str().unwrap();
-                        let file_path = file_path.to_str().unwrap();
-                        result_path.contains(file_path)
-                    })
-                    .count(),
-                *num_matches
+                num_actual_matches, num_expected_matches,
+                "{file_path:?}: expected {num_expected_matches}, found {num_actual_matches}",
             );
         }
 
@@ -399,7 +437,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -467,7 +506,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -539,7 +579,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: false,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -607,7 +648,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -671,7 +713,8 @@ test_with_both_regex_modes!(
             fixed_strings: true,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -735,7 +778,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         let mut app = setup_app(temp_dir, search_fields, false);
@@ -777,7 +821,8 @@ async fn test_advanced_regex_negative_lookahead() {
         fixed_strings: false,
         whole_word: false,
         match_case: true,
-        filename_pattern: "",
+        include_files: "",
+        exclude_files: "",
     })
     .with_advanced_regex(true);
     search_and_replace_test(
@@ -813,7 +858,7 @@ async fn test_advanced_regex_negative_lookahead() {
 }
 
 test_with_both_regex_modes!(
-    test_update_search_results_filtered_dir,
+    test_update_search_results_include_dir,
     |advanced_regex: bool| async move {
         let temp_dir = &create_test_files!(
             "dir1/file1.txt" => {
@@ -830,7 +875,19 @@ test_with_both_regex_modes!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something testing",
-            }
+            },
+            "dir3/file4.txt" => {
+                "some testing text from dir3/file4.txt, blah",
+            },
+            "dir3/subdir1/file5.txt" => {
+                "some testing text from dir3/subdir1/file5.txt, blah",
+            },
+            "dir4/subdir2/file6.txt" => {
+                "some testing text from dir4/subdir2/file6.txt, blah",
+            },
+            "dir4/subdir3/file7.txt" => {
+                "some testing text from dir4/subdir3/file7.txt, blah",
+            },
         );
 
         let search_fields = SearchFields::with_values(SearchFieldValues {
@@ -839,7 +896,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "dir2",
+            include_files: "dir2/*, dir3/**, */subdir3/*",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -850,6 +908,10 @@ test_with_both_regex_modes!(
                 (&Path::new("dir1").join("file1.txt"), 0),
                 (&Path::new("dir2").join("file2.txt"), 1),
                 (&Path::new("dir2").join("file3.txt"), 1),
+                (&Path::new("dir3").join("file4.txt"), 1),
+                (&Path::new("dir3").join("subdir1").join("file5.txt"), 1),
+                (&Path::new("dir4").join("subdir2").join("file6.txt"), 0),
+                (&Path::new("dir4").join("subdir3").join("file7.txt"), 1),
             ],
         )
         .await;
@@ -870,7 +932,328 @@ test_with_both_regex_modes!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something f",
+            },
+            "dir3/file4.txt" => {
+                "some f text from dir3/file4.txt, blah",
+            },
+            "dir3/subdir1/file5.txt" => {
+                "some f text from dir3/subdir1/file5.txt, blah",
+            },
+            "dir4/subdir2/file6.txt" => {
+                "some testing text from dir4/subdir2/file6.txt, blah",
+            },
+            "dir4/subdir3/file7.txt" => {
+                "some f text from dir4/subdir3/file7.txt, blah",
+            },
+        );
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_update_search_results_exclude_dir,
+    |advanced_regex: bool| async move {
+        let temp_dir = &create_test_files!(
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir1/file1.rs" => {
+                "func testing() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "testing""#,
+                "}",
             }
+        );
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "testing",
+            replace: "REPL",
+            fixed_strings: false,
+            whole_word: false,
+            match_case: true,
+            include_files: "",
+            exclude_files: "dir1",
+        })
+        .with_advanced_regex(advanced_regex);
+        search_and_replace_test(
+            temp_dir,
+            search_fields,
+            false,
+            vec![
+                (&Path::new("dir1").join("file1.txt"), 0),
+                (&Path::new("dir1").join("file1.rs"), 0),
+                (&Path::new("dir2").join("file1.txt"), 1),
+                (&Path::new("dir2").join("file2.rs"), 1),
+                (&Path::new("dir2").join("file3.rs"), 1),
+            ],
+        )
+        .await;
+
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir1/file1.rs" => {
+                "func testing() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For REPL purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "REPL""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "REPL""#,
+                "}",
+            }
+        );
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_update_search_results_multiple_includes_and_excludes,
+    |advanced_regex: bool| async move {
+        let temp_dir = &create_test_files!(
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir1/file1.rs" => {
+                "func testing1() {",
+                r#"  "testing1""#,
+                "}",
+            },
+            "dir1/file2.rs" => {
+                "func testing2() {",
+                r#"  "testing2""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "testing""#,
+                "}",
+            }
+        );
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "testing",
+            replace: "REPL",
+            fixed_strings: false,
+            whole_word: false,
+            match_case: true,
+            include_files: "dir1/*, *.rs",
+            exclude_files: "**/file2.rs",
+        })
+        .with_advanced_regex(advanced_regex);
+        search_and_replace_test(
+            temp_dir,
+            search_fields,
+            false,
+            vec![
+                (&Path::new("dir1").join("file1.txt"), 1),
+                (&Path::new("dir1").join("file1.rs"), 2),
+                (&Path::new("dir1").join("file2.rs"), 0),
+                (&Path::new("dir2").join("file1.txt"), 0),
+                (&Path::new("dir2").join("file2.rs"), 0),
+                (&Path::new("dir2").join("file3.rs"), 1),
+            ],
+        )
+        .await;
+
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For REPL purposes",
+            },
+            "dir1/file1.rs" => {
+                "func REPL1() {",
+                r#"  "REPL1""#,
+                "}",
+            },
+            "dir1/file2.rs" => {
+                "func testing2() {",
+                r#"  "testing2""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "REPL""#,
+                "}",
+            }
+        );
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_update_search_results_multiple_includes_and_excludes_additional_spacing,
+    |advanced_regex: bool| async move {
+        let temp_dir = &create_test_files!(
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir1/file1.rs" => {
+                "func testing1() {",
+                r#"  "testing1""#,
+                "}",
+            },
+            "dir1/file2.rs" => {
+                "func testing2() {",
+                r#"  "testing2""#,
+                "}",
+            },
+            "dir1/subdir1/subdir2/file3.rs" => {
+                "func testing3() {",
+                r#"  "testing3""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file4.py" => {
+                "def main():",
+                "  return 'testing'",
+            },
+        );
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "testing",
+            replace: "REPL",
+            fixed_strings: false,
+            whole_word: false,
+            match_case: true,
+            include_files: " dir1/*,*.rs   ,  *.py",
+            exclude_files: "  **/file2.rs ",
+        })
+        .with_advanced_regex(advanced_regex);
+        search_and_replace_test(
+            temp_dir,
+            search_fields,
+            false,
+            vec![
+                (&Path::new("dir1").join("file1.txt"), 1),
+                (&Path::new("dir1").join("file1.rs"), 2),
+                (&Path::new("dir1").join("file2.rs"), 0),
+                (
+                    &Path::new("dir1")
+                        .join("subdir1")
+                        .join("subdir2")
+                        .join("file3.rs"),
+                    2,
+                ),
+                (&Path::new("dir2").join("file1.txt"), 0),
+                (&Path::new("dir2").join("file2.rs"), 0),
+                (&Path::new("dir2").join("file3.rs"), 1),
+                (&Path::new("dir2").join("file4.py"), 1),
+            ],
+        )
+        .await;
+
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For REPL purposes",
+            },
+            "dir1/file1.rs" => {
+                "func REPL1() {",
+                r#"  "REPL1""#,
+                "}",
+            },
+            "dir1/file2.rs" => {
+                "func testing2() {",
+                r#"  "testing2""#,
+                "}",
+            },
+            "dir1/subdir1/subdir2/file3.rs" => {
+                "func REPL3() {",
+                r#"  "REPL3""#,
+                "}",
+            },
+            "dir2/file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For testing purposes",
+            },
+            "dir2/file2.rs" => {
+                "func main2() {",
+                r#"  "testing""#,
+                "}",
+            },
+            "dir2/file3.rs" => {
+                "func main3() {",
+                r#"  "REPL""#,
+                "}",
+            },
+            "dir2/file4.py" => {
+                "def main():",
+                "  return 'REPL'",
+            },
         );
         Ok(())
     }
@@ -895,7 +1278,8 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         fixed_strings: false,
         whole_word: false,
         match_case: true,
-        filename_pattern: "",
+        include_files: "",
+        exclude_files: "",
     })
     .with_advanced_regex(advanced_regex);
     search_and_replace_test(
@@ -946,7 +1330,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
@@ -998,7 +1383,8 @@ test_with_both_regex_modes!(
             fixed_strings: false,
             whole_word: false,
             match_case: true,
-            filename_pattern: "",
+            include_files: "",
+            exclude_files: "",
         })
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(

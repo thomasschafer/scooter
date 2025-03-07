@@ -1,7 +1,10 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
 use fancy_regex::Regex as FancyRegex;
-use ignore::WalkState;
+use ignore::{
+    overrides::{Override, OverrideBuilder},
+    WalkState,
+};
 use log::warn;
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -242,8 +245,9 @@ pub enum FieldName {
     Replace,
     FixedStrings,
     WholeWord,
-    PathPattern,
     MatchCase,
+    IncludeFiles,
+    ExcludeFiles,
 }
 
 pub struct SearchFieldValues<'a> {
@@ -252,7 +256,8 @@ pub struct SearchFieldValues<'a> {
     pub fixed_strings: bool,
     pub whole_word: bool,
     pub match_case: bool,
-    pub filename_pattern: &'a str,
+    pub include_files: &'a str,
+    pub exclude_files: &'a str,
 }
 impl<'a> Default for SearchFieldValues<'a> {
     fn default() -> SearchFieldValues<'a> {
@@ -262,7 +267,8 @@ impl<'a> Default for SearchFieldValues<'a> {
             fixed_strings: Self::DEFAULT_FIXED_STRINGS,
             whole_word: Self::DEFAULT_WHOLE_WORD,
             match_case: Self::DEFAULT_MATCH_CASE,
-            filename_pattern: Self::DEFAULT_FILENAME_PATTERN,
+            include_files: Self::DEFAULT_INCLUDE_FILES,
+            exclude_files: Self::DEFAULT_EXCLUDE_FILES,
         }
     }
 }
@@ -273,7 +279,8 @@ impl SearchFieldValues<'_> {
     const DEFAULT_FIXED_STRINGS: bool = false;
     const DEFAULT_WHOLE_WORD: bool = false;
     const DEFAULT_MATCH_CASE: bool = true;
-    const DEFAULT_FILENAME_PATTERN: &'static str = "";
+    const DEFAULT_INCLUDE_FILES: &'static str = "";
+    const DEFAULT_EXCLUDE_FILES: &'static str = "";
 
     pub fn whole_word_default() -> bool {
         Self::DEFAULT_WHOLE_WORD
@@ -289,7 +296,7 @@ pub struct SearchField {
     pub field: Arc<RwLock<Field>>,
 }
 
-pub const NUM_SEARCH_FIELDS: usize = 6;
+pub const NUM_SEARCH_FIELDS: usize = 7;
 
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
@@ -350,10 +357,12 @@ impl SearchFields {
     );
     define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, CheckboxField);
     define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, CheckboxField);
-    define_field_accessor!(path_pattern, FieldName::PathPattern, Text, TextField);
+    define_field_accessor!(include_files, FieldName::IncludeFiles, Text, TextField);
+    define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, TextField);
 
     define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
-    define_field_accessor_mut!(path_pattern_mut, FieldName::PathPattern, Text, TextField);
+    define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
+    define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
     pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         Self {
@@ -381,10 +390,12 @@ impl SearchFields {
                     field: Arc::new(RwLock::new(Field::checkbox(search_field_values.match_case))),
                 },
                 SearchField {
-                    name: FieldName::PathPattern,
-                    field: Arc::new(RwLock::new(Field::text(
-                        search_field_values.filename_pattern,
-                    ))),
+                    name: FieldName::IncludeFiles,
+                    field: Arc::new(RwLock::new(Field::text(search_field_values.include_files))),
+                },
+                SearchField {
+                    name: FieldName::ExcludeFiles,
+                    field: Arc::new(RwLock::new(Field::text(search_field_values.exclude_files))),
                 },
             ],
             highlighted: 0,
@@ -445,22 +456,6 @@ impl SearchFields {
             SearchType::PatternAdvanced(FancyRegex::new(&search_text)?)
         } else {
             SearchType::Pattern(Regex::new(&search_text)?)
-        };
-        Ok(result)
-    }
-
-    pub fn path_pattern_parsed(&self) -> anyhow::Result<Option<SearchType>> {
-        let path_patt_text = &self.path_pattern().text;
-        let result = if path_patt_text.is_empty() {
-            None
-        } else {
-            Some({
-                if self.advanced_regex {
-                    SearchType::PatternAdvanced(FancyRegex::new(path_patt_text)?)
-                } else {
-                    SearchType::Pattern(Regex::new(path_patt_text)?)
-                }
-            })
         };
         Ok(result)
     }
@@ -816,6 +811,7 @@ impl App {
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> anyhow::Result<Option<ParsedFields>> {
         let search_pattern = match self.search_fields.search_type() {
+            Ok(p) => ValidatedField::Parsed(p),
             Err(e) => {
                 if Self::is_regex_error(&e) {
                     self.search_fields
@@ -826,21 +822,10 @@ impl App {
                     return Err(e);
                 }
             }
-            Ok(p) => ValidatedField::Parsed(p),
         };
 
-        let path_pattern = match self.search_fields.path_pattern_parsed() {
-            Err(e) => {
-                self.search_fields
-                    .path_pattern_mut()
-                    .set_error("Couldn't parse regex".to_owned(), e.to_string());
-                ValidatedField::Error
-            }
-            Ok(r) => ValidatedField::Parsed(r),
-        };
-
-        let (search_pattern, path_pattern) = match (search_pattern, path_pattern) {
-            (ValidatedField::Parsed(s), ValidatedField::Parsed(p)) => (s, p),
+        let (search_pattern, overrides) = match (search_pattern, self.validate_overrides()) {
+            (ValidatedField::Parsed(s), Ok(overrides)) => (s, overrides),
             _ => {
                 self.search_fields.show_error_popup = true;
                 return Ok(None);
@@ -852,11 +837,57 @@ impl App {
             self.search_fields.replace().text(),
             self.search_fields.whole_word().checked,
             self.search_fields.match_case().checked,
-            path_pattern,
+            overrides,
             self.directory.clone(),
             self.include_hidden,
             background_processing_sender.clone(),
         )))
+    }
+
+    fn add_overrides(
+        &self,
+        overrides: &mut OverrideBuilder,
+        files: String,
+        prefix: &str,
+    ) -> anyhow::Result<()> {
+        for file in files.split(",") {
+            let file = file.trim();
+            if !file.is_empty() {
+                overrides.add(&format!("{}{}", prefix, file))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_overrides(&mut self) -> anyhow::Result<Override> {
+        let mut overrides = OverrideBuilder::new(self.directory.clone());
+
+        let include_res = self.add_overrides(
+            &mut overrides,
+            self.search_fields.include_files().text(),
+            "",
+        );
+        if let Err(e) = include_res {
+            self.search_fields
+                .include_files_mut()
+                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
+            return Err(e);
+        };
+
+        let exlude_res = self.add_overrides(
+            &mut overrides,
+            self.search_fields.exclude_files().text(),
+            "!",
+        );
+        if let Err(e) = exlude_res {
+            self.search_fields
+                .exclude_files_mut()
+                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
+            return Err(e);
+        };
+
+        let overrides = overrides.build()?;
+        Ok(overrides)
     }
 
     pub fn update_search_results(
