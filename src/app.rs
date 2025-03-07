@@ -459,22 +459,6 @@ impl SearchFields {
         };
         Ok(result)
     }
-
-    // pub fn path_pattern_parsed(&self) -> anyhow::Result<Option<SearchType>> {
-    //     let path_patt_text = &self.path_pattern().text;
-    //     let result = if path_patt_text.is_empty() {
-    //         None
-    //     } else {
-    //         Some({
-    //             if self.advanced_regex {
-    //                 SearchType::PatternAdvanced(FancyRegex::new(path_patt_text)?)
-    //             } else {
-    //                 SearchType::Pattern(Regex::new(path_patt_text)?)
-    //             }
-    //         })
-    //     };
-    //     Ok(result)
-    // }
 }
 
 enum ValidatedField<T> {
