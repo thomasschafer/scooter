@@ -9,6 +9,8 @@ use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::env;
 use std::io;
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -156,25 +158,11 @@ where
                 }
                 Some(event) = self.app_event_receiver.recv() => {
                     if let AppEvent::LaunchEditor((file_path, line)) = event {
-                            let editor = env::var("EDITOR").unwrap_or_else(|_| {
-                                env::var("VISUAL").unwrap_or_else(|_| {
-                                    if cfg!(windows) {
-                                        "notepad".to_string()
-                                    } else {
-                                        "vi".to_string()
-                                    }
-                                })
-                            });
-
-                            self.tui.reset_static().unwrap(); // TODO(editor): no unwrap
-
-                            // TODO(editor): for VSCode, use `code --goto file:line`
-                            // TODO(editor): let users override editor
-                            let _status = Command::new(&editor).arg(format!("{}:{}", file_path.to_string_lossy(), line)).status().unwrap(); // TODO(editor): no unwrap
+                            self.open_editor(file_path, line)?;
 
                             self.tui.init().unwrap(); // TODO(editor): no unwrap
 
-                            // TODO(editor)
+                            // TODO(editor): show error in popup and log
                             // if !status.success() {
                             //     eprintln!("Editor exited with status: {}", status);
                             // }
@@ -203,6 +191,60 @@ where
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
         self.tui.exit()
+    }
+
+    fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
+        let editor = env::var("EDITOR").unwrap_or_else(|_| {
+            env::var("VISUAL").unwrap_or_else(|_| {
+                if cfg!(windows) {
+                    "notepad".to_string()
+                } else {
+                    "vi".to_string()
+                }
+            })
+        });
+        let parts: Vec<&str> = editor.split_whitespace().collect();
+        let program = parts[0];
+        let editor_name = Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(program)
+            .to_lowercase();
+
+        let mut cmd = Command::new(program);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+
+        // TODO(editor): let users override editor
+        // TODO(editor): TEST THESE
+        match editor_name.as_str() {
+            e if ["vi", "vim", "nvim", "nano"].contains(&e) => {
+                cmd.arg(format!("+{}", line)).arg(file_path);
+            }
+            e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
+                cmd.arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["code", "code-insiders", "codium", "vscodium"].contains(&e) => {
+                cmd.arg("-g")
+                    .arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["emacs", "emacsclient"].contains(&e) => {
+                cmd.arg(format!("+{}:0", line)).arg(file_path);
+            }
+            e if ["kak", "micro"].contains(&e) => {
+                cmd.arg(file_path).arg(format!("+{}", line));
+            }
+            "notepad++" => {
+                cmd.arg(file_path).arg(format!("-n{}", line));
+            }
+            _ => {
+                cmd.arg(file_path);
+            }
+        }
+
+        cmd.status()?;
+        Ok(())
     }
 }
 
