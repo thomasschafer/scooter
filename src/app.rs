@@ -11,6 +11,7 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
+use std::iter::Iterator;
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -28,7 +29,7 @@ use tokio::{
 };
 
 use crate::{
-    fields::{CheckboxField, Field, FieldError, TextField},
+    fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
     utils::relative_path_from,
 };
@@ -444,15 +445,14 @@ impl SearchFields {
             (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
     }
 
-    pub fn errors(&self) -> Vec<(&str, FieldError)> {
+    pub fn errors(&self) -> Vec<AppError> {
         self.fields
             .iter()
             .filter_map(|field| {
-                field
-                    .field
-                    .read()
-                    .error()
-                    .map(|err| (field.name.title(), err))
+                field.field.read().error().map(|err| AppError {
+                    name: field.name.title().to_string(),
+                    long: err.long,
+                })
             })
             .collect::<Vec<_>>()
     }
@@ -476,9 +476,16 @@ enum ValidatedField<T> {
     Error,
 }
 
+#[derive(Clone, Debug)]
+pub struct AppError {
+    pub name: String,
+    pub long: String,
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
+    errors: Vec<AppError>,
     directory: PathBuf,
     include_hidden: bool,
 
@@ -503,6 +510,7 @@ impl App {
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
+            errors: vec![],
             directory,
             include_hidden,
 
@@ -791,8 +799,8 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
-        // TODO(editor): test with both regex errors and editor errors
-        if self.search_fields.show_error_popup {
+        if self.show_error_popup() {
+            self.clear_app_errors();
             self.search_fields.show_error_popup = false;
             return Ok(EventHandlingResult::Rerender);
         }
@@ -847,24 +855,26 @@ impl App {
             }
         };
 
-        let (search_pattern, overrides) = match (search_pattern, self.validate_overrides()) {
-            (ValidatedField::Parsed(s), Ok(overrides)) => (s, overrides),
-            _ => {
-                self.search_fields.show_error_popup = true;
-                return Ok(None);
-            }
-        };
+        let overrides = self.validate_overrides()?;
 
-        Ok(Some(ParsedFields::new(
-            search_pattern,
-            self.search_fields.replace().text(),
-            self.search_fields.whole_word().checked,
-            self.search_fields.match_case().checked,
-            overrides,
-            self.directory.clone(),
-            self.include_hidden,
-            background_processing_sender.clone(),
-        )))
+        match (search_pattern, overrides) {
+            (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) => {
+                Ok(Some(ParsedFields::new(
+                    search_pattern,
+                    self.search_fields.replace().text(),
+                    self.search_fields.whole_word().checked,
+                    self.search_fields.match_case().checked,
+                    overrides,
+                    self.directory.clone(),
+                    self.include_hidden,
+                    background_processing_sender.clone(),
+                )))
+            }
+            (_, _) => {
+                self.search_fields.show_error_popup = true;
+                Ok(None)
+            }
+        }
     }
 
     fn add_overrides(
@@ -882,8 +892,9 @@ impl App {
         Ok(())
     }
 
-    fn validate_overrides(&mut self) -> anyhow::Result<Override> {
+    fn validate_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
+        let mut success = true;
 
         let include_res = self.add_overrides(
             &mut overrides,
@@ -894,7 +905,7 @@ impl App {
             self.search_fields
                 .include_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            return Err(e);
+            success = false;
         };
 
         let exlude_res = self.add_overrides(
@@ -906,11 +917,15 @@ impl App {
             self.search_fields
                 .exclude_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            return Err(e);
+            success = false;
         };
 
-        let overrides = overrides.build()?;
-        Ok(overrides)
+        if success {
+            let overrides = overrides.build()?;
+            Ok(ValidatedField::Parsed(overrides))
+        } else {
+            Ok(ValidatedField::Error)
+        }
     }
 
     pub fn update_search_results(
@@ -1055,6 +1070,24 @@ impl App {
 
     pub fn relative_path(&self, path: &Path) -> String {
         relative_path_from(&self.directory, path)
+    }
+
+    pub fn show_error_popup(&self) -> bool {
+        !self.errors.is_empty() || self.search_fields.show_error_popup
+    }
+
+    pub fn errors(&self) -> Vec<AppError> {
+        let app_errors = self.errors.clone().into_iter();
+        let field_errors = self.search_fields.errors().into_iter();
+        app_errors.chain(field_errors).collect()
+    }
+
+    pub fn add_error(&mut self, error: AppError) {
+        self.errors.push(error);
+    }
+
+    pub fn clear_app_errors(&mut self) {
+        self.errors = vec![];
     }
 }
 

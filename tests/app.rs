@@ -176,7 +176,7 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
     assert!(matches!(app.current_screen, Screen::SearchFields));
-    assert!(app.search_fields.show_error_popup);
+    assert!(app.show_error_popup());
 
     let res = app
         .handle_key_event(&KeyEvent {
@@ -187,7 +187,7 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
         })
         .unwrap();
     assert!(res != EventHandlingResult::Exit);
-    assert!(!app.search_fields.show_error_popup);
+    assert!(!app.show_error_popup());
 
     let res = app
         .handle_key_event(&KeyEvent {

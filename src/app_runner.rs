@@ -18,7 +18,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::utils::validate_directory;
 use crate::{
-    app::{App, Event, EventHandlingResult},
+    app::{App, AppError, Event, EventHandlingResult},
     logging::setup_logging,
     tui::Tui,
 };
@@ -161,7 +161,12 @@ where
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
                                 if let Err(e) = self.open_editor(file_path, line) {
-                                    // TODO(editor): show error in popup
+                                    self.app.add_error(
+                                        AppError{
+                                            name: "Failed to launch editor".to_string(),
+                                            long: e.to_string(),
+                                        },
+                                    );
                                     error!("Failed to open editor: {e}");
                                 };
                                 self.tui.init().expect("Failed to initialise TUI");
