@@ -1,6 +1,7 @@
 use crossterm::event::{self, Event as CrosstermEvent};
 use futures::Stream;
 use futures::StreamExt;
+use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
@@ -17,7 +18,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::utils::validate_directory;
 use crate::{
-    app::{App, AppEvent, EventHandlingResult},
+    app::{App, Event, EventHandlingResult},
     logging::setup_logging,
     tui::Tui,
 };
@@ -39,7 +40,7 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream> {
     app: App,
-    app_event_receiver: UnboundedReceiver<AppEvent>,
+    event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
     buffer_snapshot_sender: Option<UnboundedSender<String>>,
@@ -81,7 +82,7 @@ where
             Some(d) => Some(validate_directory(&d)?),
         };
 
-        let (app, app_event_receiver) =
+        let (app, event_receiver) =
             App::new_with_receiver(directory, config.hidden, config.advanced_regex);
 
         let terminal = Terminal::new(backend)?;
@@ -89,7 +90,7 @@ where
 
         Ok(Self {
             app,
-            app_event_receiver,
+            event_receiver,
             tui,
             event_stream,
             buffer_snapshot_sender: None,
@@ -156,19 +157,19 @@ where
                         _ => EventHandlingResult::None,
                     }
                 }
-                Some(event) = self.app_event_receiver.recv() => {
-                    if let AppEvent::LaunchEditor((file_path, line)) = event {
-                            self.open_editor(file_path, line)?;
-
-                            self.tui.init().unwrap(); // TODO(editor): no unwrap
-
-                            // TODO(editor): show error in popup and log
-                            // if !status.success() {
-                            //     eprintln!("Editor exited with status: {}", status);
-                            // }
-                        EventHandlingResult::Rerender
-                    } else {
-                        self.app.handle_app_event(event).await
+                Some(event) = self.event_receiver.recv() => {
+                    match event {
+                        Event::LaunchEditor((file_path, line)) => {
+                                if let Err(e) = self.open_editor(file_path, line) {
+                                    // TODO(editor): show error in popup
+                                    error!("Failed to open editor: {e}");
+                                };
+                                self.tui.init().expect("Failed to initialise TUI");
+                            EventHandlingResult::Rerender
+                        }
+                        Event::App(app_event) => {
+                            self.app.handle_app_event(app_event).await
+                        }
                     }
                 }
                 Some(event) = self.app.background_processing_recv() => {

@@ -50,10 +50,15 @@ pub struct SearchResult {
 }
 
 #[derive(Debug)]
+pub enum Event {
+    LaunchEditor((PathBuf, usize)),
+    App(AppEvent),
+}
+
+#[derive(Debug)]
 pub enum AppEvent {
     Rerender,
     PerformSearch,
-    LaunchEditor((PathBuf, usize)),
 }
 
 #[derive(Debug)]
@@ -477,7 +482,7 @@ pub struct App {
     directory: PathBuf,
     include_hidden: bool,
 
-    app_event_sender: UnboundedSender<AppEvent>,
+    event_sender: UnboundedSender<Event>,
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
@@ -487,7 +492,7 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-        app_event_sender: UnboundedSender<AppEvent>,
+        event_sender: UnboundedSender<Event>,
     ) -> Self {
         let directory = match directory {
             Some(d) => d,
@@ -501,7 +506,7 @@ impl App {
             directory,
             include_hidden,
 
-            app_event_sender,
+            event_sender,
         }
     }
 
@@ -509,9 +514,9 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-    ) -> (Self, UnboundedReceiver<AppEvent>) {
-        let (app_event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(directory, include_hidden, advanced_regex, app_event_sender);
+    ) -> (Self, UnboundedReceiver<Event>) {
+        let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
+        let app = Self::new(directory, include_hidden, advanced_regex, event_sender);
         (app, app_event_receiver)
     }
 
@@ -540,7 +545,7 @@ impl App {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
-            self.app_event_sender.clone(),
+            self.event_sender.clone(),
         );
     }
 
@@ -576,7 +581,6 @@ impl App {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
-            AppEvent::LaunchEditor(_) => panic!("LaunchEditor should be handled by app_runner"), // TODO(editor): encode this in the event type
         }
     }
 
@@ -703,29 +707,27 @@ impl App {
     }
 
     fn handle_key_searching(&mut self, key: &KeyEvent) -> bool {
-        if self.search_fields.show_error_popup {
-            self.search_fields.show_error_popup = false;
-        } else {
-            match (key.code, key.modifiers) {
-                (KeyCode::Enter, _) => {
-                    self.app_event_sender.send(AppEvent::PerformSearch).unwrap();
-                }
-                (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
-                    self.search_fields.focus_prev();
-                }
-                (KeyCode::Tab, _) => {
-                    self.search_fields.focus_next();
-                }
-                (code, modifiers) => {
-                    if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
-                        // TODO: ideally this should only happen when the field is checked, but for now this will do
-                        self.search_fields.search_mut().clear_error();
-                    };
-                    self.search_fields
-                        .highlighted_field()
-                        .write()
-                        .handle_keys(code, modifiers);
-                }
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter, _) => {
+                self.event_sender
+                    .send(Event::App(AppEvent::PerformSearch))
+                    .unwrap();
+            }
+            (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
+                self.search_fields.focus_prev();
+            }
+            (KeyCode::Tab, _) => {
+                self.search_fields.focus_next();
+            }
+            (code, modifiers) => {
+                if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
+                    // TODO: ideally this should only happen when the field is checked, but for now this will do
+                    self.search_fields.search_mut().clear_error();
+                };
+                self.search_fields
+                    .highlighted_field()
+                    .write()
+                    .handle_keys(code, modifiers);
             }
         };
         false
@@ -766,12 +768,14 @@ impl App {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
                 self.current_screen = Screen::SearchFields;
-                self.app_event_sender.send(AppEvent::Rerender).unwrap();
+                self.event_sender
+                    .send(Event::App(AppEvent::Rerender))
+                    .unwrap();
             }
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
                 let selected = self.current_screen.search_results_mut().selected_field();
-                self.app_event_sender
-                    .send(AppEvent::LaunchEditor((
+                self.event_sender
+                    .send(Event::LaunchEditor((
                         selected.path.clone(),
                         selected.line_number,
                     )))
@@ -787,10 +791,14 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
+        // TODO(editor): test with both regex errors and editor errors
+        if self.search_fields.show_error_popup {
+            self.search_fields.show_error_popup = false;
+            return Ok(EventHandlingResult::Rerender);
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                if !self.search_fields.show_error_popup =>
-            {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.reset();
                 return Ok(EventHandlingResult::Exit);
             }
@@ -1186,8 +1194,8 @@ mod tests {
     }
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
-        let (app_event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(None, false, false, app_event_sender);
+        let (event_sender, _) = mpsc::unbounded_channel();
+        let mut app = App::new(None, false, false, event_sender);
         app.current_screen = Screen::SearchComplete(SearchState {
             results,
             selected: 0,
