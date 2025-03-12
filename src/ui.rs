@@ -416,15 +416,14 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         }
         Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
             let mut keys = if let Screen::SearchComplete(_) = app.current_screen {
-                vec!["<enter> replace"]
+                vec!["<enter> replace selected"]
             } else {
                 vec![]
             };
             keys.append(&mut vec![
                 "<space> toggle",
                 "<a> toggle all",
-                "<j> down",
-                "<k> up",
+                "<o> open",
                 "<C-o> back",
             ]);
             keys
