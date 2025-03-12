@@ -49,9 +49,14 @@ impl<B: Backend + 'static> Tui<B> {
         Ok(())
     }
 
+    pub fn show_cursor(&mut self) -> anyhow::Result<()> {
+        self.terminal.show_cursor()?;
+        Ok(())
+    }
+
     pub fn exit(&mut self) -> anyhow::Result<()> {
         Self::reset()?;
-        self.terminal.show_cursor()?;
+        self.show_cursor()?;
         Ok(())
     }
 }

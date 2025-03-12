@@ -11,6 +11,7 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
+use std::iter::Iterator;
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -28,7 +29,7 @@ use tokio::{
 };
 
 use crate::{
-    fields::{CheckboxField, Field, FieldError, TextField},
+    fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
     utils::relative_path_from,
 };
@@ -47,6 +48,12 @@ pub struct SearchResult {
     pub replacement: String,
     pub included: bool,
     pub replace_result: Option<ReplaceResult>,
+}
+
+#[derive(Debug)]
+pub enum Event {
+    LaunchEditor((PathBuf, usize)),
+    App(AppEvent),
 }
 
 #[derive(Debug)]
@@ -101,7 +108,7 @@ impl SearchState {
 
     pub fn toggle_selected_inclusion(&mut self) {
         if self.selected < self.results.len() {
-            let selected_result = &mut self.results[self.selected];
+            let selected_result = self.selected_field();
             selected_result.included = !selected_result.included;
         } else {
             self.selected = self.results.len().saturating_sub(1);
@@ -113,6 +120,10 @@ impl SearchState {
         self.results
             .iter_mut()
             .for_each(|res| res.included = !all_included);
+    }
+
+    fn selected_field(&mut self) -> &mut SearchResult {
+        &mut self.results[self.selected]
     }
 }
 
@@ -434,15 +445,14 @@ impl SearchFields {
             (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
     }
 
-    pub fn errors(&self) -> Vec<(&str, FieldError)> {
+    pub fn errors(&self) -> Vec<AppError> {
         self.fields
             .iter()
             .filter_map(|field| {
-                field
-                    .field
-                    .read()
-                    .error()
-                    .map(|err| (field.name.title(), err))
+                field.field.read().error().map(|err| AppError {
+                    name: field.name.title().to_string(),
+                    long: err.long,
+                })
             })
             .collect::<Vec<_>>()
     }
@@ -466,13 +476,20 @@ enum ValidatedField<T> {
     Error,
 }
 
+#[derive(Clone, Debug)]
+pub struct AppError {
+    pub name: String,
+    pub long: String,
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
+    errors: Vec<AppError>,
     directory: PathBuf,
     include_hidden: bool,
 
-    app_event_sender: UnboundedSender<AppEvent>,
+    event_sender: UnboundedSender<Event>,
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
@@ -482,7 +499,7 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-        app_event_sender: UnboundedSender<AppEvent>,
+        event_sender: UnboundedSender<Event>,
     ) -> Self {
         let directory = match directory {
             Some(d) => d,
@@ -493,10 +510,11 @@ impl App {
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
+            errors: vec![],
             directory,
             include_hidden,
 
-            app_event_sender,
+            event_sender,
         }
     }
 
@@ -504,9 +522,9 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-    ) -> (Self, UnboundedReceiver<AppEvent>) {
-        let (app_event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(directory, include_hidden, advanced_regex, app_event_sender);
+    ) -> (Self, UnboundedReceiver<Event>) {
+        let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
+        let app = Self::new(directory, include_hidden, advanced_regex, event_sender);
         (app, app_event_receiver)
     }
 
@@ -535,7 +553,7 @@ impl App {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
-            self.app_event_sender.clone(),
+            self.event_sender.clone(),
         );
     }
 
@@ -697,29 +715,27 @@ impl App {
     }
 
     fn handle_key_searching(&mut self, key: &KeyEvent) -> bool {
-        if self.search_fields.show_error_popup {
-            self.search_fields.show_error_popup = false;
-        } else {
-            match (key.code, key.modifiers) {
-                (KeyCode::Enter, _) => {
-                    self.app_event_sender.send(AppEvent::PerformSearch).unwrap();
-                }
-                (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
-                    self.search_fields.focus_prev();
-                }
-                (KeyCode::Tab, _) => {
-                    self.search_fields.focus_next();
-                }
-                (code, modifiers) => {
-                    if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
-                        // TODO: ideally this should only happen when the field is checked, but for now this will do
-                        self.search_fields.search_mut().clear_error();
-                    };
-                    self.search_fields
-                        .highlighted_field()
-                        .write()
-                        .handle_keys(code, modifiers);
-                }
+        match (key.code, key.modifiers) {
+            (KeyCode::Enter, _) => {
+                self.event_sender
+                    .send(Event::App(AppEvent::PerformSearch))
+                    .unwrap();
+            }
+            (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
+                self.search_fields.focus_prev();
+            }
+            (KeyCode::Tab, _) => {
+                self.search_fields.focus_next();
+            }
+            (code, modifiers) => {
+                if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
+                    // TODO: ideally this should only happen when the field is checked, but for now this will do
+                    self.search_fields.search_mut().clear_error();
+                };
+                self.search_fields
+                    .highlighted_field()
+                    .write()
+                    .handle_keys(code, modifiers);
             }
         };
         false
@@ -760,7 +776,18 @@ impl App {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
                 self.current_screen = Screen::SearchFields;
-                self.app_event_sender.send(AppEvent::Rerender).unwrap();
+                self.event_sender
+                    .send(Event::App(AppEvent::Rerender))
+                    .unwrap();
+            }
+            (KeyCode::Char('o'), KeyModifiers::NONE) => {
+                let selected = self.current_screen.search_results_mut().selected_field();
+                self.event_sender
+                    .send(Event::LaunchEditor((
+                        selected.path.clone(),
+                        selected.line_number,
+                    )))
+                    .unwrap();
             }
             _ => {}
         };
@@ -772,10 +799,14 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
+        if self.show_error_popup() {
+            self.clear_app_errors();
+            self.search_fields.show_error_popup = false;
+            return Ok(EventHandlingResult::Rerender);
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                if !self.search_fields.show_error_popup =>
-            {
+            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.reset();
                 return Ok(EventHandlingResult::Exit);
             }
@@ -824,24 +855,26 @@ impl App {
             }
         };
 
-        let (search_pattern, overrides) = match (search_pattern, self.validate_overrides()) {
-            (ValidatedField::Parsed(s), Ok(overrides)) => (s, overrides),
-            _ => {
-                self.search_fields.show_error_popup = true;
-                return Ok(None);
-            }
-        };
+        let overrides = self.validate_overrides()?;
 
-        Ok(Some(ParsedFields::new(
-            search_pattern,
-            self.search_fields.replace().text(),
-            self.search_fields.whole_word().checked,
-            self.search_fields.match_case().checked,
-            overrides,
-            self.directory.clone(),
-            self.include_hidden,
-            background_processing_sender.clone(),
-        )))
+        match (search_pattern, overrides) {
+            (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) => {
+                Ok(Some(ParsedFields::new(
+                    search_pattern,
+                    self.search_fields.replace().text(),
+                    self.search_fields.whole_word().checked,
+                    self.search_fields.match_case().checked,
+                    overrides,
+                    self.directory.clone(),
+                    self.include_hidden,
+                    background_processing_sender.clone(),
+                )))
+            }
+            (_, _) => {
+                self.search_fields.show_error_popup = true;
+                Ok(None)
+            }
+        }
     }
 
     fn add_overrides(
@@ -859,8 +892,9 @@ impl App {
         Ok(())
     }
 
-    fn validate_overrides(&mut self) -> anyhow::Result<Override> {
+    fn validate_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
+        let mut success = true;
 
         let include_res = self.add_overrides(
             &mut overrides,
@@ -871,7 +905,7 @@ impl App {
             self.search_fields
                 .include_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            return Err(e);
+            success = false;
         };
 
         let exlude_res = self.add_overrides(
@@ -883,11 +917,15 @@ impl App {
             self.search_fields
                 .exclude_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            return Err(e);
+            success = false;
         };
 
-        let overrides = overrides.build()?;
-        Ok(overrides)
+        if success {
+            let overrides = overrides.build()?;
+            Ok(ValidatedField::Parsed(overrides))
+        } else {
+            Ok(ValidatedField::Error)
+        }
     }
 
     pub fn update_search_results(
@@ -1033,6 +1071,24 @@ impl App {
     pub fn relative_path(&self, path: &Path) -> String {
         relative_path_from(&self.directory, path)
     }
+
+    pub fn show_error_popup(&self) -> bool {
+        !self.errors.is_empty() || self.search_fields.show_error_popup
+    }
+
+    pub fn errors(&self) -> Vec<AppError> {
+        let app_errors = self.errors.clone().into_iter();
+        let field_errors = self.search_fields.errors().into_iter();
+        app_errors.chain(field_errors).collect()
+    }
+
+    pub fn add_error(&mut self, error: AppError) {
+        self.errors.push(error);
+    }
+
+    pub fn clear_app_errors(&mut self) {
+        self.errors = vec![];
+    }
 }
 
 #[cfg(test)]
@@ -1171,8 +1227,8 @@ mod tests {
     }
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
-        let (app_event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(None, false, false, app_event_sender);
+        let (event_sender, _) = mpsc::unbounded_channel();
+        let mut app = App::new(None, false, false, event_sender);
         app.current_screen = Screen::SearchComplete(SearchState {
             results,
             selected: 0,

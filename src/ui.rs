@@ -11,8 +11,8 @@ use std::{cmp::min, iter};
 
 use crate::{
     app::{
-        App, FieldName, ReplaceResult, ReplaceState, Screen, SearchField, SearchInProgressState,
-        SearchResult, NUM_SEARCH_FIELDS,
+        App, AppError, FieldName, ReplaceResult, ReplaceState, Screen, SearchField,
+        SearchInProgressState, SearchResult, NUM_SEARCH_FIELDS,
     },
     utils::group_by,
 };
@@ -31,10 +31,7 @@ impl FieldName {
     }
 }
 
-fn render_search_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
-    let [area] = Layout::horizontal([Constraint::Percentage(80)])
-        .flex(Flex::Center)
-        .areas(rect);
+fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let areas: [Rect; NUM_SEARCH_FIELDS] =
         Layout::vertical(iter::repeat(Constraint::Length(3)).take(app.search_fields.fields.len()))
             .flex(Flex::Center)
@@ -54,54 +51,15 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
             )
         });
 
-    if app.search_fields.show_error_popup {
-        let error_lines: Vec<Line<'_>> = app
-            .search_fields
-            .errors()
-            .iter()
-            .flat_map(|(name, error)| {
-                let name_line = Line::from(vec![Span::styled(*name, Style::default().bold())]);
+    if !app.show_error_popup() {
+        if let Some(cursor_idx) = app.search_fields.highlighted_field().read().cursor_idx() {
+            let highlighted_area = areas[app.search_fields.highlighted];
 
-                let error_lines: Vec<Line<'_>> = error
-                    .long
-                    .lines()
-                    .map(|line| {
-                        Line::from(vec![Span::styled(
-                            line.to_string(),
-                            Style::default().fg(Color::Red),
-                        )])
-                    })
-                    .collect();
-
-                std::iter::once(name_line)
-                    .chain(error_lines)
-                    .chain(std::iter::once(Line::from("")))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-
-        let content_height = error_lines.len() as u16 + 1;
-
-        let popup_area = center(
-            area,
-            Constraint::Percentage(80),
-            Constraint::Length(content_height),
-        );
-
-        let popup = Paragraph::new(error_lines).block(
-            Block::bordered()
-                .title("Errors")
-                .title_alignment(Alignment::Center),
-        );
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(popup, popup_area);
-    } else if let Some(cursor_idx) = app.search_fields.highlighted_field().read().cursor_idx() {
-        let highlighted_area = areas[app.search_fields.highlighted];
-
-        frame.set_cursor(
-            highlighted_area.x + cursor_idx as u16 + 1,
-            highlighted_area.y + 1,
-        )
+            frame.set_cursor(
+                highlighted_area.x + cursor_idx as u16 + 1,
+                highlighted_area.y + 1,
+            )
+        }
     }
 }
 
@@ -184,10 +142,7 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
     (old_spans, new_spans)
 }
 
-fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
-    let [area] = Layout::horizontal([Constraint::Percentage(80)])
-        .flex(Flex::Center)
-        .areas(rect);
+fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let [num_results_area, list_area] =
         Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
             .flex(Flex::Start)
@@ -283,11 +238,7 @@ fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, rect: Rect) {
 }
 
 fn render_results_view(replace_state: &ReplaceState) -> impl Fn(&mut Frame<'_>, &App, Rect) + '_ {
-    move |frame: &mut Frame<'_>, _app: &App, rect: Rect| {
-        let [area] = Layout::horizontal([Constraint::Percentage(80)])
-            .flex(Flex::Center)
-            .areas(rect);
-
+    move |frame: &mut Frame<'_>, _app: &App, area: Rect| {
         if replace_state.errors.is_empty() {
             render_results_success(area, replace_state, frame);
         } else {
@@ -391,10 +342,10 @@ fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
 }
 
 fn render_loading_view(text: String) -> impl Fn(&mut Frame<'_>, &App, Rect) {
-    move |frame: &mut Frame<'_>, _app: &App, rect: Rect| {
+    move |frame: &mut Frame<'_>, _app: &App, area: Rect| {
         let [area] = Layout::vertical([Constraint::Length(4)])
             .flex(Flex::Center)
-            .areas(rect);
+            .areas(area);
 
         let text = Paragraph::new(Line::from(Span::raw(&text)))
             .block(Block::default())
@@ -443,6 +394,10 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         .alignment(Alignment::Center);
     frame.render_widget(title, chunks[0]);
 
+    let [content_area] = Layout::horizontal([Constraint::Percentage(80)])
+        .flex(Flex::Center)
+        .areas(chunks[1]);
+
     let render_fn: RenderFn<'_> = match &app.current_screen {
         Screen::SearchFields => Box::new(render_search_view),
         Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
@@ -453,7 +408,7 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         }
         Screen::Results(ref replace_state) => Box::new(render_results_view(replace_state)),
     };
-    render_fn(frame, app, chunks[1]);
+    render_fn(frame, app, content_area);
 
     let current_keys = match app.current_screen {
         Screen::SearchFields => {
@@ -496,6 +451,51 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         .block(Block::default())
         .alignment(Alignment::Center);
     frame.render_widget(footer, chunks[2]);
+
+    if app.show_error_popup() {
+        render_error_popup(app, frame, content_area);
+    }
+}
+
+fn render_error_popup(app: &App, frame: &mut Frame<'_>, area: Rect) {
+    let error_lines: Vec<Line<'_>> = app
+        .errors()
+        .into_iter()
+        .flat_map(|AppError { name, long, .. }| {
+            let name_line = Line::from(vec![Span::styled(name, Style::default().bold())]);
+
+            let error_lines: Vec<Line<'_>> = long
+                .lines()
+                .map(|line| {
+                    Line::from(vec![Span::styled(
+                        line.to_string(),
+                        Style::default().fg(Color::Red),
+                    )])
+                })
+                .collect();
+
+            std::iter::once(name_line)
+                .chain(error_lines)
+                .chain(std::iter::once(Line::from("")))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    let content_height = error_lines.len() as u16 + 1;
+
+    let popup_area = center(
+        area,
+        Constraint::Percentage(80),
+        Constraint::Length(content_height),
+    );
+
+    let popup = Paragraph::new(error_lines).block(
+        Block::bordered()
+            .title("Errors")
+            .title_alignment(Alignment::Center),
+    );
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(popup, popup_area);
 }
 
 #[cfg(test)]

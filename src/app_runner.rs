@@ -1,19 +1,24 @@
 use crossterm::event::{self, Event as CrosstermEvent};
 use futures::Stream;
 use futures::StreamExt;
+use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::env;
 use std::io;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::utils::validate_directory;
 use crate::{
-    app::{App, AppEvent, EventHandlingResult},
+    app::{App, AppError, Event, EventHandlingResult},
     logging::setup_logging,
     tui::Tui,
 };
@@ -35,7 +40,7 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream> {
     app: App,
-    app_event_receiver: UnboundedReceiver<AppEvent>,
+    event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
     buffer_snapshot_sender: Option<UnboundedSender<String>>,
@@ -77,7 +82,7 @@ where
             Some(d) => Some(validate_directory(&d)?),
         };
 
-        let (app, app_event_receiver) =
+        let (app, event_receiver) =
             App::new_with_receiver(directory, config.hidden, config.advanced_regex);
 
         let terminal = Terminal::new(backend)?;
@@ -85,7 +90,7 @@ where
 
         Ok(Self {
             app,
-            app_event_receiver,
+            event_receiver,
             tui,
             event_stream,
             buffer_snapshot_sender: None,
@@ -152,8 +157,26 @@ where
                         _ => EventHandlingResult::None,
                     }
                 }
-                Some(event) = self.app_event_receiver.recv() => {
-                    self.app.handle_app_event(event).await
+                Some(event) = self.event_receiver.recv() => {
+                    match event {
+                        Event::LaunchEditor((file_path, line)) => {
+                                self.tui.show_cursor()?;
+                                if let Err(e) = self.open_editor(file_path, line) {
+                                    self.app.add_error(
+                                        AppError{
+                                            name: "Failed to launch editor".to_string(),
+                                            long: e.to_string(),
+                                        },
+                                    );
+                                    error!("Failed to open editor: {e}");
+                                };
+                                self.tui.init()?;
+                            EventHandlingResult::Rerender
+                        }
+                        Event::App(app_event) => {
+                            self.app.handle_app_event(app_event).await
+                        }
+                    }
                 }
                 Some(event) = self.app.background_processing_recv() => {
                     self.app.handle_background_processing_event(event)
@@ -175,6 +198,56 @@ where
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
         self.tui.exit()
+    }
+
+    fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
+        let editor = env::var("EDITOR").unwrap_or_else(|_| {
+            env::var("VISUAL").unwrap_or_else(|_| {
+                if cfg!(windows) {
+                    "notepad".to_string()
+                } else {
+                    "vi".to_string()
+                }
+            })
+        });
+        let parts: Vec<&str> = editor.split_whitespace().collect();
+        let program = parts[0];
+        let editor_name = Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(program)
+            .to_lowercase();
+
+        let mut cmd = Command::new(program);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+
+        // TODO(editor): let users override editor
+        match editor_name.as_str() {
+            e if ["vi", "vim", "nvim", "kak", "nano"].contains(&e) => {
+                cmd.arg(format!("+{}", line)).arg(file_path);
+            }
+            e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
+                cmd.arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["code", "code-insiders", "codium", "vscodium"].contains(&e) => {
+                cmd.arg("-g")
+                    .arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["emacs", "emacsclient"].contains(&e) => {
+                cmd.arg(format!("+{}:0", line)).arg(file_path);
+            }
+            "notepad++" => {
+                cmd.arg(file_path).arg(format!("-n{}", line));
+            }
+            _ => {
+                cmd.arg(file_path);
+            }
+        }
+
+        cmd.status()?;
+        Ok(())
     }
 }
 
