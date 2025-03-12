@@ -160,6 +160,7 @@ where
                 Some(event) = self.event_receiver.recv() => {
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
+                                self.tui.show_cursor()?;
                                 if let Err(e) = self.open_editor(file_path, line) {
                                     self.app.add_error(
                                         AppError{
@@ -169,7 +170,7 @@ where
                                     );
                                     error!("Failed to open editor: {e}");
                                 };
-                                self.tui.init().expect("Failed to initialise TUI");
+                                self.tui.init()?;
                             EventHandlingResult::Rerender
                         }
                         Event::App(app_event) => {
@@ -223,9 +224,8 @@ where
         }
 
         // TODO(editor): let users override editor
-        // TODO(editor): TEST THESE
         match editor_name.as_str() {
-            e if ["vi", "vim", "nvim", "nano"].contains(&e) => {
+            e if ["vi", "vim", "nvim", "kak", "nano"].contains(&e) => {
                 cmd.arg(format!("+{}", line)).arg(file_path);
             }
             e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
@@ -237,9 +237,6 @@ where
             }
             e if ["emacs", "emacsclient"].contains(&e) => {
                 cmd.arg(format!("+{}:0", line)).arg(file_path);
-            }
-            e if ["kak", "micro"].contains(&e) => {
-                cmd.arg(file_path).arg(format!("+{}", line));
             }
             "notepad++" => {
                 cmd.arg(file_path).arg(format!("-n{}", line));
