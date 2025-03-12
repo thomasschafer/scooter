@@ -14,6 +14,9 @@ Scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
+<!-- TODO(editor): describe how to override this with config -->
+When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by the `EDITOR` environment variable.
+
 ## Usage
 
 Run

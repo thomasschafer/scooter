@@ -201,15 +201,19 @@ where
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        let editor = env::var("EDITOR").unwrap_or_else(|_| {
-            env::var("VISUAL").unwrap_or_else(|_| {
-                if cfg!(windows) {
-                    "notepad".to_string()
-                } else {
-                    "vi".to_string()
+        let editor = match env::var("EDITOR") {
+            Ok(val) if !val.trim().is_empty() => val,
+            _ => match env::var("VISUAL") {
+                Ok(val) if !val.trim().is_empty() => val,
+                _ => {
+                    if cfg!(windows) {
+                        "notepad".to_string()
+                    } else {
+                        "vi".to_string()
+                    }
                 }
-            })
-        });
+            },
+        };
         let parts: Vec<&str> = editor.split_whitespace().collect();
         let program = parts[0];
         let editor_name = Path::new(program)
