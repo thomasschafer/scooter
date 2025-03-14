@@ -202,6 +202,7 @@ where
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
         match &self.app.config.editor_open_command {
+            // TODO: why doesn't this work with `editor_open_command = 'tmux send-keys -t "$TMUX_PANE" ":open %file:%line"'` ?
             Some(editor_command) => {
                 self.open_editor_from_command(editor_command, file_path, line)?;
             }
