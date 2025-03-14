@@ -14,21 +14,29 @@ fn config_file() -> PathBuf {
     config_dir().join("config.toml")
 }
 
+// TODO(editor): improve error messages when parse fails
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    pub editor_open: Option<EditorOpenConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditorOpenConfig {
     /// The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
     /// ```toml
-    /// editor_open_command = "vi %file +%line"
+    /// [editor_open]
+    /// command = "vi %file +%line"
     /// ```
-    pub editor_open_command: Option<String>,
+    pub command: Option<String>,
+    /// Whether to exit after running the command defined by `editor_open.command`.
+    #[serde(default)]
+    pub exit: bool,
 }
 
 #[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            editor_open_command: None,
-        }
+        Self { editor_open: None }
     }
 }
 

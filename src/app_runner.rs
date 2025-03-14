@@ -160,8 +160,15 @@ where
                 Some(event) = self.event_receiver.recv() => {
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
-                                self.tui.show_cursor()?;
-                                if let Err(e) = self.open_editor(file_path, line) {
+                            let mut res = EventHandlingResult::Rerender;
+                            self.tui.show_cursor()?;
+                            match self.open_editor(file_path, line) {
+                                Ok(()) => {
+                                    if self.app.config.editor_open.as_ref().map(|c| c.exit).unwrap_or(false) {
+                                        res = EventHandlingResult::Exit;
+                                    }
+                                }
+                                Err(e) => {
                                     self.app.add_error(
                                         AppError{
                                             name: "Failed to launch editor".to_string(),
@@ -169,9 +176,11 @@ where
                                         },
                                     );
                                     error!("Failed to open editor: {e}");
-                                };
-                                self.tui.init()?;
-                            EventHandlingResult::Rerender
+                                }
+                            };
+                            self.tui.init()?;
+                            res
+
                         }
                         Event::App(app_event) => {
                             self.app.handle_app_event(app_event).await
@@ -201,9 +210,15 @@ where
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        match &self.app.config.editor_open_command {
-            Some(editor_command) => {
-                self.open_editor_from_command(editor_command, file_path, line)?;
+        match &self
+            .app
+            .config
+            .editor_open
+            .as_ref()
+            .and_then(|c| c.command.clone())
+        {
+            Some(command) => {
+                self.open_editor_from_command(command, file_path, line)?;
             }
             None => {
                 self.open_default_editor(file_path, line)?;
@@ -218,20 +233,21 @@ where
         file_path: PathBuf,
         line: usize,
     ) -> anyhow::Result<()> {
+        error!("[before] editor_command = {editor_command}");
         let editor_command = editor_command
             .replace("%file", &file_path.to_string_lossy())
             .replace("%line", &line.to_string());
+        error!("[after] editor_command = {editor_command}");
 
-        let parts: Vec<&str> = editor_command.split_whitespace().collect();
-        let program = match parts.first() {
-            Some(p) => p,
-            None => return Err(anyhow::anyhow!("Found empty editor command")),
-        };
-        let mut cmd = Command::new(program);
-        if parts.len() > 1 {
-            cmd.args(&parts[1..]);
+        if cfg!(windows) {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C").arg(&editor_command);
+            cmd.status()?;
+        } else {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(&editor_command);
+            cmd.status()?;
         }
-        cmd.status()?;
         Ok(())
     }
 
