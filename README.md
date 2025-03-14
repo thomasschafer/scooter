@@ -8,6 +8,25 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ![Scooter preview](media/preview.gif)
 
+## Contents
+
+<!-- TOC START -->
+- [Features](#features)
+- [Usage](#usage)
+  - [Search fields](#search-fields)
+- [Installation](#installation)
+  - [Homebrew](#homebrew)
+  - [NixOS](#nixos)
+  - [AUR](#aur)
+  - [Prebuilt binaries](#prebuilt-binaries)
+  - [Cargo](#cargo)
+  - [Building from source](#building-from-source)
+- [Editor configuration](#editor-configuration)
+  - [Helix](#helix)
+  - [Neovim](#neovim)
+- [Contributing](#contributing)
+<!-- TOC END -->
+
 ## Features
 
 Scooter respects both `.gitignore` and `.ignore` files.

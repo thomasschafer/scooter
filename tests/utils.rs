@@ -32,7 +32,8 @@ macro_rules! create_test_files {
             )+
 
             #[cfg(windows)]
-            sleep(Duration::from_millis(100));
+            let _ = sleep(Duration::from_millis(100));
+
             temp_dir
         }
     };
