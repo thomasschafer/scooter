@@ -16,6 +16,12 @@ fn config_file() -> PathBuf {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    /// The command used when pressing `o` on the search results page. Two variable are supported: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result.
+    ///
+    /// Example:
+    /// ```toml
+    /// editor_open_command = "vi %file +%line"
+    /// ```
     pub editor_open_command: Option<String>,
 }
 

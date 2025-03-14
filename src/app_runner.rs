@@ -203,94 +203,97 @@ where
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
         match &self.app.config.editor_open_command {
             Some(editor_command) => {
-                // TODO(editor)
-                open_editor_from_command(editor_command, file_path, line)?;
+                self.open_editor_from_command(editor_command, file_path, line)?;
             }
             None => {
-                open_default_editor(file_path, line)?;
+                self.open_default_editor(file_path, line)?;
             }
         }
         Ok(())
     }
-}
 
-fn open_editor_from_command(
-    editor_command: &str,
-    file_path: PathBuf,
-    line: usize,
-) -> anyhow::Result<()> {
-    let parts: Vec<&str> = editor_command.split_whitespace().collect();
-    let program = match parts.get(0) {
-        Some(p) => p,
-        None => return Err(anyhow::anyhow!("Found empty editor command")),
-    };
-    let editor_name = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program)
-        .to_lowercase();
-    // TODO(editor)
-    Ok(())
-}
+    fn open_editor_from_command(
+        &self,
+        editor_command: &str,
+        file_path: PathBuf,
+        line: usize,
+    ) -> anyhow::Result<()> {
+        let editor_command = editor_command
+            .replace("%file", &file_path.to_string_lossy())
+            .replace("%line", &line.to_string());
 
-fn open_default_editor(file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-    let editor = match env::var("EDITOR") {
-        Ok(val) if !val.trim().is_empty() => val,
-        _ => match env::var("VISUAL") {
+        let parts: Vec<&str> = editor_command.split_whitespace().collect();
+        let program = match parts.first() {
+            Some(p) => p,
+            None => return Err(anyhow::anyhow!("Found empty editor command")),
+        };
+        let mut cmd = Command::new(program);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+        cmd.status()?;
+        Ok(())
+    }
+
+    fn open_default_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
+        let editor = match env::var("EDITOR") {
             Ok(val) if !val.trim().is_empty() => val,
-            _ => {
-                if cfg!(windows) {
-                    "notepad".to_string()
-                } else {
-                    "vi".to_string()
+            _ => match env::var("VISUAL") {
+                Ok(val) if !val.trim().is_empty() => val,
+                _ => {
+                    if cfg!(windows) {
+                        "notepad".to_string()
+                    } else {
+                        "vi".to_string()
+                    }
                 }
+            },
+        };
+
+        let parts: Vec<&str> = editor.split_whitespace().collect();
+        let program = match parts.first() {
+            Some(p) => p,
+            None => return Err(anyhow::anyhow!("Found empty editor command")),
+        };
+        let mut cmd = Command::new(program);
+        if parts.len() > 1 {
+            cmd.args(&parts[1..]);
+        }
+
+        let editor_name = Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(program)
+            .to_lowercase();
+        match editor_name.as_str() {
+            e if ["vi", "vim", "nvim", "kak", "nano"].contains(&e) => {
+                cmd.arg(format!("+{}", line)).arg(file_path);
             }
-        },
-    };
+            e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
+                cmd.arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["code", "code-insiders", "codium", "vscodium"].contains(&e) => {
+                cmd.arg("-g")
+                    .arg(format!("{}:{}", file_path.to_string_lossy(), line));
+            }
+            e if ["emacs", "emacsclient"].contains(&e) => {
+                cmd.arg(format!("+{}:0", line)).arg(file_path);
+            }
+            "notepad++" => {
+                cmd.arg(file_path).arg(format!("-n{}", line));
+            }
+            _ => {
+                cmd.arg(file_path);
+            }
+        }
 
-    let parts: Vec<&str> = editor.split_whitespace().collect();
-    let program = match parts.first() {
-        Some(p) => p,
-        None => return Err(anyhow::anyhow!("Found empty editor command")),
-    };
-    let mut cmd = Command::new(program);
-    if parts.len() > 1 {
-        cmd.args(&parts[1..]);
+        cmd.status()?;
+        Ok(())
     }
-
-    let editor_name = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program)
-        .to_lowercase();
-    match editor_name.as_str() {
-        e if ["vi", "vim", "nvim", "kak", "nano"].contains(&e) => {
-            cmd.arg(format!("+{}", line)).arg(file_path);
-        }
-        e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
-            cmd.arg(format!("{}:{}", file_path.to_string_lossy(), line));
-        }
-        e if ["code", "code-insiders", "codium", "vscodium"].contains(&e) => {
-            cmd.arg("-g")
-                .arg(format!("{}:{}", file_path.to_string_lossy(), line));
-        }
-        e if ["emacs", "emacsclient"].contains(&e) => {
-            cmd.arg(format!("+{}:0", line)).arg(file_path);
-        }
-        "notepad++" => {
-            cmd.arg(file_path).arg(format!("-n{}", line));
-        }
-        _ => {
-            cmd.arg(file_path);
-        }
-    }
-
-    cmd.status()?;
-    Ok(())
 }
 
-pub async fn run_app(config: AppConfig) -> anyhow::Result<()> {
-    let mut runner = AppRunner::new_terminal(config)?;
+pub async fn run_app(app_config: AppConfig) -> anyhow::Result<()> {
+    let mut runner = AppRunner::new_terminal(app_config)?;
     runner.init()?;
     runner.run_event_loop().await?;
     runner.cleanup()?;
