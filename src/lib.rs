@@ -1,5 +1,6 @@
 pub mod app;
 pub mod app_runner;
+pub mod config;
 pub mod fields;
 pub mod logging;
 pub mod replace;

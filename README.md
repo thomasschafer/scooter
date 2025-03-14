@@ -8,12 +8,14 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ![Scooter preview](media/preview.gif)
 
+
 ## Contents
 
 <!-- TOC START -->
 - [Features](#features)
 - [Usage](#usage)
   - [Search fields](#search-fields)
+- [Configuration](#configuration)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
   - [NixOS](#nixos)
@@ -27,6 +29,7 @@ If the instance you're attempting to replace has changed since the search was pe
 - [Contributing](#contributing)
 <!-- TOC END -->
 
+
 ## Features
 
 Scooter respects both `.gitignore` and `.ignore` files.
@@ -34,7 +37,9 @@ Scooter respects both `.gitignore` and `.ignore` files.
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
 <!-- TODO(editor): describe how to override this with config -->
-When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by the `EDITOR` environment variable.
+
+When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by the `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open_command` in your [config file](#config).
+
 
 ## Usage
 
@@ -69,6 +74,27 @@ When on the search screen the following fields are available:
 - **Files to exclude**: Glob patterns, separated by commas (`,`), that file paths must not match. For instance, `env/**` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
 
 Note that the glob matching library used in Scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
+
+
+## Configuration
+
+Scooter looks for a TOML configuration file at:
+
+- Linux or macOS: `~/.config/scooter/config.toml`
+- Windows: `%AppData%\scooter\config.toml`
+
+The following options can be set in your configuration file:
+
+<!-- CONFIG START -->
+__editor_open_command__
+
+The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+```toml
+editor_open_command = "vi %file +%line"
+```
+
+<!-- CONFIG END -->
+
 
 ## Installation
 
@@ -131,6 +157,7 @@ cd scooter
 cargo install --path . --locked
 ```
 
+
 ## Editor configuration
 
 Below are a couple of ways to configure Scooter to run in a floating window, without leaving your editor.
@@ -167,6 +194,7 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
 ```
 
 This can of course be tweaked to your liking.
+
 
 ## Contributing
 

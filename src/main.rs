@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 mod app;
 mod app_runner;
+mod config;
 mod fields;
 mod logging;
 mod replace;
