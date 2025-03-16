@@ -1,9 +1,9 @@
+use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use log::{info, LevelFilter};
 use std::path::{Path, PathBuf};
 
-use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
+use crate::config::APP_NAME;
 
-const APP_NAME: &str = "scooter";
 pub const DEFAULT_LOG_LEVEL: &str = "error";
 
 pub fn cache_dir() -> PathBuf {

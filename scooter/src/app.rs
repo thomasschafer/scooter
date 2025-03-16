@@ -29,6 +29,7 @@ use tokio::{
 };
 
 use crate::{
+    config::{load_config, Config},
     fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
     utils::relative_path_from,
@@ -488,6 +489,7 @@ pub struct App {
     errors: Vec<AppError>,
     directory: PathBuf,
     include_hidden: bool,
+    pub config: Config,
 
     event_sender: UnboundedSender<Event>,
 }
@@ -501,10 +503,13 @@ impl App {
         advanced_regex: bool,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
+        let config = load_config().expect("Failed to read config file");
+
         let directory = match directory {
             Some(d) => d,
             None => current_dir().unwrap(),
         };
+
         let search_fields = SearchFields::with_default_values().with_advanced_regex(advanced_regex);
 
         Self {
@@ -513,7 +518,7 @@ impl App {
             errors: vec![],
             directory,
             include_hidden,
-
+            config,
             event_sender,
         }
     }

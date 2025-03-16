@@ -1,45 +1,9 @@
-[package]
-name = "scooter"
-version = "0.3.0"
-edition = "2021"
-authors = ["thomasschafer97@gmail.com"]
-license = "MIT"
-description = "Interactive find and replace in the terminal"
-readme = "README.md"
-homepage = "https://github.com/thomasschafer/scooter"
-repository = "https://github.com/thomasschafer/scooter"
-keywords = ["cli", "find", "search", "replace"]
-categories = ["command-line-utilities"]
-
-[dependencies]
-anyhow = "1.0.97"
-clap = { version = "4.5.32", features = ["derive"] }
-content_inspector = "0.2.4"
-crossterm = { version = "0.27", features = ["event-stream"] }
-etcetera = "0.8.0"
-fancy-regex = "0.14.0"
-futures = "0.3.31"
-ignore = "0.4.23"
-itertools = "0.13.0"
-log = "0.4.26"
-parking_lot = "0.12.3"
-ratatui = "0.27.0"
-regex = "1.11.1"
-similar = "2.7.0"
-simple-log = "2.1.2"
-tempfile = "3.18.0"
-tokio = { version = "1.44.1", features = ["full"] }
-
-[dev-dependencies]
-rand = "0.8.5"
-serial_test = "3.2.0"
-
-[lib]
-name = "scooter"
-path = "src/lib.rs"
-
-[lints.rust]
-rust_2018_idioms = "warn"
+[workspace]
+members = [
+    "scooter",
+    "xtask",
+]
+resolver = "2"
 
 [profile.release]
 lto = true
