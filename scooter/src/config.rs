@@ -14,13 +14,14 @@ fn config_file() -> PathBuf {
     config_dir().join("config.toml")
 }
 
-// TODO(editor): improve error messages when parse fails
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub editor_open: Option<EditorOpenConfig>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EditorOpenConfig {
     /// The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
     /// ```toml

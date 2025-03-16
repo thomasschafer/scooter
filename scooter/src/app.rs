@@ -503,7 +503,7 @@ impl App {
         advanced_regex: bool,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
-        let config = load_config().expect("Failed to read config file"); // TODO(editor): test with file not existing, existing but broken, existing and correct
+        let config = load_config().expect("Failed to read config file");
 
         let directory = match directory {
             Some(d) => d,

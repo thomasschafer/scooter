@@ -233,11 +233,9 @@ where
         file_path: PathBuf,
         line: usize,
     ) -> anyhow::Result<()> {
-        error!("[before] editor_command = {editor_command}");
         let editor_command = editor_command
             .replace("%file", &file_path.to_string_lossy())
             .replace("%line", &line.to_string());
-        error!("[after] editor_command = {editor_command}");
 
         if cfg!(windows) {
             let mut cmd = Command::new("cmd");
