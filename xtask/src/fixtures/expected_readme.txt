@@ -15,13 +15,6 @@ This is a test project.
 Main configuration information goes here.
 
 <!-- CONFIG START -->
-Scooter looks for a TOML configuration file at:
-
-- Linux or macOS: `~/.config/scooter/config.toml`
-- Windows: `%AppData%\scooter\config.toml`
-
-The following options can be set in your configuration file:
-
 ### `[database]` section
 
 Database configuration

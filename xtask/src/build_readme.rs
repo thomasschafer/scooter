@@ -172,16 +172,6 @@ fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
     }
 
     let mut docs = String::new();
-    docs.push_str(
-        r#"Scooter looks for a TOML configuration file at:
-
-- Linux or macOS: `~/.config/scooter/config.toml`
-- Windows: `%AppData%\scooter\config.toml`
-
-The following options can be set in your configuration file:
-
-"#,
-    );
 
     if let Some(config_struct) = structs.get("Config") {
         process_struct(&mut docs, config_struct, &structs, "", "");

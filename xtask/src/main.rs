@@ -1,4 +1,4 @@
-mod readme;
+mod build_readme;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
             config,
             check,
         } => {
-            readme::generate_readme(readme, config, *check)?;
+            build_readme::generate_readme(readme, config, *check)?;
         }
     }
 

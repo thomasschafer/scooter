@@ -23,7 +23,7 @@ pub struct Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EditorOpenConfig {
-    /// The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+    /// The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
     /// ```toml
     /// [editor_open]
     /// command = "vi %file +%line"
