@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'Cargo.toml'
+      - 'scooter/Cargo.toml'
   workflow_dispatch:
 
 permissions:
@@ -25,8 +25,8 @@ jobs:
       - name: Get package info from Cargo.toml
         id: get-package-info
         run: |
-          version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
-          package_name=$(grep -m1 '^name = ' Cargo.toml | cut -d '"' -f2)
+          version=$(grep -m1 '^version = ' scooter/Cargo.toml | cut -d '"' -f2)
+          package_name=$(grep -m1 '^name = ' scooter/Cargo.toml | cut -d '"' -f2)
           echo "version=${version}" >> $GITHUB_OUTPUT
           echo "package_name=${package_name}" >> $GITHUB_OUTPUT
 
@@ -102,13 +102,13 @@ jobs:
       uses: clechasseur/rs-cargo@v2
       with:
         command: build
-        args: --release --target ${{ matrix.target }}
+        args: --release --target ${{ matrix.target }} --package scooter
         use-cross: ${{ matrix.use-cross }}
 
     - name: Get binary name from Cargo.toml
       shell: bash
       run: |
-        BINARY_NAME=$(grep -m1 '^name' Cargo.toml | cut -d'"' -f2 | cut -d"'" -f2)
+        BINARY_NAME=$(grep -m1 '^name' scooter/Cargo.toml | cut -d'"' -f2 | cut -d"'" -f2)
         echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
 
     - name: Create release archive
@@ -171,7 +171,9 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: |
+          cd scooter
+          cargo publish
 
       - name: Publish release
         env:

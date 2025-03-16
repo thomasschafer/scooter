@@ -15,7 +15,7 @@ If the instance you're attempting to replace has changed since the search was pe
 - [Features](#features)
 - [Usage](#usage)
   - [Search fields](#search-fields)
-- [Configuration](#configuration)
+- [Configuration options](#configuration-options)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
   - [NixOS](#nixos)
@@ -36,9 +36,7 @@ Scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
-<!-- TODO(editor): describe how to override this with config -->
-
-When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by the `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open_command` in your [config file](#config).
+When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by the `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
 
 
 ## Usage
@@ -76,8 +74,9 @@ When on the search screen the following fields are available:
 Note that the glob matching library used in Scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
 
 
-## Configuration
+## Configuration options
 
+<!-- CONFIG START -->
 Scooter looks for a TOML configuration file at:
 
 - Linux or macOS: `~/.config/scooter/config.toml`
@@ -85,13 +84,20 @@ Scooter looks for a TOML configuration file at:
 
 The following options can be set in your configuration file:
 
-<!-- CONFIG START -->
-__editor_open_command__
+### editor_open
+
+
+#### command
 
 The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
 ```toml
-editor_open_command = "vi %file +%line"
+[editor_open]
+command = "vi %file +%line"
 ```
+
+#### exit
+
+Whether to exit after running the command defined by `editor_open.command`.
 
 <!-- CONFIG END -->
 
@@ -154,7 +160,7 @@ Ensure you have cargo installed (see [here](https://doc.rust-lang.org/cargo/gett
 ```sh
 git clone git@github.com:thomasschafer/scooter.git
 cd scooter
-cargo install --path . --locked
+cargo install --path scooter --locked
 ```
 
 
@@ -164,14 +170,21 @@ Below are a couple of ways to configure Scooter to run in a floating window, wit
 
 ### Helix
 
-If you are using Helix in Tmux, you can add a keymap like the following:
+If you are using Helix in Tmux, you can add a keymap like the following to open Scooter:
 
 ```toml
 [keys.select.ret]
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-The above uses `<return-s>` but this can of course be changed.
+You can also add the following to your [config file](#configuration-options) to open files from the search results page with `o`:
+
+```toml
+[editor_open]
+command = 'tmux send-keys -t "$TMUX_PANE" ":open %file:%line" Enter'
+exit = true
+```
+
 
 ### Neovim
 

@@ -1,0 +1,35 @@
+name: Check README
+# TODO(editor): test this workflow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'scooter/src/config.rs'
+      - '.github/workflows/check-readme.yml'
+      - 'xtask/**'
+
+jobs:
+  check-readme:
+    name: Check README
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check README
+        run: cargo xtask readme --check
+
+      - name: Show diff (if outdated)
+        if: failure()
+        run: |
+          cargo xtask readme
+          git diff README.md

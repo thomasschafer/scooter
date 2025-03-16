@@ -11,26 +11,6 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  check-readme:
-    name: Check README
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build readme
-        run: ./build-readme.sh
-
-      - name: Check for changes
-        id: git-check
-        run: |
-          if git diff --exit-code README.md; then
-            echo "TOC is up to date!"
-          else
-            echo "::error:: README.md out of date! Please run './build-readme.sh' locally and commit the changes."
-            git diff README.md
-            exit 1
-          fi
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
