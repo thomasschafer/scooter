@@ -205,8 +205,6 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
 })
 ```
 
-This can of course be tweaked to your liking.
-
 
 ## Contributing
 

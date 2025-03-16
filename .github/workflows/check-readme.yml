@@ -1,5 +1,4 @@
 name: Check README
-# TODO(editor): test this workflow
 
 on:
   push:

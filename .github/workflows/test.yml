@@ -26,10 +26,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+      - name: Run clippy on all packages
+        run: cargo clippy --workspace -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -49,8 +49,8 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build all packages
+        run: cargo build --workspace --verbose
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Run all tests
+        run: cargo test --workspace --verbose

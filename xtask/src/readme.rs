@@ -293,13 +293,15 @@ mod tests {
         let config_file = Path::new("src").join("fixtures").join("config.txt");
         let readme_file = Path::new("src").join("fixtures").join("readme.txt");
 
-        let initial_content = fs::read_to_string(readme_file).unwrap();
+        let initial_content = fs::read_to_string(&readme_file).unwrap();
 
         let content = generate_contents_table(&initial_content);
-        let content = generate_config_docs(&content, &config_file).unwrap();
+        let content = generate_config_docs(&content, &config_file)
+            .unwrap()
+            .replace("\r\n", "\n");
 
-        let expected = include_str!("fixtures/expected_readme.txt");
+        let expected = include_str!("fixtures/expected_readme.txt").replace("\r\n", "\n");
 
-        pretty_assert_eq!(&content, expected);
+        pretty_assert_eq!(&content, &expected);
     }
 }
