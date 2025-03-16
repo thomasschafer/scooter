@@ -15,7 +15,6 @@ If the instance you're attempting to replace has changed since the search was pe
 - [Features](#features)
 - [Usage](#usage)
   - [Search fields](#search-fields)
-- [Configuration options](#configuration-options)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
   - [NixOS](#nixos)
@@ -23,6 +22,7 @@ If the instance you're attempting to replace has changed since the search was pe
   - [Prebuilt binaries](#prebuilt-binaries)
   - [Cargo](#cargo)
   - [Building from source](#building-from-source)
+- [Configuration options](#configuration-options)
 - [Editor configuration](#editor-configuration)
   - [Helix](#helix)
   - [Neovim](#neovim)
@@ -72,34 +72,6 @@ When on the search screen the following fields are available:
 - **Files to exclude**: Glob patterns, separated by commas (`,`), that file paths must not match. For instance, `env/**` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
 
 Note that the glob matching library used in Scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
-
-
-## Configuration options
-
-<!-- CONFIG START -->
-Scooter looks for a TOML configuration file at:
-
-- Linux or macOS: `~/.config/scooter/config.toml`
-- Windows: `%AppData%\scooter\config.toml`
-
-The following options can be set in your configuration file:
-
-### editor_open
-
-
-#### command
-
-The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
-```toml
-[editor_open]
-command = "vi %file +%line"
-```
-
-#### exit
-
-Whether to exit after running the command defined by `editor_open.command`.
-
-<!-- CONFIG END -->
 
 
 ## Installation
@@ -162,6 +134,33 @@ git clone git@github.com:thomasschafer/scooter.git
 cd scooter
 cargo install --path scooter --locked
 ```
+
+
+## Configuration options
+
+<!-- CONFIG START -->
+Scooter looks for a TOML configuration file at:
+
+- Linux or macOS: `~/.config/scooter/config.toml`
+- Windows: `%AppData%\scooter\config.toml`
+
+The following options can be set in your configuration file:
+
+### `[editor_open]` section
+
+#### `command`
+
+The command used when pressing `o` on the search results page. Two variable are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+```toml
+[editor_open]
+command = "vi %file +%line"
+```
+
+#### `exit`
+
+Whether to exit after running the command defined by `editor_open.command`.
+
+<!-- CONFIG END -->
 
 
 ## Editor configuration

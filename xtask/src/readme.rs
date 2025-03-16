@@ -59,18 +59,15 @@ fn generate_contents_table(content: &str) -> String {
 
     // First pass: collect headings and generate TOC
     for (i, line) in lines.iter().enumerate() {
-        // Handle code blocks
         if line.starts_with("```") || line.starts_with("~~~") {
             in_code_block = !in_code_block;
             continue;
         }
 
-        // Skip if in code block
         if in_code_block {
             continue;
         }
 
-        // Check if we're in the TOC section
         if *line == TOC_START_MARKER {
             in_toc_section = true;
             continue;
@@ -80,17 +77,14 @@ fn generate_contents_table(content: &str) -> String {
             continue;
         }
 
-        // Skip if in TOC section
         if in_toc_section {
             continue;
         }
 
-        // Skip the TOC heading itself
         if *line == TOC_HEADING {
             continue;
         }
 
-        // Process heading lines (## and ###)
         if line.starts_with("## ") && *line != TOC_HEADING {
             let title = &line[3..];
             let anchor = create_anchor(title);
@@ -126,22 +120,17 @@ fn generate_contents_table(content: &str) -> String {
 
 // Check if a heading is part of the Configuration Options section
 fn in_config_section(content: &str, lines: &[&str], current_idx: usize) -> bool {
-    // Find the "Configuration options" heading
     let config_heading = "## Configuration options";
-
-    // First check if "Configuration options" exists in the document
     if !content.contains(config_heading) {
         return false;
     }
 
-    // Look backward to find the last h2 heading
     let mut i = current_idx;
     while i > 0 {
         i -= 1;
         let line = lines[i];
 
         if line.starts_with("## ") {
-            // If the last h2 heading is "Configuration options", this is in the config section
             return line == config_heading;
         }
     }
@@ -165,19 +154,16 @@ fn create_anchor(title: &str) -> String {
 fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
     println!("Extracting config documentation...");
 
-    // Read the config file
     let config_content = fs::read_to_string(config_path).context(format!(
         "Failed to read config file: {}",
         config_path.display()
     ))?;
 
-    // Parse the Rust source
     let syntax = parse_file(&config_content).context(format!(
         "Failed to parse config file: {}",
         config_path.display()
     ))?;
 
-    // Collect all struct definitions and their documentation
     let mut structs: HashMap<String, ItemStruct> = HashMap::new();
     for item in &syntax.items {
         if let Item::Struct(s) = item {
@@ -185,7 +171,6 @@ fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
         }
     }
 
-    // Generate documentation string
     let mut docs = String::new();
     docs.push_str(
         r#"Scooter looks for a TOML configuration file at:
@@ -198,14 +183,12 @@ The following options can be set in your configuration file:
 "#,
     );
 
-    // Process Config struct and its nested structs
     if let Some(config_struct) = structs.get("Config") {
-        process_struct(&mut docs, config_struct, &structs, "");
+        process_struct(&mut docs, config_struct, &structs, "", "");
     } else {
         println!("Warning: Config struct not found in the source file.");
     }
 
-    // Insert config docs into README
     let mut result = String::new();
     let mut in_config_section = false;
     for line in content.lines() {
@@ -231,45 +214,38 @@ fn process_struct(
     docs: &mut String,
     struct_item: &ItemStruct,
     all_structs: &HashMap<String, ItemStruct>,
-    prefix: &str,
+    path_prefix: &str,
+    toml_prefix: &str,
 ) {
     if let Fields::Named(ref fields) = struct_item.fields {
-        // First, process any struct documentation
-        let struct_doc = extract_doc_comment(&struct_item.attrs);
-        if !prefix.is_empty() && !struct_doc.is_empty() {
-            docs.push_str(&format!("### {}\n\n", prefix));
-            docs.push_str(&struct_doc);
-            docs.push_str("\nConfiguration options for this section:\n\n");
-        }
-
         for field in &fields.named {
             if let Some(ident) = &field.ident {
                 let field_name = ident.to_string();
                 let field_doc = extract_doc_comment(&field.attrs);
 
-                // We'll remove this variable since it's not used
-                // Just directly use field_name or build the path where needed
-
-                if is_nested_struct(field) {
-                    // This is a nested struct field
-                    if let Some(type_name) = get_type_name(field) {
-                        if let Some(nested_struct) = all_structs.get(&type_name) {
-                            // For nested structs, add the section header with field documentation
-                            docs.push_str(&format!("### {}\n\n", field_name));
-                            docs.push_str(&field_doc);
-                            docs.push('\n');
-
-                            // Process the nested struct with the field name as prefix
-                            process_struct(docs, nested_struct, all_structs, &field_name);
-                        }
-                    }
+                let full_path = if path_prefix.is_empty() {
+                    field_name.clone()
                 } else {
-                    // Regular field
-                    if prefix.is_empty() {
-                        docs.push_str(&format!("### {}\n\n", field_name));
-                    } else {
-                        docs.push_str(&format!("#### {}\n\n", field_name));
+                    format!("{}.{}", path_prefix, field_name)
+                };
+
+                let toml_path = if toml_prefix.is_empty() {
+                    field_name.clone()
+                } else {
+                    format!("{}.{}", toml_prefix, field_name)
+                };
+
+                if let Some(nested_struct) = all_structs.get(&get_type_name(field)) {
+                    docs.push_str(&format!("### `[{}]` section\n\n", toml_path));
+
+                    if !field_doc.is_empty() {
+                        docs.push_str(&field_doc);
+                        docs.push_str("\n\n");
                     }
+
+                    process_struct(docs, nested_struct, all_structs, &full_path, &toml_path);
+                } else {
+                    docs.push_str(&format!("#### `{}`\n\n", field_name));
                     docs.push_str(&field_doc);
                     docs.push_str("\n\n");
                 }
@@ -278,34 +254,14 @@ fn process_struct(
     }
 }
 
-fn is_nested_struct(field: &Field) -> bool {
-    // Check if the field type is a custom type (not a primitive or standard library type)
-    match get_type_name(field) {
-        Some(type_name) => {
-            ![
-                "String", "bool", "i32", "i64", "u32", "u64", "f32", "f64", "char", "Vec",
-            ]
-            .iter()
-            .any(|&t| type_name == t)
-                && !type_name.starts_with("Option<")
-        }
-        None => false,
-    }
-}
-
-fn get_type_name(field: &Field) -> Option<String> {
-    // Extract the type name from the field using the public ToTokens trait
-    let type_str = field.ty.to_token_stream().to_string();
-
-    // Handle Option<TypeName>
-    if type_str.starts_with("Option < ") {
-        let inner_type = type_str
-            .trim_start_matches("Option < ")
-            .trim_end_matches(" >");
-        Some(inner_type.to_string())
-    } else {
-        Some(type_str)
-    }
+fn get_type_name(field: &Field) -> String {
+    field
+        .ty
+        .to_token_stream()
+        .to_string()
+        .trim_start_matches("Option < ")
+        .trim_end_matches(" >")
+        .to_string()
 }
 
 fn extract_doc_comment(attrs: &[Attribute]) -> String {
@@ -325,4 +281,25 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     }
 
     doc_lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq as pretty_assert_eq;
+
+    #[test]
+    fn test_full_readme_with_config() {
+        let config_file = Path::new("src").join("fixtures").join("config.txt");
+        let readme_file = Path::new("src").join("fixtures").join("readme.txt");
+
+        let initial_content = fs::read_to_string(readme_file).unwrap();
+
+        let content = generate_contents_table(&initial_content);
+        let content = generate_config_docs(&content, &config_file).unwrap();
+
+        let expected = include_str!("fixtures/expected_readme.txt");
+
+        pretty_assert_eq!(&content, expected);
+    }
 }

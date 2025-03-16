@@ -1,0 +1,71 @@
+/// Top-level configuration struct
+pub struct Config {
+    /// Database configuration
+    pub database: DatabaseConfig,
+
+    /// Simple top-level string option
+    pub app_name: Option<String>,
+
+    /// Logging settings
+    pub logging: LoggingConfig,
+}
+
+/// Database connection settings
+pub struct DatabaseConfig {
+    /// Database connection URL
+    /// Can include authentication credentials
+    /// For example: "postgres://user:password@localhost:5432/mydb"
+    pub url: String,
+
+    /// Maximum number of connections in the pool
+    pub max_connections: u32,
+
+    /// Advanced database options
+    pub advanced: AdvancedDbConfig,
+}
+
+/// Advanced database configuration options
+pub struct AdvancedDbConfig {
+    /// Connection timeout in seconds
+    pub timeout_seconds: u64,
+
+    /// Whether to use SSL for the connection
+    pub use_ssl: bool,
+
+    /// SSL configuration if use_ssl is true
+    pub ssl: Option<SslConfig>,
+}
+
+/// SSL configuration for database connections
+pub struct SslConfig {
+    /// Path to certificate file
+    pub cert_file: String,
+
+    /// Path to key file
+    pub key_file: String,
+}
+
+/// Logging configuration
+pub struct LoggingConfig {
+    /// Minimum log level to record
+    /// Values: "debug", "info", "warn", "error"
+    pub level: String,
+
+    /// Whether to log to console
+    pub console: bool,
+
+    /// File logging configuration
+    pub file: Option<FileLoggingConfig>,
+}
+
+/// File logging settings
+pub struct FileLoggingConfig {
+    /// Path to log file
+    pub path: String,
+
+    /// Maximum log file size in MB before rotation
+    pub max_size_mb: u32,
+
+    /// Number of rotated log files to keep
+    pub max_files: u32,
+}
