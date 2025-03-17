@@ -174,7 +174,7 @@ fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
     let mut docs = String::new();
 
     if let Some(config_struct) = structs.get("Config") {
-        process_struct(&mut docs, config_struct, &structs, "", "");
+        process_struct(&mut docs, config_struct, &structs, "");
     } else {
         println!("Warning: Config struct not found in the source file.");
     }
@@ -204,7 +204,6 @@ fn process_struct(
     docs: &mut String,
     struct_item: &ItemStruct,
     all_structs: &HashMap<String, ItemStruct>,
-    path_prefix: &str,
     toml_prefix: &str,
 ) {
     if let Fields::Named(ref fields) = struct_item.fields {
@@ -213,19 +212,13 @@ fn process_struct(
                 let field_name = ident.to_string();
                 let field_doc = extract_doc_comment(&field.attrs);
 
-                let full_path = if path_prefix.is_empty() {
-                    field_name.clone()
-                } else {
-                    format!("{}.{}", path_prefix, field_name)
-                };
-
-                let toml_path = if toml_prefix.is_empty() {
-                    field_name.clone()
-                } else {
-                    format!("{}.{}", toml_prefix, field_name)
-                };
-
                 if let Some(nested_struct) = all_structs.get(&get_type_name(field)) {
+                    let toml_path = if toml_prefix.is_empty() {
+                        field_name.clone()
+                    } else {
+                        format!("{}.{}", toml_prefix, field_name)
+                    };
+
                     docs.push_str(&format!("### `[{}]` section\n\n", toml_path));
 
                     if !field_doc.is_empty() {
@@ -233,7 +226,7 @@ fn process_struct(
                         docs.push_str("\n\n");
                     }
 
-                    process_struct(docs, nested_struct, all_structs, &full_path, &toml_path);
+                    process_struct(docs, nested_struct, all_structs, &toml_path);
                 } else {
                     docs.push_str(&format!("#### `{}`\n\n", field_name));
                     docs.push_str(&field_doc);

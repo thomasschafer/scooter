@@ -13,35 +13,32 @@ use tempfile::TempDir;
 mod utils;
 
 fn build_test_search_state() -> SearchState {
-    SearchState {
-        results: vec![
-            SearchResult {
-                path: PathBuf::from("test1.txt"),
-                line_number: 1,
-                line: "test line 1".to_string(),
-                replacement: "replacement 1".to_string(),
-                included: true,
-                replace_result: None,
-            },
-            SearchResult {
-                path: PathBuf::from("test2.txt"),
-                line_number: 2,
-                line: "test line 2".to_string(),
-                replacement: "replacement 2".to_string(),
-                included: true,
-                replace_result: None,
-            },
-            SearchResult {
-                path: PathBuf::from("test3.txt"),
-                line_number: 3,
-                line: "test line 3".to_string(),
-                replacement: "replacement 3".to_string(),
-                included: true,
-                replace_result: None,
-            },
-        ],
-        selected: 0,
-    }
+    SearchState::with_results(vec![
+        SearchResult {
+            path: PathBuf::from("test1.txt"),
+            line_number: 1,
+            line: "test line 1".to_string(),
+            replacement: "replacement 1".to_string(),
+            included: true,
+            replace_result: None,
+        },
+        SearchResult {
+            path: PathBuf::from("test2.txt"),
+            line_number: 2,
+            line: "test line 2".to_string(),
+            replacement: "replacement 2".to_string(),
+            included: true,
+            replace_result: None,
+        },
+        SearchResult {
+            path: PathBuf::from("test3.txt"),
+            line_number: 3,
+            line: "test line 3".to_string(),
+            replacement: "replacement 3".to_string(),
+            included: true,
+            replace_result: None,
+        },
+    ])
 }
 
 #[tokio::test]
@@ -71,24 +68,24 @@ async fn test_search_state_movement() {
     let mut state = build_test_search_state();
 
     state.move_selected_down();
-    assert_eq!(state.selected, 1);
+    assert_eq!(state.selected(), 1);
     state.move_selected_down();
-    assert_eq!(state.selected, 2);
+    assert_eq!(state.selected(), 2);
     state.move_selected_down();
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected(), 0);
     state.move_selected_down();
-    assert_eq!(state.selected, 1);
+    assert_eq!(state.selected(), 1);
     state.move_selected_up();
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected(), 0);
     state.move_selected_up();
-    assert_eq!(state.selected, 2);
+    assert_eq!(state.selected(), 2);
     state.move_selected_up();
-    assert_eq!(state.selected, 1);
+    assert_eq!(state.selected(), 1);
 
     state.move_selected_top();
-    assert_eq!(state.selected, 0);
+    assert_eq!(state.selected(), 0);
     state.move_selected_bottom();
-    assert_eq!(state.selected, 2);
+    assert_eq!(state.selected(), 2);
 }
 
 #[tokio::test]
@@ -137,10 +134,7 @@ async fn test_app_reset() {
 #[tokio::test]
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
-    app.current_screen = Screen::SearchComplete(SearchState {
-        results: vec![],
-        selected: 0,
-    });
+    app.current_screen = Screen::SearchComplete(SearchState::default());
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: "foo",
         replace: "bar",
