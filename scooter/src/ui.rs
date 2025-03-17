@@ -7,14 +7,18 @@ use ratatui::{
     Frame,
 };
 use similar::{Change, ChangeTag, TextDiff};
-use std::{cmp::min, iter};
+use std::{
+    cmp::min,
+    iter,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     app::{
-        App, AppError, FieldName, ReplaceResult, ReplaceState, Screen, SearchField,
-        SearchInProgressState, SearchResult, NUM_SEARCH_FIELDS,
+        App, AppError, FieldName, ReplaceResult, ReplaceState, Screen, SearchField, SearchResult,
+        SearchState, NUM_SEARCH_FIELDS,
     },
-    utils::group_by,
+    utils::{group_by, relative_path_from},
 };
 
 impl FieldName {
@@ -142,25 +146,21 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
     (old_spans, new_spans)
 }
 
-fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_confirmation_view(
+    frame: &mut Frame<'_>,
+    is_complete: bool,
+    search_state: &mut SearchState,
+    base_path: PathBuf,
+    area: Rect,
+) {
     let [num_results_area, list_area] =
         Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
             .flex(Flex::Start)
             .areas(area);
 
-    let (is_complete, search_results) = match &app.current_screen {
-        Screen::SearchProgressing(SearchInProgressState { search_state, .. }) => {
-            (false, search_state)
-        }
-        Screen::SearchComplete(search_state) => (true, search_state),
-        // prevent race condition when state is being reset
-        _ => return,
-    };
-
     let list_area_height = list_area.height as usize;
     let item_height = 4; // TODO: find a better way of doing this
-    let midpoint = list_area_height / (2 * item_height);
-    let num_results = search_results.results.len();
+    let num_results = search_state.results.len();
 
     frame.render_widget(
         Span::raw(format!(
@@ -175,75 +175,100 @@ fn render_confirmation_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
         num_results_area,
     );
 
-    let results_iter = search_results
+    let num_to_render = list_area_height / item_height;
+    if search_state.selected() < search_state.view_offset + 1 {
+        search_state.view_offset = search_state.selected().saturating_sub(1);
+    } else if search_state.selected() > (search_state.view_offset + num_to_render).saturating_sub(2)
+        || search_state.view_offset + num_to_render > num_results
+    {
+        search_state.view_offset = min(
+            (search_state.selected() + 2).saturating_sub(num_to_render),
+            num_results.saturating_sub(num_to_render),
+        );
+    }
+
+    let search_results = search_state
         .results
         .iter()
         .enumerate()
-        .skip(min(
-            search_results.selected.saturating_sub(midpoint),
-            num_results.saturating_sub(list_area_height / item_height),
-        ))
-        .take(list_area_height / item_height + 1); // We shouldn't need the +1, but let's keep it in to ensure we have buffer when rendering
-
-    let search_results = results_iter.flat_map(|(idx, result)| {
-        let width = list_area.width;
-        let (old_line, new_line) = line_diff(&result.line, &result.replacement);
-        let old_line = old_line.iter().take(width as usize).collect::<Vec<_>>();
-        let new_line = new_line.iter().take(width as usize).collect::<Vec<_>>();
-
-        let file_path_style = if search_results.selected == idx {
-            Style::new().bg(if result.included {
-                Color::Blue
-            } else {
-                Color::Red
-            })
-        } else {
-            Style::new()
-        };
-        let right_content = format!(" ({})", idx);
-        let right_content_len = right_content.len() as u16;
-        let left_content = format!(
-            "[{}] {}:{}",
-            if result.included { 'x' } else { ' ' },
-            app.relative_path(&result.path),
-            result.line_number,
-        );
-        let left_content_trimmed = left_content
-            .chars()
-            .take(list_area.width.saturating_sub(right_content_len) as usize)
-            .collect::<String>();
-        let left_content_trimmed_len = left_content_trimmed.len() as u16;
-        let spacers = " ".repeat(
-            list_area
-                .width
-                .saturating_sub(left_content_trimmed_len + right_content_len) as usize,
-        );
-
-        let file_path = Line::from(vec![
-            Span::raw(left_content_trimmed),
-            Span::raw(spacers),
-            Span::raw(right_content),
-        ])
-        .style(file_path_style);
-
-        [
-            ListItem::new(file_path),
-            ListItem::new(diff_to_line(old_line)),
-            ListItem::new(diff_to_line(new_line)),
-            ListItem::new(""),
-        ]
-    });
+        .skip(search_state.view_offset)
+        .take(num_to_render)
+        .flat_map(|(idx, result)| {
+            render_search_result(
+                idx,
+                search_state.selected(),
+                result,
+                &base_path,
+                list_area.width,
+            )
+        });
 
     frame.render_widget(List::new(search_results), list_area);
 }
 
-fn render_results_view(replace_state: &ReplaceState) -> impl Fn(&mut Frame<'_>, &App, Rect) + '_ {
-    move |frame: &mut Frame<'_>, _app: &App, area: Rect| {
-        if replace_state.errors.is_empty() {
-            render_results_success(area, replace_state, frame);
+fn render_search_result<'a>(
+    idx: usize,
+    selected: usize,
+    result: &SearchResult,
+    base_path: &Path,
+    list_area_width: u16,
+) -> [ListItem<'a>; 4] {
+    let (old_line, new_line) = line_diff(&result.line, &result.replacement);
+    let old_line = old_line
+        .iter()
+        .take(list_area_width as usize)
+        .collect::<Vec<_>>();
+    let new_line = new_line
+        .iter()
+        .take(list_area_width as usize)
+        .collect::<Vec<_>>();
+
+    let file_path_style = if idx == selected {
+        Style::new().bg(if result.included {
+            Color::Blue
         } else {
-            render_results_errors(area, replace_state, frame);
-        }
+            Color::Red
+        })
+    } else {
+        Style::new()
+    };
+    let right_content = format!(" ({})", idx + 1);
+    let right_content_len = right_content.len() as u16;
+    let left_content = format!(
+        "[{}] {}:{}",
+        if result.included { 'x' } else { ' ' },
+        relative_path_from(base_path, &result.path),
+        result.line_number,
+    );
+    let left_content_trimmed = left_content
+        .chars()
+        .take(list_area_width.saturating_sub(right_content_len) as usize)
+        .collect::<String>();
+    let left_content_trimmed_len = left_content_trimmed.len() as u16;
+    let spacers = " ".repeat(
+        list_area_width.saturating_sub(left_content_trimmed_len + right_content_len) as usize,
+    );
+
+    let file_path = Line::from(vec![
+        Span::raw(left_content_trimmed),
+        Span::raw(spacers),
+        Span::raw(right_content),
+    ])
+    .style(file_path_style);
+
+    [
+        ListItem::new(file_path),
+        ListItem::new(diff_to_line(old_line)),
+        ListItem::new(diff_to_line(new_line)),
+        ListItem::new(""),
+    ]
+}
+
+fn render_results_view(frame: &mut Frame<'_>, replace_state: &ReplaceState, area: Rect) {
+    if replace_state.errors.is_empty() {
+        render_results_success(area, replace_state, frame);
+    } else {
+        render_results_errors(area, replace_state, frame);
     }
 }
 
@@ -376,9 +401,7 @@ fn error_result(result: &SearchResult, error: &str) -> [ratatui::widgets::ListIt
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))
 }
 
-type RenderFn<'a> = Box<dyn Fn(&mut Frame<'_>, &'a App, Rect) + 'a>;
-
-pub fn render(app: &App, frame: &mut Frame<'_>) {
+pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -398,18 +421,31 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
         .flex(Flex::Center)
         .areas(chunks[1]);
 
-    let render_fn: RenderFn<'_> = match &app.current_screen {
-        Screen::SearchFields => Box::new(render_search_view),
-        Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-            Box::new(render_confirmation_view)
+    render_key_hints(app, frame, chunks[2]);
+
+    let base_path = app.directory.clone();
+    match &mut app.current_screen {
+        Screen::SearchFields => render_search_view(frame, app, content_area),
+        Screen::SearchProgressing(ref mut s) => {
+            render_confirmation_view(frame, false, &mut s.search_state, base_path, content_area);
+        }
+        Screen::SearchComplete(ref mut s) => {
+            render_confirmation_view(frame, true, s, base_path, content_area);
         }
         Screen::PerformingReplacement(_) => {
-            Box::new(render_loading_view("Performing replacement...".to_owned()))
+            render_loading_view("Performing replacement...".to_owned())(frame, app, content_area);
         }
-        Screen::Results(ref replace_state) => Box::new(render_results_view(replace_state)),
+        Screen::Results(ref replace_state) => {
+            render_results_view(frame, replace_state, content_area);
+        }
     };
-    render_fn(frame, app, content_area);
 
+    if app.show_error_popup() {
+        render_error_popup(app, frame, content_area);
+    }
+}
+
+fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     let current_keys = match app.current_screen {
         Screen::SearchFields => {
             vec!["<enter> search", "<tab> focus next", "<S-tab> focus prev"]
@@ -449,11 +485,7 @@ pub fn render(app: &App, frame: &mut Frame<'_>) {
     let footer = Paragraph::new(Line::from(keys_hint))
         .block(Block::default())
         .alignment(Alignment::Center);
-    frame.render_widget(footer, chunks[2]);
-
-    if app.show_error_popup() {
-        render_error_popup(app, frame, content_area);
-    }
+    frame.render_widget(footer, chunk);
 }
 
 fn render_error_popup(app: &App, frame: &mut Frame<'_>, area: Rect) {

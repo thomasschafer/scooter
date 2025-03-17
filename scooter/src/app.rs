@@ -32,7 +32,6 @@ use crate::{
     config::{load_config, Config},
     fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
-    utils::relative_path_from,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,13 +76,19 @@ pub enum EventHandlingResult {
     None,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct SearchState {
     pub results: Vec<SearchResult>,
-    pub selected: usize, // TODO: allow for selection of ranges
+    // TODO: make the view logic with scrolling etc. into a generic component
+    selected: usize, // TODO: allow for selection of ranges
+    pub view_offset: usize,
 }
 
 impl SearchState {
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
     pub fn move_selected_up(&mut self) {
         if self.selected == 0 {
             self.selected = self.results.len();
@@ -101,6 +106,7 @@ impl SearchState {
 
     pub fn move_selected_top(&mut self) {
         self.selected = 0;
+        self.view_offset = 0;
     }
 
     pub fn move_selected_bottom(&mut self) {
@@ -125,6 +131,15 @@ impl SearchState {
 
     fn selected_field(&mut self) -> &mut SearchResult {
         &mut self.results[self.selected]
+    }
+
+    #[allow(dead_code)] // Used in tests
+    pub fn with_results(results: Vec<SearchResult>) -> Self {
+        Self {
+            results,
+            selected: 0,
+            view_offset: 0,
+        }
     }
 }
 
@@ -191,10 +206,7 @@ impl SearchInProgressState {
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     ) -> Self {
         Self {
-            search_state: SearchState {
-                results: vec![],
-                selected: 0,
-            },
+            search_state: SearchState::default(),
             last_render: Instant::now(),
             handle,
             processing_sender,
@@ -487,7 +499,7 @@ pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
     errors: Vec<AppError>,
-    directory: PathBuf,
+    pub directory: PathBuf,
     include_hidden: bool,
     pub config: Config,
 
@@ -1073,10 +1085,6 @@ impl App {
         Ok(())
     }
 
-    pub fn relative_path(&self, path: &Path) -> String {
-        relative_path_from(&self.directory, path)
-    }
-
     pub fn show_error_popup(&self) -> bool {
         !self.errors.is_empty() || self.search_fields.show_error_popup
     }
@@ -1120,14 +1128,11 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_all_selected() {
-        let mut search_state = SearchState {
-            results: vec![
-                search_result(true),
-                search_result(true),
-                search_result(true),
-            ],
-            selected: 0,
-        };
+        let mut search_state = SearchState::with_results(vec![
+            search_result(true),
+            search_result(true),
+            search_result(true),
+        ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1141,14 +1146,11 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_none_selected() {
-        let mut search_state = SearchState {
-            results: vec![
-                search_result(false),
-                search_result(false),
-                search_result(false),
-            ],
-            selected: 0,
-        };
+        let mut search_state = SearchState::with_results(vec![
+            search_result(false),
+            search_result(false),
+            search_result(false),
+        ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1162,14 +1164,11 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_some_selected() {
-        let mut search_state = SearchState {
-            results: vec![
-                search_result(true),
-                search_result(false),
-                search_result(true),
-            ],
-            selected: 0,
-        };
+        let mut search_state = SearchState::with_results(vec![
+            search_result(true),
+            search_result(false),
+            search_result(true),
+        ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1183,10 +1182,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_no_results() {
-        let mut search_state = SearchState {
-            results: vec![],
-            selected: 0,
-        };
+        let mut search_state = SearchState::with_results(vec![]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1234,10 +1230,7 @@ mod tests {
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(None, false, false, event_sender);
-        app.current_screen = Screen::SearchComplete(SearchState {
-            results,
-            selected: 0,
-        });
+        app.current_screen = Screen::SearchComplete(SearchState::with_results(results));
         app
     }
 
