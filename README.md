@@ -169,14 +169,14 @@ Below are a couple of ways to configure Scooter to run in a floating window, wit
 
 ### Helix
 
-If you are using Helix in Tmux, you can add a keymap like the following to open Scooter:
+If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter with `<enter> s`:
 
 ```toml
 [keys.select.ret]
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-You can also add the following to your [config file](#configuration-options) to open files from the search results page with `o`:
+You can also add the following to your [Scooter config file](#configuration-options) to open files from the search results page with `o`:
 
 ```toml
 [editor_open]
