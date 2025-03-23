@@ -24,7 +24,10 @@ use tempfile::NamedTempFile;
 use tokio::{
     fs::File,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    sync::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        Semaphore,
+    },
     task::JoinHandle,
 };
 
@@ -666,24 +669,40 @@ impl App {
     }
 
     pub fn perform_replacement(
-        mut search_state: SearchState,
+        search_state: SearchState,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut path_groups: HashMap<PathBuf, Vec<&mut SearchResult>> = HashMap::new();
-            for res in search_state.results.iter_mut().filter(|res| res.included) {
+            let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
+            for res in search_state.results.into_iter().filter(|res| res.included) {
                 path_groups.entry(res.path.clone()).or_default().push(res);
             }
 
+            let semaphore = Arc::new(Semaphore::new(8));
+            let mut file_tasks = vec![];
+
             for (path, mut results) in path_groups {
-                if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
-                    results.iter_mut().for_each(|res| {
-                        res.replace_result = Some(ReplaceResult::Error(file_err.to_string()))
-                    });
-                }
+                let semaphore = semaphore.clone();
+                let task = tokio::spawn(async move {
+                    let permit = semaphore.clone().acquire_owned().await.unwrap();
+                    if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
+                        results.iter_mut().for_each(|res| {
+                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()))
+                        });
+                    }
+                    drop(permit);
+                    results
+                });
+                file_tasks.push(task);
             }
 
-            let replace_state = Self::calculate_statistics(&search_state.results);
+            let mut replacement_results = vec![];
+            for task in file_tasks {
+                let r = task.await.unwrap();
+                replacement_results.push(r);
+            }
+            let replace_state =
+                Self::calculate_statistics(replacement_results.into_iter().flatten());
 
             // Ignore error: we may have gone back to the previous screen
             let _ = background_processing_sender.send(
@@ -1003,13 +1022,16 @@ impl App {
         false
     }
 
-    fn calculate_statistics(results: &[SearchResult]) -> ReplaceState {
+    fn calculate_statistics<I>(results: I) -> ReplaceState
+    where
+        I: IntoIterator<Item = SearchResult>,
+    {
         let mut num_successes = 0;
         let mut num_ignored = 0;
         let mut errors = vec![];
 
         results
-            .iter()
+            .into_iter()
             .for_each(|res| match (res.included, &res.replace_result) {
                 (false, _) => {
                     num_ignored += 1;
@@ -1039,7 +1061,7 @@ impl App {
 
     async fn replace_in_file(
         file_path: PathBuf,
-        results: &mut [&mut SearchResult],
+        results: &mut [SearchResult],
     ) -> anyhow::Result<()> {
         let mut line_map: HashMap<_, _> =
             HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
@@ -1237,8 +1259,8 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchComplete(search_state) = &app.current_screen {
-            App::calculate_statistics(&search_state.results)
+        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
+            App::calculate_statistics(search_state.results)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1264,8 +1286,8 @@ mod tests {
             error_result.clone(),
             ignored_result(),
         ]);
-        let stats = if let Screen::SearchComplete(search_state) = &app.current_screen {
-            App::calculate_statistics(&search_state.results)
+        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
+            App::calculate_statistics(search_state.results)
         } else {
             panic!("Expected SearchComplete");
         };
