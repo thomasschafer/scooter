@@ -1,6 +1,7 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
 use fancy_regex::Regex as FancyRegex;
+use futures::future;
 use ignore::{
     overrides::{Override, OverrideBuilder},
     WalkState,
@@ -696,13 +697,11 @@ impl App {
                 file_tasks.push(task);
             }
 
-            let mut replacement_results = vec![];
-            for task in file_tasks {
-                let r = task.await.unwrap();
-                replacement_results.push(r);
-            }
-            let replace_state =
-                Self::calculate_statistics(replacement_results.into_iter().flatten());
+            let replacement_results = future::join_all(file_tasks)
+                .await
+                .into_iter()
+                .flat_map(Result::unwrap);
+            let replace_state = Self::calculate_statistics(replacement_results);
 
             // Ignore error: we may have gone back to the previous screen
             let _ = background_processing_sender.send(
