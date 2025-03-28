@@ -22,6 +22,9 @@ struct Args {
     #[arg(index = 1)]
     directory: Option<String>,
 
+    #[arg(index = 2)]
+    search_term: Option<String>,
+
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
     #[arg(short = '.', long, default_value = "false")]
     hidden: bool,
@@ -47,6 +50,7 @@ impl From<Args> for AppConfig {
     fn from(args: Args) -> Self {
         Self {
             directory: args.directory,
+            search_term: args.search_term,
             hidden: args.hidden,
             advanced_regex: args.advanced_regex,
             log_level: args.log_level,

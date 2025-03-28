@@ -25,6 +25,7 @@ use crate::{
 
 pub struct AppConfig {
     pub directory: Option<String>,
+    pub search_term: Option<String>,
     pub hidden: bool,
     pub advanced_regex: bool,
     pub log_level: LevelFilter,
@@ -82,8 +83,13 @@ where
             Some(d) => Some(validate_directory(&d)?),
         };
 
+        let search_term = match config.search_term {
+            None => None,
+            Some(st) => Some(st.to_string()),
+        };
+
         let (app, event_receiver) =
-            App::new_with_receiver(directory, config.hidden, config.advanced_regex);
+            App::new_with_receiver(directory, search_term, config.hidden, config.advanced_regex);
 
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
