@@ -1,0 +1,47 @@
+name: Publish to WinGet
+# on:
+#   release:
+#     types: [released]
+# TODO: revert
+on:
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get-version
+        shell: pwsh
+        run: |
+          $version = Select-String -Path "scooter/Cargo.toml" -Pattern '^version = ' | ForEach-Object { ($_ -split '"')[1] }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Write-Output "version=$version"
+
+
+      - name: Get release assets URLs
+        id: release-assets
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v0.4.0"
+          $releases = gh api repos/${{ github.repository }}/releases/tags/$tag
+          $assets = $releases | ConvertFrom-Json | Select-Object -ExpandProperty assets
+          $installerUrls = $assets | Where-Object { $_.name -match '-x86_64-pc-windows-msvc\.zip$' } | ForEach-Object { $_.browser_download_url }
+          $urlsString = $installerUrls -join " "
+          Write-Output "Found URLs: $urlsString"
+          Write-Output "urls=$urlsString" >> $env:GITHUB_OUTPUT
+
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: thomasschafer.scooter
+          version: ${{ steps.get-version.outputs.version }}
+          release-tag: "v0.4.0"
+          installers-regex: "-x86_64-pc-windows-msvc\\.zip$"
+          urls: ${{ steps.release-assets.outputs.urls }}
+          token: ${{ secrets.WINGET_TOKEN }}
