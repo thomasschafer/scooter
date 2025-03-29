@@ -1,0 +1,27 @@
+name: Publish to WinGet
+on:
+  release:
+    types: [released]
+
+jobs:
+  publish_to_winget:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get-version
+        shell: pwsh
+        run: |
+          $version = Select-String -Path "scooter/Cargo.toml" -Pattern '^version = ' | ForEach-Object { ($_ -split '"')[1] }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Write-Output "version=$version"
+
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: thomasschafer.scooter
+          version: ${{ steps.get-version.outputs.version }}
+          installers-regex: "-x86_64-pc-windows-msvc\\.zip$"
+          token: ${{ secrets.WINGET_TOKEN }}
