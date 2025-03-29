@@ -2,7 +2,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Paragraph},
     Frame,
 };
@@ -23,8 +23,8 @@ pub struct TextField {
 impl TextField {
     pub fn new(initial: String) -> Self {
         Self {
-            text: initial,
-            cursor_idx: 0,
+            text: initial.clone(),
+            cursor_idx: initial.chars().count(),
             error: None,
         }
     }
@@ -32,8 +32,9 @@ impl TextField {
         self.text.to_owned()
     }
 
-    pub fn cursor_idx(&self) -> usize {
-        self.cursor_idx
+    pub fn cursor_pos(&self) -> usize {
+        let prefix: String = self.text.chars().take(self.cursor_idx).collect();
+        Text::from(prefix).width()
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -259,9 +260,9 @@ impl Field {
         }
     }
 
-    pub fn cursor_idx(&self) -> Option<usize> {
+    pub fn cursor_pos(&self) -> Option<usize> {
         match self {
-            Field::Text(f) => Some(f.cursor_idx()),
+            Field::Text(f) => Some(f.cursor_pos()),
             Field::Checkbox(_) => None,
         }
     }
