@@ -56,11 +56,11 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
         });
 
     if !app.show_error_popup() {
-        if let Some(cursor_idx) = app.search_fields.highlighted_field().read().cursor_idx() {
+        if let Some(cursor_pos) = app.search_fields.highlighted_field().read().cursor_pos() {
             let highlighted_area = areas[app.search_fields.highlighted];
 
             frame.set_cursor(
-                highlighted_area.x + cursor_idx as u16 + 1,
+                highlighted_area.x + cursor_pos as u16 + 1,
                 highlighted_area.y + 1,
             )
         }

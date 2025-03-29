@@ -10,16 +10,16 @@ fn test_text_field_operations() {
         field.enter_char(c);
     }
     assert_eq!(field.text(), "Hello");
-    assert_eq!(field.cursor_idx(), 5);
+    assert_eq!(field.cursor_idx, 5);
 
     field.move_cursor_left();
-    assert_eq!(field.cursor_idx(), 4);
+    assert_eq!(field.cursor_idx, 4);
     field.move_cursor_right();
-    assert_eq!(field.cursor_idx(), 5);
+    assert_eq!(field.cursor_idx, 5);
     field.move_cursor_start();
-    assert_eq!(field.cursor_idx(), 0);
+    assert_eq!(field.cursor_idx, 0);
     field.move_cursor_end();
-    assert_eq!(field.cursor_idx(), 5);
+    assert_eq!(field.cursor_idx, 5);
 
     field.clear();
     for c in "Hello world".chars() {
@@ -27,13 +27,13 @@ fn test_text_field_operations() {
     }
     field.move_cursor_start();
     field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx(), 6);
+    assert_eq!(field.cursor_idx, 6);
     field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx(), 11);
+    assert_eq!(field.cursor_idx, 11);
     field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx(), 11);
+    assert_eq!(field.cursor_idx, 11);
     field.move_cursor_back_word();
-    assert_eq!(field.cursor_idx(), 6);
+    assert_eq!(field.cursor_idx, 6);
 
     // Test deletion
     field.move_cursor_start();
