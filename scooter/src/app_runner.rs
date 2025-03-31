@@ -17,18 +17,19 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::utils::validate_directory;
+use crate::SearchFieldValues;
 use crate::{
     app::{App, AppError, Event, EventHandlingResult},
     logging::setup_logging,
     tui::Tui,
 };
 
-pub struct AppConfig {
+pub struct AppConfig<'a> {
     pub directory: Option<String>,
-    pub search_term: Option<String>,
     pub hidden: bool,
     pub advanced_regex: bool,
     pub log_level: LevelFilter,
+    pub search_field_values: SearchFieldValues<'a>,
 }
 
 pub trait EventStream:
@@ -39,8 +40,8 @@ impl<T: Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin> Ev
 
 pub type CrosstermEventStream = event::EventStream;
 
-pub struct AppRunner<B: Backend, E: EventStream> {
-    app: App,
+pub struct AppRunner<'a, B: Backend, E: EventStream> {
+    app: App<'a>,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
@@ -51,31 +52,31 @@ pub trait BufferProvider {
     fn get_buffer(&mut self) -> &Buffer;
 }
 
-impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+impl<'a> BufferProvider for AppRunner<'a, CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.current_buffer_mut()
     }
 }
 
-impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
+impl<'a, E: EventStream> BufferProvider for AppRunner<'a, TestBackend, E> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.backend().buffer()
     }
 }
 
-impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    pub fn new_terminal(config: AppConfig) -> anyhow::Result<Self> {
+impl<'a> AppRunner<'a, CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+    pub fn new_terminal(config: AppConfig<'a>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         Self::new(config, backend, event_stream)
     }
 }
 
-impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
+impl<'a, B: Backend + 'static, E: EventStream> AppRunner<'a, B, E>
 where
     Self: BufferProvider,
 {
-    pub fn new(config: AppConfig, backend: B, event_stream: E) -> anyhow::Result<Self> {
+    pub fn new(config: AppConfig<'a>, backend: B, event_stream: E) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
         let directory = match config.directory {
@@ -83,13 +84,12 @@ where
             Some(d) => Some(validate_directory(&d)?),
         };
 
-        let search_term = match config.search_term {
-            None => None,
-            Some(st) => Some(st.to_string()),
-        };
-
-        let (app, event_receiver) =
-            App::new_with_receiver(directory, search_term, config.hidden, config.advanced_regex);
+        let (app, event_receiver) = App::new_with_receiver(
+            directory,
+            config.hidden,
+            config.advanced_regex,
+            config.search_field_values,
+        );
 
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
@@ -312,7 +312,7 @@ where
     }
 }
 
-pub async fn run_app(app_config: AppConfig) -> anyhow::Result<()> {
+pub async fn run_app<'a>(app_config: AppConfig<'a>) -> anyhow::Result<()> {
     let mut runner = AppRunner::new_terminal(app_config)?;
     runner.init()?;
     runner.run_event_loop().await?;

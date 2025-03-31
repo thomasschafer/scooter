@@ -278,6 +278,7 @@ pub enum FieldName {
     ExcludeFiles,
 }
 
+#[derive(Clone)]
 pub struct SearchFieldValues<'a> {
     pub search: &'a str,
     pub replace: &'a str,
@@ -301,7 +302,7 @@ impl<'a> Default for SearchFieldValues<'a> {
     }
 }
 
-impl SearchFieldValues<'_> {
+impl<'a> SearchFieldValues<'a> {
     const DEFAULT_SEARCH: &'static str = "";
     const DEFAULT_REPLACE: &'static str = "";
     const DEFAULT_FIXED_STRINGS: bool = false;
@@ -499,12 +500,12 @@ pub struct AppError {
     pub long: String,
 }
 
-pub struct App {
+pub struct App<'a> {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
     errors: Vec<AppError>,
     pub directory: PathBuf,
-    pub search_term: String,
+    pub search_field_values: SearchFieldValues<'a>,
     include_hidden: bool,
     pub config: Config,
 
@@ -513,12 +514,12 @@ pub struct App {
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
-impl App {
+impl<'a> App<'a> {
     fn new(
         directory: Option<PathBuf>,
-        search_term: Option<String>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
@@ -528,42 +529,33 @@ impl App {
             None => current_dir().unwrap(),
         };
 
-        let search_term = match search_term {
-            Some(st) => st.to_string(),
-            None => String::new(),
-        };
-
-        let mut search_fields =
-            SearchFields::with_default_values().with_advanced_regex(advanced_regex);
-        if !search_term.is_empty() {
-            search_fields.search_mut().text = search_term.clone();
-            search_fields.focus_next();
-        }
+        let search_fields = SearchFields::with_values(search_field_values.clone())
+            .with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
             errors: vec![],
             directory,
-            search_term,
             include_hidden,
             config,
             event_sender,
+            search_field_values,
         }
     }
 
     pub fn new_with_receiver(
         directory: Option<PathBuf>,
-        search_term: Option<String>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: SearchFieldValues<'a>,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
             directory,
-            search_term,
             include_hidden,
             advanced_regex,
+            search_field_values,
             event_sender,
         );
         (app, app_event_receiver)
@@ -592,9 +584,9 @@ impl App {
         self.cancel_replacement();
         *self = Self::new(
             Some(self.directory.clone()),
-            Some(self.search_term.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
+            self.search_field_values.clone(),
             self.event_sender.clone(),
         );
     }
@@ -1269,9 +1261,15 @@ mod tests {
         }
     }
 
-    fn build_test_app(results: Vec<SearchResult>) -> App {
+    fn build_test_app(results: Vec<SearchResult>) -> App<'static> {
         let (event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(None, None, false, false, event_sender);
+        let mut app = App::new(
+            None,
+            false,
+            false,
+            SearchFieldValues::default(),
+            event_sender,
+        );
         app.current_screen = Screen::SearchComplete(SearchState::with_results(results));
         app
     }

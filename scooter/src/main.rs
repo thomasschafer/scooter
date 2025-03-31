@@ -1,3 +1,4 @@
+use crate::app::SearchFieldValues;
 use app_runner::{run_app, AppConfig};
 use clap::Parser;
 use log::LevelFilter;
@@ -22,8 +23,8 @@ struct Args {
     #[arg(index = 1)]
     directory: Option<String>,
 
-    #[arg(index = 2)]
-    search_term: Option<String>,
+    #[arg(long, default_value = None)]
+    search_text: Option<String>,
 
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
     #[arg(short = '.', long, default_value = "false")]
@@ -46,14 +47,19 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
     LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {}", s))
 }
 
-impl From<Args> for AppConfig {
-    fn from(args: Args) -> Self {
+impl<'a> From<&'a Args> for AppConfig<'a> {
+    fn from(args: &'a Args) -> Self {
+        let mut search_field_values = SearchFieldValues::default();
+        if let Some(ref search_text) = args.search_text {
+            search_field_values.search = search_text;
+        };
+
         Self {
-            directory: args.directory,
-            search_term: args.search_term,
+            directory: args.directory.clone(),
             hidden: args.hidden,
             advanced_regex: args.advanced_regex,
             log_level: args.log_level,
+            search_field_values,
         }
     }
 }
@@ -61,6 +67,6 @@ impl From<Args> for AppConfig {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config = AppConfig::from(args);
+    let config = AppConfig::from(&args);
     run_app(config).await
 }
