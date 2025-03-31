@@ -1,3 +1,4 @@
+use crate::app::FieldValue;
 use crate::app::SearchFieldValues;
 use app_runner::{run_app, AppConfig};
 use clap::Parser;
@@ -23,8 +24,26 @@ struct Args {
     #[arg(index = 1)]
     directory: Option<String>,
 
-    #[arg(long, default_value = None)]
+    #[arg(short = 's', long, default_value = None)]
     search_text: Option<String>,
+
+    #[arg(short = 'r', long, default_value = None)]
+    replace_text: Option<String>,
+
+    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    fixed_strings: bool,
+
+    #[arg(short = 'w', long, action = clap::ArgAction::SetTrue)]
+    match_whole_word: bool,
+
+    #[arg(short = 'i', long, action = clap::ArgAction::SetTrue)]
+    case_insensitive: bool,
+
+    #[arg(short = 'I', long, default_value = None)]
+    files_to_include: Option<String>,
+
+    #[arg(short = 'E', long, default_value = None)]
+    files_to_exclude: Option<String>,
 
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
     #[arg(short = '.', long, default_value = "false")]
@@ -51,7 +70,25 @@ impl<'a> From<&'a Args> for AppConfig<'a> {
     fn from(args: &'a Args) -> Self {
         let mut search_field_values = SearchFieldValues::default();
         if let Some(ref search_text) = args.search_text {
-            search_field_values.search = search_text;
+            search_field_values.search = FieldValue::new(search_text, true);
+        };
+        if let Some(ref replace_text) = args.replace_text {
+            search_field_values.replace = FieldValue::new(replace_text, true);
+        };
+        if args.fixed_strings {
+            search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
+        }
+        if args.match_whole_word {
+            search_field_values.match_whole_word = FieldValue::new(args.match_whole_word, true);
+        }
+        if args.case_insensitive {
+            search_field_values.match_case = FieldValue::new(!args.case_insensitive, true);
+        }
+        if let Some(ref files_to_include) = args.files_to_include {
+            search_field_values.include_files = FieldValue::new(files_to_include, true);
+        };
+        if let Some(ref files_to_exclude) = args.files_to_exclude {
+            search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
         };
 
         Self {

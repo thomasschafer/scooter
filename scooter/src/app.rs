@@ -279,25 +279,46 @@ pub enum FieldName {
 }
 
 #[derive(Clone)]
+pub struct FieldValue<T> {
+    pub value: T,
+    pub set_by_cli: bool,
+}
+
+impl<T> FieldValue<T> {
+    pub fn new(value: T, set_by_cli: bool) -> Self {
+        Self { value, set_by_cli }
+    }
+}
+
+impl<T: Default> Default for FieldValue<T> {
+    fn default() -> Self {
+        Self {
+            value: T::default(),
+            set_by_cli: false,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchFieldValues<'a> {
-    pub search: &'a str,
-    pub replace: &'a str,
-    pub fixed_strings: bool,
-    pub whole_word: bool,
-    pub match_case: bool,
-    pub include_files: &'a str,
-    pub exclude_files: &'a str,
+    pub search: FieldValue<&'a str>,
+    pub replace: FieldValue<&'a str>,
+    pub fixed_strings: FieldValue<bool>,
+    pub match_whole_word: FieldValue<bool>,
+    pub match_case: FieldValue<bool>,
+    pub include_files: FieldValue<&'a str>,
+    pub exclude_files: FieldValue<&'a str>,
 }
 impl<'a> Default for SearchFieldValues<'a> {
     fn default() -> SearchFieldValues<'a> {
         Self {
-            search: Self::DEFAULT_SEARCH,
-            replace: Self::DEFAULT_REPLACE,
-            fixed_strings: Self::DEFAULT_FIXED_STRINGS,
-            whole_word: Self::DEFAULT_WHOLE_WORD,
-            match_case: Self::DEFAULT_MATCH_CASE,
-            include_files: Self::DEFAULT_INCLUDE_FILES,
-            exclude_files: Self::DEFAULT_EXCLUDE_FILES,
+            search: FieldValue::new(Self::DEFAULT_SEARCH, false),
+            replace: FieldValue::new(Self::DEFAULT_REPLACE, false),
+            fixed_strings: FieldValue::new(Self::DEFAULT_FIXED_STRINGS, false),
+            match_whole_word: FieldValue::new(Self::DEFAULT_WHOLE_WORD, false),
+            match_case: FieldValue::new(Self::DEFAULT_MATCH_CASE, true),
+            include_files: FieldValue::new(Self::DEFAULT_INCLUDE_FILES, false),
+            exclude_files: FieldValue::new(Self::DEFAULT_EXCLUDE_FILES, false),
         }
     }
 }
@@ -323,6 +344,7 @@ impl<'a> SearchFieldValues<'a> {
 pub struct SearchField {
     pub name: FieldName,
     pub field: Arc<RwLock<Field>>,
+    pub set_by_cli: bool,
 }
 
 pub const NUM_SEARCH_FIELDS: usize = 7;
@@ -393,41 +415,75 @@ impl SearchFields {
     define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
-    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
+    pub fn with_values<'a>(search_field_values: SearchFieldValues<'a>) -> Self {
+        let fields = [
+            SearchField {
+                name: FieldName::Search,
+                field: Arc::new(RwLock::new(Field::text(search_field_values.search.value))),
+                set_by_cli: search_field_values.search.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::Replace,
+                field: Arc::new(RwLock::new(Field::text(search_field_values.replace.value))),
+                set_by_cli: search_field_values.replace.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::FixedStrings,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.fixed_strings.value,
+                ))),
+                set_by_cli: search_field_values.fixed_strings.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::WholeWord,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.match_whole_word.value,
+                ))),
+                set_by_cli: search_field_values.match_whole_word.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::MatchCase,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.match_case.value,
+                ))),
+                set_by_cli: search_field_values.match_case.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::IncludeFiles,
+                field: Arc::new(RwLock::new(Field::text(
+                    search_field_values.include_files.value,
+                ))),
+                set_by_cli: search_field_values.include_files.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::ExcludeFiles,
+                field: Arc::new(RwLock::new(Field::text(
+                    search_field_values.exclude_files.value,
+                ))),
+                set_by_cli: search_field_values.exclude_files.set_by_cli,
+            },
+        ];
+
+        // Search Field highlight
+        // 0 search text
+        // 1 replace text
+        // 2 fixed strings
+        // 3 match whole word
+        // 4 match case
+        // 5 files to include
+        // 6 files to exclude
+        // Determine the initial highlighted field
+        // Set initial highlighted to first non-CLI field
+        let mut highlighted = 0;
+        for (index, field) in fields.iter().enumerate() {
+            if !field.set_by_cli {
+                highlighted = index;
+                break;
+            }
+        }
         Self {
-            fields: [
-                SearchField {
-                    name: FieldName::Search,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.search))),
-                },
-                SearchField {
-                    name: FieldName::Replace,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.replace))),
-                },
-                SearchField {
-                    name: FieldName::FixedStrings,
-                    field: Arc::new(RwLock::new(Field::checkbox(
-                        search_field_values.fixed_strings,
-                    ))),
-                },
-                SearchField {
-                    name: FieldName::WholeWord,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.whole_word))),
-                },
-                SearchField {
-                    name: FieldName::MatchCase,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.match_case))),
-                },
-                SearchField {
-                    name: FieldName::IncludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.include_files))),
-                },
-                SearchField {
-                    name: FieldName::ExcludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.exclude_files))),
-                },
-            ],
-            highlighted: 0,
+            highlighted,
+            fields,
             show_error_popup: false,
             advanced_regex: false,
         }
@@ -455,7 +511,23 @@ impl SearchFields {
     }
 
     pub fn focus_next(&mut self) {
-        self.highlighted = (self.highlighted + 1) % self.fields.len();
+        let mut next = (self.highlighted + 1) % self.fields.len();
+        loop {
+            if self.fields[next].set_by_cli {
+                if next == 0 {
+                    for i in 0..self.fields.len() {
+                        self.fields[i].set_by_cli = false;
+                    }
+                    self.highlighted = 0;
+                    break;
+                }
+                next = (next + 1) % self.fields.len();
+                continue;
+            }
+
+            self.highlighted = next;
+            break;
+        }
     }
 
     pub fn focus_prev(&mut self) {

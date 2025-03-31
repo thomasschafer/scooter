@@ -46,14 +46,26 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .zip(areas)
         .enumerate()
-        .for_each(|(idx, (SearchField { name, field }, field_area))| {
-            field.read().render(
-                frame,
-                field_area,
-                name.title().to_owned(),
-                idx == app.search_fields.highlighted,
-            )
-        });
+        .for_each(
+            |(
+                idx,
+                (
+                    SearchField {
+                        name,
+                        field,
+                        set_by_cli,
+                    },
+                    field_area,
+                ),
+            )| {
+                field.read().render(
+                    frame,
+                    field_area,
+                    name.title().to_owned(),
+                    idx == app.search_fields.highlighted,
+                )
+            },
+        );
 
     if !app.show_error_popup() {
         if let Some(cursor_idx) = app.search_fields.highlighted_field().read().cursor_idx() {
