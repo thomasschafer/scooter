@@ -17,8 +17,9 @@ If the instance you're attempting to replace has changed since the search was pe
   - [Search fields](#search-fields)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
-  - [NixOS](#nixos)
+  - [Nix](#nix)
   - [AUR](#aur)
+  - [Winget](#winget)
   - [Prebuilt binaries](#prebuilt-binaries)
   - [Cargo](#cargo)
   - [Building from source](#building-from-source)
@@ -86,7 +87,7 @@ On macOS and Linux, you can install Scooter using [Homebrew](https://formulae.br
 brew install scooter
 ```
 
-### NixOS
+### Nix
 
 Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=scooter), currently on the unstable channel.
 
@@ -104,18 +105,27 @@ Or, to build from the latest commit:
 yay -S scooter-git
 ```
 
+### Winget
+
+Install from Winget with
+
+```sh
+winget install thomasschafer.scooter
+```
+
 ### Prebuilt binaries
 
-You can download binaries from the [releases page](https://github.com/thomasschafer/scooter/releases/latest). After downloading, unzip the binary and move it to a directory in your `PATH`.
+Download the appropriate binary for your system from the [releases page](https://github.com/thomasschafer/scooter/releases/latest):
 
-- **Linux**
-  - Intel/AMD: `*-x86_64-unknown-linux-musl.tar.gz`
-  - ARM64: `*-aarch64-unknown-linux-musl.tar.gz`
-- **macOS**
-  - Apple silicon: `*-aarch64-apple-darwin.tar.gz`
-  - Intel: `*-x86_64-apple-darwin.tar.gz`
-- **Windows**
-  - `*-x86_64-pc-windows-msvc.zip`
+| Platform | Architecture | Download file |
+|-|-|-|
+| Linux | Intel/AMD | `*-x86_64-unknown-linux-musl.tar.gz` |
+| Linux | ARM64 | `*-aarch64-unknown-linux-musl.tar.gz` |
+| macOS | Apple Silicon| `*-aarch64-apple-darwin.tar.gz` |
+| macOS | Intel | `*-x86_64-apple-darwin.tar.gz` |
+| Windows | x64 | `*-x86_64-pc-windows-msvc.zip` |
+
+After downloading, extract the binary and move it to a directory in your `PATH`.
 
 ### Cargo
 
