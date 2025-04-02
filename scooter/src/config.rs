@@ -32,6 +32,9 @@ pub struct EditorOpenConfig {
     /// Whether to exit after running the command defined by `editor_open.command`.
     #[serde(default)]
     pub exit: bool,
+
+    /// Whether to disable fields set by cli flags.
+    pub disable_populated_fields: bool,
 }
 
 #[allow(clippy::derivable_impls)]
