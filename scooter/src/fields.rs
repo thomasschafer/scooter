@@ -280,9 +280,16 @@ impl Field {
         }
     }
 
-    fn create_title_spans<'a>(&self, title: &'a str, highlighted: bool) -> Vec<Span<'a>> {
+    fn create_title_spans<'a>(
+        &self,
+        title: &'a str,
+        highlighted: bool,
+        set_by_cli: bool,
+    ) -> Vec<Span<'a>> {
         let title_style = Style::new().fg(if highlighted {
             Color::Green
+        } else if set_by_cli {
+            Color::Blue
         } else {
             Color::Reset
         });
@@ -297,13 +304,24 @@ impl Field {
         spans
     }
 
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, title: String, highlighted: bool) {
+    pub fn render(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        title: String,
+        highlighted: bool,
+        set_by_cli: bool,
+    ) {
         let mut block = Block::bordered();
         if highlighted {
             block = block.border_style(Style::new().green());
         }
 
-        let title_spans = self.create_title_spans(&title, highlighted);
+        if set_by_cli {
+            block = block.border_style(Style::new().blue());
+        }
+
+        let title_spans = self.create_title_spans(&title, highlighted, set_by_cli);
 
         match self {
             Field::Text(f) => {
