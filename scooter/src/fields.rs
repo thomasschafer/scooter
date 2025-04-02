@@ -286,10 +286,10 @@ impl Field {
         highlighted: bool,
         set_by_cli: bool,
     ) -> Vec<Span<'a>> {
-        let title_style = Style::new().fg(if highlighted {
-            Color::Green
-        } else if set_by_cli {
+        let title_style = Style::new().fg(if set_by_cli {
             Color::Blue
+        } else if highlighted {
+            Color::Green
         } else {
             Color::Reset
         });
