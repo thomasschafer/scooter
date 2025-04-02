@@ -37,7 +37,7 @@ pub struct EditorOpenConfig {
     #[serde(default)]
     pub exit: bool,
 
-    /// Whether to disable fields set by cli flags.
+    /// Whether to disable fields set by CLI flags.
     #[serde(default = "default_true")]
     pub disable_populated_fields: bool,
 }
