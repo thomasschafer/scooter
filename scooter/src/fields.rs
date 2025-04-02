@@ -286,13 +286,14 @@ impl Field {
         highlighted: bool,
         set_by_cli: bool,
     ) -> Vec<Span<'a>> {
-        let title_style = Style::new().fg(if set_by_cli {
-            Color::Blue
-        } else if highlighted {
-            Color::Green
-        } else {
-            Color::Reset
-        });
+        let mut fg_color = Color::Reset;
+        if set_by_cli {
+            fg_color = Color::Blue;
+        }
+        if highlighted {
+            fg_color = Color::Green;
+        }
+        let title_style = Style::new().fg(fg_color);
 
         let mut spans = vec![Span::styled(title, title_style)];
         if let Some(error) = self.error() {
@@ -313,12 +314,11 @@ impl Field {
         set_by_cli: bool,
     ) {
         let mut block = Block::bordered();
-        if highlighted {
-            block = block.border_style(Style::new().green());
-        }
-
         if set_by_cli {
             block = block.border_style(Style::new().blue());
+        }
+        if highlighted {
+            block = block.border_style(Style::new().green());
         }
 
         let title_spans = self.create_title_spans(&title, highlighted, set_by_cli);
