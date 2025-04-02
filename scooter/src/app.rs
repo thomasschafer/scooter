@@ -465,16 +465,7 @@ impl SearchFields {
             },
         ];
 
-        // Search Field highlight
-        // 0 search text
-        // 1 replace text
-        // 2 fixed strings
-        // 3 match whole word
-        // 4 match case
-        // 5 files to include
-        // 6 files to exclude
         // Determine the initial highlighted field
-        // Set initial highlighted to first non-CLI field
         let mut highlighted = 0;
         for (index, field) in fields.iter().enumerate() {
             if !field.set_by_cli {
