@@ -316,7 +316,7 @@ impl<'a> Default for SearchFieldValues<'a> {
             replace: FieldValue::new(Self::DEFAULT_REPLACE, false),
             fixed_strings: FieldValue::new(Self::DEFAULT_FIXED_STRINGS, false),
             match_whole_word: FieldValue::new(Self::DEFAULT_WHOLE_WORD, false),
-            match_case: FieldValue::new(Self::DEFAULT_MATCH_CASE, true),
+            match_case: FieldValue::new(Self::DEFAULT_MATCH_CASE, false),
             include_files: FieldValue::new(Self::DEFAULT_INCLUDE_FILES, false),
             exclude_files: FieldValue::new(Self::DEFAULT_EXCLUDE_FILES, false),
         }
