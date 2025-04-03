@@ -355,7 +355,6 @@ pub struct SearchFields {
     pub show_error_popup: bool,
     advanced_regex: bool,
     disable_populated_fields: bool,
-    populated_all: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -466,30 +465,37 @@ impl SearchFields {
             },
         ];
 
-        // Determine the initial highlighted field
-        let mut highlighted = 0;
-        let mut highlighted_found = false;
-        let mut populated_all = false;
-        let mut set_by_cli_count = 0;
-        for (index, field) in fields.iter().enumerate() {
-            if !field.set_by_cli && !highlighted_found {
-                highlighted = index;
-                highlighted_found = true;
-                continue;
-            }
-            set_by_cli_count += 1
-        }
-        if set_by_cli_count == fields.len() {
-            populated_all = true;
-        }
         Self {
-            highlighted,
+            highlighted: Self::initial_highlight_position(&fields),
             fields,
             show_error_popup: false,
             advanced_regex: false,
             disable_populated_fields: false,
-            populated_all,
         }
+    }
+
+    fn initial_highlight_position(fields: &[SearchField]) -> usize {
+        let mut highlighted = 0;
+        for (index, field) in fields.iter().enumerate() {
+            if !field.set_by_cli {
+                highlighted = index;
+                break;
+            }
+        }
+        return highlighted;
+    }
+
+    fn all_populated(&self) -> bool {
+        let mut count = 0;
+        for field in self.fields.iter() {
+            if field.set_by_cli {
+                count += 1;
+            }
+        }
+        if count == self.fields.len() {
+            return true;
+        }
+        return false;
     }
 
     pub fn with_default_values() -> Self {
@@ -519,7 +525,7 @@ impl SearchFields {
     }
 
     pub fn focus_next(&mut self) {
-        if self.populated_all {
+        if self.all_populated() {
             return;
         }
         let mut next = (self.highlighted + 1) % self.fields.len();
@@ -538,7 +544,7 @@ impl SearchFields {
     }
 
     pub fn focus_prev(&mut self) {
-        if self.populated_all {
+        if self.all_populated() {
             return;
         }
         let mut prev = (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();

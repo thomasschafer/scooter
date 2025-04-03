@@ -24,31 +24,31 @@ struct Args {
     #[arg(index = 1)]
     directory: Option<String>,
 
-    // Text to search with
+    /// Text to search with
     #[arg(short = 's', long, default_value = None)]
     search_text: Option<String>,
 
-    // Text to replace the search text with
+    /// Text to replace the search text with
     #[arg(short = 'r', long, default_value = None)]
     replace_text: Option<String>,
 
-    // Search with plain strings, rather than regex
+    /// Search with plain strings, rather than regex
     #[arg(short, long, action = clap::ArgAction::SetTrue)]
     fixed_strings: bool,
 
-    // Only match when the search string forms an entire word, and not a substring in a larger word
+    /// Only match when the search string forms an entire word, and not a substring in a larger word
     #[arg(short = 'w', long, action = clap::ArgAction::SetTrue)]
     match_whole_word: bool,
 
-    // Match the case of the search string exactly
+    /// Match the case of the search string exactly
     #[arg(short = 'i', long, action = clap::ArgAction::SetTrue)]
     case_insensitive: bool,
 
-    // Glob patterns, separated by commas (,), that file paths must match
+    /// Glob patterns, separated by commas (,), that file paths must match
     #[arg(short = 'I', long, default_value = None)]
     files_to_include: Option<String>,
 
-    // Glob patterns, separated by commas (,), that file paths must not match
+    /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long, default_value = None)]
     files_to_exclude: Option<String>,
 
