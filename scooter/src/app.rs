@@ -354,6 +354,7 @@ pub struct SearchFields {
     pub highlighted: usize,
     pub show_error_popup: bool,
     advanced_regex: bool,
+    disable_populated_fields: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -469,6 +470,7 @@ impl SearchFields {
             fields,
             show_error_popup: false,
             advanced_regex: false,
+            disable_populated_fields: false,
         }
     }
 
@@ -496,17 +498,13 @@ impl SearchFields {
         return false;
     }
 
-    fn disable_populated_fields(&self) -> bool {
-        let config = load_config().expect("Failed to read config file");
-        return config
-            .editor_open
-            .as_ref()
-            .map(|c| c.disable_populated_fields)
-            .unwrap_or(false);
-    }
-
     pub fn with_default_values() -> Self {
         Self::with_values(SearchFieldValues::default())
+    }
+
+    pub fn with_disable_populated_fields(mut self, disable_populated_fields: bool) -> Self {
+        self.disable_populated_fields = disable_populated_fields;
+        self
     }
 
     pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
@@ -531,7 +529,7 @@ impl SearchFields {
             return;
         }
         let mut next = (self.highlighted + 1) % self.fields.len();
-        if self.disable_populated_fields() {
+        if self.disable_populated_fields {
             loop {
                 if self.fields[next].set_by_cli {
                     next = (next + 1) % self.fields.len();
@@ -550,7 +548,7 @@ impl SearchFields {
             return;
         }
         let mut prev = (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
-        if self.disable_populated_fields() {
+        if self.disable_populated_fields {
             loop {
                 if self.fields[prev].set_by_cli {
                     prev = (prev + self.fields.len().saturating_sub(1)) % self.fields.len();
@@ -631,7 +629,18 @@ impl<'a> App<'a> {
             None => current_dir().unwrap(),
         };
 
+        let mut disable_populated_fields = false;
+        if config
+            .editor_open
+            .as_ref()
+            .map(|c| c.disable_populated_fields)
+            .unwrap_or(false)
+        {
+            disable_populated_fields = true
+        }
+
         let search_fields = SearchFields::with_values(search_field_values.clone())
+            .with_disable_populated_fields(disable_populated_fields)
             .with_advanced_regex(advanced_regex);
 
         Self {
