@@ -3,6 +3,7 @@ use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers}
 use futures::Stream;
 use log::LevelFilter;
 use ratatui::backend::TestBackend;
+use scooter::app::SearchFieldValues;
 use scooter::{
     app_runner::{AppConfig, AppRunner},
     test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
@@ -82,6 +83,7 @@ fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
         hidden: false,
         advanced_regex,
+        search_field_values: SearchFieldValues::default(),
         log_level: LevelFilter::Warn,
     };
 

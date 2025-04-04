@@ -14,6 +14,10 @@ fn config_file() -> PathBuf {
     config_dir().join("config.toml")
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -32,6 +36,10 @@ pub struct EditorOpenConfig {
     /// Whether to exit after running the command defined by `editor_open.command`.
     #[serde(default)]
     pub exit: bool,
+
+    /// Whether to disable fields set by CLI flags.
+    #[serde(default = "default_true")]
+    pub disable_populated_fields: bool,
 }
 
 #[allow(clippy::derivable_impls)]
