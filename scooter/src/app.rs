@@ -605,7 +605,7 @@ pub struct App<'a> {
     pub search_fields: SearchFields,
     errors: Vec<AppError>,
     pub directory: PathBuf,
-    pub search_field_values: SearchFieldValues<'a>,
+    search_field_values: SearchFieldValues<'a>,
     include_hidden: bool,
     pub config: Config,
 
@@ -697,7 +697,7 @@ impl<'a> App<'a> {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
-            self.search_field_values.clone(),
+            SearchFieldValues::default(),
             self.event_sender.clone(),
         );
     }
