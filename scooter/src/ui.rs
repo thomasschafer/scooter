@@ -36,10 +36,12 @@ impl FieldName {
 }
 
 fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let areas: [Rect; NUM_SEARCH_FIELDS] =
-        Layout::vertical(iter::repeat(Constraint::Length(3)).take(app.search_fields.fields.len()))
-            .flex(Flex::Center)
-            .areas(area);
+    let areas: [Rect; NUM_SEARCH_FIELDS] = Layout::vertical(iter::repeat_n(
+        Constraint::Length(3),
+        app.search_fields.fields.len(),
+    ))
+    .flex(Flex::Center)
+    .areas(area);
 
     app.search_fields
         .fields
