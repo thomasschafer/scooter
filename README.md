@@ -28,6 +28,7 @@ If the instance you're attempting to replace has changed since the search was pe
   - [Helix](#helix)
   - [Neovim](#neovim)
 - [Contributing](#contributing)
+  - [Development](#development)
 <!-- TOC END -->
 
 
@@ -219,3 +220,17 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
 ## Contributing
 
 Contributions are very welcome! I'd be especially grateful for any contributions to add Scooter to popular package managers. If you'd like to add a new feature, please create an issue first so we can discuss the idea, then create a PR with your changes.
+
+### Development
+
+Once you've pulled down the repo, you can run Scooter with:
+
+```sh
+cargo run --bin scooter
+```
+
+If you make any changes to either the readme or config, you'll need to run the following to regenerate the docs:
+
+```sh
+cargo xtask readme
+```
