@@ -486,17 +486,7 @@ impl SearchFields {
     }
 
     fn all_populated(&self) -> bool {
-        self.fields.iter().all(|f| f.set_by_cli);
-        // let mut count = 0;
-        // for field in self.fields.iter() {
-        //     if field.set_by_cli {
-        //         count += 1;
-        //     }
-        // }
-        // if count == self.fields.len() {
-        //     return true;
-        // }
-        return false;
+        return self.fields.iter().all(|f| f.set_by_cli);
     }
 
     pub fn with_default_values() -> Self {
