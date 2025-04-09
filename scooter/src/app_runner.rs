@@ -40,8 +40,8 @@ impl<T: Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin> Ev
 
 pub type CrosstermEventStream = event::EventStream;
 
-pub struct AppRunner<'a, B: Backend, E: EventStream> {
-    app: App<'a>,
+pub struct AppRunner<B: Backend, E: EventStream> {
+    app: App,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
@@ -52,19 +52,19 @@ pub trait BufferProvider {
     fn get_buffer(&mut self) -> &Buffer;
 }
 
-impl<'a> BufferProvider for AppRunner<'a, CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+impl<'a> BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.current_buffer_mut()
     }
 }
 
-impl<'a, E: EventStream> BufferProvider for AppRunner<'a, TestBackend, E> {
+impl<'a, E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.backend().buffer()
     }
 }
 
-impl<'a> AppRunner<'a, CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+impl<'a> AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     pub fn new_terminal(config: AppConfig<'a>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
@@ -72,7 +72,7 @@ impl<'a> AppRunner<'a, CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     }
 }
 
-impl<'a, B: Backend + 'static, E: EventStream> AppRunner<'a, B, E>
+impl<'a, B: Backend + 'static, E: EventStream> AppRunner<B, E>
 where
     Self: BufferProvider,
 {

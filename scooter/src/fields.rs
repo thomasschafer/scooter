@@ -289,8 +289,7 @@ impl Field {
         let mut fg_color = Color::Reset;
         if set_by_cli {
             fg_color = Color::Blue;
-        }
-        if highlighted {
+        } else if highlighted {
             fg_color = Color::Green;
         }
         let title_style = Style::new().fg(fg_color);

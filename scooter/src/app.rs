@@ -486,15 +486,16 @@ impl SearchFields {
     }
 
     fn all_populated(&self) -> bool {
-        let mut count = 0;
-        for field in self.fields.iter() {
-            if field.set_by_cli {
-                count += 1;
-            }
-        }
-        if count == self.fields.len() {
-            return true;
-        }
+        self.fields.iter().all(|f| f.set_by_cli);
+        // let mut count = 0;
+        // for field in self.fields.iter() {
+        //     if field.set_by_cli {
+        //         count += 1;
+        //     }
+        // }
+        // if count == self.fields.len() {
+        //     return true;
+        // }
         return false;
     }
 
@@ -600,12 +601,11 @@ pub struct AppError {
     pub long: String,
 }
 
-pub struct App<'a> {
+pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
     errors: Vec<AppError>,
     pub directory: PathBuf,
-    search_field_values: SearchFieldValues<'a>,
     include_hidden: bool,
     pub config: Config,
 
@@ -614,7 +614,7 @@ pub struct App<'a> {
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
-impl<'a> App<'a> {
+impl<'a> App {
     fn new(
         directory: Option<PathBuf>,
         include_hidden: bool,
@@ -651,7 +651,6 @@ impl<'a> App<'a> {
             include_hidden,
             config,
             event_sender,
-            search_field_values,
         }
     }
 
