@@ -315,8 +315,7 @@ impl Field {
         let mut block = Block::bordered();
         if set_by_cli {
             block = block.border_style(Style::new().blue());
-        }
-        if highlighted {
+        } else if highlighted {
             block = block.border_style(Style::new().green());
         }
 
