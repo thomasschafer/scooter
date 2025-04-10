@@ -22,6 +22,7 @@ fn default_true() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub editor_open: Option<EditorOpenConfig>,
+    pub search: Option<SearchConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,16 +37,22 @@ pub struct EditorOpenConfig {
     /// Whether to exit after running the command defined by `editor_open.command`.
     #[serde(default)]
     pub exit: bool,
+}
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchConfig {
     /// Whether to disable fields set by CLI flags.
     #[serde(default = "default_true")]
     pub disable_populated_fields: bool,
 }
-
 #[allow(clippy::derivable_impls)]
 impl Default for Config {
     fn default() -> Self {
-        Self { editor_open: None }
+        Self {
+            editor_open: None,
+            search: None,
+        }
     }
 }
 

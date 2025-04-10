@@ -285,9 +285,10 @@ impl Field {
         title: &'a str,
         highlighted: bool,
         set_by_cli: bool,
+        disable_populated_fields: bool,
     ) -> Vec<Span<'a>> {
         let mut fg_color = Color::Reset;
-        if set_by_cli {
+        if set_by_cli && !disable_populated_fields {
             fg_color = Color::Blue;
         } else if highlighted {
             fg_color = Color::Green;
@@ -310,16 +311,18 @@ impl Field {
         area: Rect,
         title: String,
         highlighted: bool,
+        disable_populated_fields: bool,
         set_by_cli: bool,
     ) {
         let mut block = Block::bordered();
-        if set_by_cli {
+        if set_by_cli && disable_populated_fields {
             block = block.border_style(Style::new().blue());
         } else if highlighted {
             block = block.border_style(Style::new().green());
         }
 
-        let title_spans = self.create_title_spans(&title, highlighted, set_by_cli);
+        let title_spans =
+            self.create_title_spans(&title, highlighted, set_by_cli, disable_populated_fields);
 
         match self {
             Field::Text(f) => {

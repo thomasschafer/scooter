@@ -354,7 +354,7 @@ pub struct SearchFields {
     pub highlighted: usize,
     pub show_error_popup: bool,
     advanced_regex: bool,
-    disable_populated_fields: bool,
+    pub disable_populated_fields: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -621,7 +621,7 @@ impl<'a> App {
 
         let mut disable_populated_fields = false;
         if config
-            .editor_open
+            .search
             .as_ref()
             .map(|c| c.disable_populated_fields)
             .unwrap_or(false)
@@ -1361,7 +1361,7 @@ mod tests {
         }
     }
 
-    fn build_test_app(results: Vec<SearchResult>) -> App<'static> {
+    fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(
             None,

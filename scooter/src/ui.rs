@@ -63,6 +63,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     field_area,
                     name.title().to_owned(),
                     idx == app.search_fields.highlighted,
+                    app.search_fields.disable_populated_fields,
                     *set_by_cli,
                 )
             },
