@@ -288,7 +288,7 @@ impl Field {
         disable_populated_fields: bool,
     ) -> Vec<Span<'a>> {
         let mut fg_color = Color::Reset;
-        if set_by_cli && !disable_populated_fields {
+        if set_by_cli && disable_populated_fields {
             fg_color = Color::Blue;
         } else if highlighted {
             fg_color = Color::Green;
