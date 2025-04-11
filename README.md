@@ -171,6 +171,10 @@ command = "vi %file +%line"
 
 Whether to exit after running the command defined by `editor_open.command`.
 
+#### `disable_populated_fields`
+
+Whether to disable fields set by CLI flags.
+
 <!-- CONFIG END -->
 
 

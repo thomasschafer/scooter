@@ -281,12 +281,20 @@ impl Field {
         }
     }
 
-    fn create_title_spans<'a>(&self, title: &'a str, highlighted: bool) -> Vec<Span<'a>> {
-        let title_style = Style::new().fg(if highlighted {
-            Color::Green
-        } else {
-            Color::Reset
-        });
+    fn create_title_spans<'a>(
+        &self,
+        title: &'a str,
+        highlighted: bool,
+        set_by_cli: bool,
+        disable_populated_fields: bool,
+    ) -> Vec<Span<'a>> {
+        let mut fg_color = Color::Reset;
+        if set_by_cli && disable_populated_fields {
+            fg_color = Color::Blue;
+        } else if highlighted {
+            fg_color = Color::Green;
+        }
+        let title_style = Style::new().fg(fg_color);
 
         let mut spans = vec![Span::styled(title, title_style)];
         if let Some(error) = self.error() {
@@ -298,13 +306,24 @@ impl Field {
         spans
     }
 
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, title: String, highlighted: bool) {
+    pub fn render(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        title: String,
+        highlighted: bool,
+        disable_populated_fields: bool,
+        set_by_cli: bool,
+    ) {
         let mut block = Block::bordered();
-        if highlighted {
+        if set_by_cli && disable_populated_fields {
+            block = block.border_style(Style::new().blue());
+        } else if highlighted {
             block = block.border_style(Style::new().green());
         }
 
-        let title_spans = self.create_title_spans(&title, highlighted);
+        let title_spans =
+            self.create_title_spans(&title, highlighted, set_by_cli, disable_populated_fields);
 
         match self {
             Field::Text(f) => {

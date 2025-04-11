@@ -17,17 +17,19 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::utils::validate_directory;
+use crate::SearchFieldValues;
 use crate::{
     app::{App, AppError, Event, EventHandlingResult},
     logging::setup_logging,
     tui::Tui,
 };
 
-pub struct AppConfig {
+pub struct AppConfig<'a> {
     pub directory: Option<String>,
     pub hidden: bool,
     pub advanced_regex: bool,
     pub log_level: LevelFilter,
+    pub search_field_values: SearchFieldValues<'a>,
 }
 
 pub trait EventStream:
@@ -63,7 +65,7 @@ impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    pub fn new_terminal(config: AppConfig) -> anyhow::Result<Self> {
+    pub fn new_terminal(config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         Self::new(config, backend, event_stream)
@@ -74,7 +76,7 @@ impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
 where
     Self: BufferProvider,
 {
-    pub fn new(config: AppConfig, backend: B, event_stream: E) -> anyhow::Result<Self> {
+    pub fn new(config: AppConfig<'_>, backend: B, event_stream: E) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
         let directory = match config.directory {
@@ -82,8 +84,12 @@ where
             Some(d) => Some(validate_directory(&d)?),
         };
 
-        let (app, event_receiver) =
-            App::new_with_receiver(directory, config.hidden, config.advanced_regex);
+        let (app, event_receiver) = App::new_with_receiver(
+            directory,
+            config.hidden,
+            config.advanced_regex,
+            config.search_field_values,
+        );
 
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
@@ -306,7 +312,7 @@ where
     }
 }
 
-pub async fn run_app(app_config: AppConfig) -> anyhow::Result<()> {
+pub async fn run_app(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let mut runner = AppRunner::new_terminal(app_config)?;
     runner.init()?;
     runner.run_event_loop().await?;

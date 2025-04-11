@@ -278,25 +278,47 @@ pub enum FieldName {
     ExcludeFiles,
 }
 
+#[derive(Clone)]
+pub struct FieldValue<T> {
+    pub value: T,
+    pub set_by_cli: bool,
+}
+
+impl<T> FieldValue<T> {
+    pub fn new(value: T, set_by_cli: bool) -> Self {
+        Self { value, set_by_cli }
+    }
+}
+
+impl<T: Default> Default for FieldValue<T> {
+    fn default() -> Self {
+        Self {
+            value: T::default(),
+            set_by_cli: false,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchFieldValues<'a> {
-    pub search: &'a str,
-    pub replace: &'a str,
-    pub fixed_strings: bool,
-    pub whole_word: bool,
-    pub match_case: bool,
-    pub include_files: &'a str,
-    pub exclude_files: &'a str,
+    pub search: FieldValue<&'a str>,
+    pub replace: FieldValue<&'a str>,
+    pub fixed_strings: FieldValue<bool>,
+    pub match_whole_word: FieldValue<bool>,
+    pub match_case: FieldValue<bool>,
+    pub include_files: FieldValue<&'a str>,
+    pub exclude_files: FieldValue<&'a str>,
 }
 impl<'a> Default for SearchFieldValues<'a> {
     fn default() -> SearchFieldValues<'a> {
         Self {
-            search: Self::DEFAULT_SEARCH,
-            replace: Self::DEFAULT_REPLACE,
-            fixed_strings: Self::DEFAULT_FIXED_STRINGS,
-            whole_word: Self::DEFAULT_WHOLE_WORD,
-            match_case: Self::DEFAULT_MATCH_CASE,
-            include_files: Self::DEFAULT_INCLUDE_FILES,
-            exclude_files: Self::DEFAULT_EXCLUDE_FILES,
+            search: FieldValue::new(Self::DEFAULT_SEARCH, false),
+            replace: FieldValue::new(Self::DEFAULT_REPLACE, false),
+            fixed_strings: FieldValue::new(Self::DEFAULT_FIXED_STRINGS, false),
+            match_whole_word: FieldValue::new(Self::DEFAULT_WHOLE_WORD, false),
+            match_case: FieldValue::new(Self::DEFAULT_MATCH_CASE, false),
+            include_files: FieldValue::new(Self::DEFAULT_INCLUDE_FILES, false),
+            exclude_files: FieldValue::new(Self::DEFAULT_EXCLUDE_FILES, false),
         }
     }
 }
@@ -322,6 +344,7 @@ impl SearchFieldValues<'_> {
 pub struct SearchField {
     pub name: FieldName,
     pub field: Arc<RwLock<Field>>,
+    pub set_by_cli: bool,
 }
 
 pub const NUM_SEARCH_FIELDS: usize = 7;
@@ -331,6 +354,7 @@ pub struct SearchFields {
     pub highlighted: usize,
     pub show_error_popup: bool,
     advanced_regex: bool,
+    pub disable_populated_fields: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -393,47 +417,81 @@ impl SearchFields {
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
     pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
+        let fields = [
+            SearchField {
+                name: FieldName::Search,
+                field: Arc::new(RwLock::new(Field::text(search_field_values.search.value))),
+                set_by_cli: search_field_values.search.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::Replace,
+                field: Arc::new(RwLock::new(Field::text(search_field_values.replace.value))),
+                set_by_cli: search_field_values.replace.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::FixedStrings,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.fixed_strings.value,
+                ))),
+                set_by_cli: search_field_values.fixed_strings.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::WholeWord,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.match_whole_word.value,
+                ))),
+                set_by_cli: search_field_values.match_whole_word.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::MatchCase,
+                field: Arc::new(RwLock::new(Field::checkbox(
+                    search_field_values.match_case.value,
+                ))),
+                set_by_cli: search_field_values.match_case.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::IncludeFiles,
+                field: Arc::new(RwLock::new(Field::text(
+                    search_field_values.include_files.value,
+                ))),
+                set_by_cli: search_field_values.include_files.set_by_cli,
+            },
+            SearchField {
+                name: FieldName::ExcludeFiles,
+                field: Arc::new(RwLock::new(Field::text(
+                    search_field_values.exclude_files.value,
+                ))),
+                set_by_cli: search_field_values.exclude_files.set_by_cli,
+            },
+        ];
+
         Self {
-            fields: [
-                SearchField {
-                    name: FieldName::Search,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.search))),
-                },
-                SearchField {
-                    name: FieldName::Replace,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.replace))),
-                },
-                SearchField {
-                    name: FieldName::FixedStrings,
-                    field: Arc::new(RwLock::new(Field::checkbox(
-                        search_field_values.fixed_strings,
-                    ))),
-                },
-                SearchField {
-                    name: FieldName::WholeWord,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.whole_word))),
-                },
-                SearchField {
-                    name: FieldName::MatchCase,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.match_case))),
-                },
-                SearchField {
-                    name: FieldName::IncludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.include_files))),
-                },
-                SearchField {
-                    name: FieldName::ExcludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.exclude_files))),
-                },
-            ],
-            highlighted: 0,
+            highlighted: Self::initial_highlight_position(&fields),
+            fields,
             show_error_popup: false,
             advanced_regex: false,
+            disable_populated_fields: false,
         }
     }
 
-    pub fn with_default_values() -> Self {
-        Self::with_values(SearchFieldValues::default())
+    fn initial_highlight_position(fields: &[SearchField]) -> usize {
+        let mut highlighted = 0;
+        for (index, field) in fields.iter().enumerate() {
+            if !field.set_by_cli {
+                highlighted = index;
+                break;
+            }
+        }
+        highlighted
+    }
+
+    fn all_populated(&self) -> bool {
+        self.fields.iter().all(|f| f.set_by_cli)
+    }
+
+    pub fn with_disable_populated_fields(mut self, disable_populated_fields: bool) -> Self {
+        self.disable_populated_fields = disable_populated_fields;
+        self
     }
 
     pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
@@ -454,10 +512,40 @@ impl SearchFields {
     }
 
     pub fn focus_next(&mut self) {
+        if self.all_populated() {
+            return;
+        }
+        let mut next = (self.highlighted + 1) % self.fields.len();
+        if self.disable_populated_fields {
+            loop {
+                if self.fields[next].set_by_cli {
+                    next = (next + 1) % self.fields.len();
+                    continue;
+                }
+                self.highlighted = next;
+                break;
+            }
+            return;
+        }
         self.highlighted = (self.highlighted + 1) % self.fields.len();
     }
 
     pub fn focus_prev(&mut self) {
+        if self.all_populated() {
+            return;
+        }
+        let mut prev = (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
+        if self.disable_populated_fields {
+            loop {
+                if self.fields[prev].set_by_cli {
+                    prev = (prev + self.fields.len().saturating_sub(1)) % self.fields.len();
+                    continue;
+                }
+                self.highlighted = prev;
+                break;
+            }
+            return;
+        }
         self.highlighted =
             (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
     }
@@ -512,11 +600,12 @@ pub struct App {
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
-impl App {
+impl<'a> App {
     fn new(
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
@@ -526,7 +615,19 @@ impl App {
             None => current_dir().unwrap(),
         };
 
-        let search_fields = SearchFields::with_default_values().with_advanced_regex(advanced_regex);
+        let mut disable_populated_fields = false;
+        if config
+            .search
+            .as_ref()
+            .map(|c| c.disable_populated_fields)
+            .unwrap_or(false)
+        {
+            disable_populated_fields = true
+        }
+
+        let search_fields = SearchFields::with_values(search_field_values.clone())
+            .with_disable_populated_fields(disable_populated_fields)
+            .with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
@@ -543,9 +644,16 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: SearchFieldValues<'a>,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(directory, include_hidden, advanced_regex, event_sender);
+        let app = Self::new(
+            directory,
+            include_hidden,
+            advanced_regex,
+            search_field_values,
+            event_sender,
+        );
         (app, app_event_receiver)
     }
 
@@ -574,6 +682,7 @@ impl App {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
+            SearchFieldValues::default(),
             self.event_sender.clone(),
         );
     }
@@ -1250,7 +1359,13 @@ mod tests {
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(None, false, false, event_sender);
+        let mut app = App::new(
+            None,
+            false,
+            false,
+            SearchFieldValues::default(),
+            event_sender,
+        );
         app.current_screen = Screen::SearchComplete(SearchState::with_results(results));
         app
     }
