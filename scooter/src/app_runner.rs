@@ -52,31 +52,31 @@ pub trait BufferProvider {
     fn get_buffer(&mut self) -> &Buffer;
 }
 
-impl<'a> BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.current_buffer_mut()
     }
 }
 
-impl<'a, E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
+impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
     fn get_buffer(&mut self) -> &Buffer {
         self.tui.terminal.backend().buffer()
     }
 }
 
-impl<'a> AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    pub fn new_terminal(config: AppConfig<'a>) -> anyhow::Result<Self> {
+impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+    pub fn new_terminal(config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         Self::new(config, backend, event_stream)
     }
 }
 
-impl<'a, B: Backend + 'static, E: EventStream> AppRunner<B, E>
+impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
 where
     Self: BufferProvider,
 {
-    pub fn new(config: AppConfig<'a>, backend: B, event_stream: E) -> anyhow::Result<Self> {
+    pub fn new(config: AppConfig<'_>, backend: B, event_stream: E) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
         let directory = match config.directory {
@@ -312,7 +312,7 @@ where
     }
 }
 
-pub async fn run_app<'a>(app_config: AppConfig<'a>) -> anyhow::Result<()> {
+pub async fn run_app(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let mut runner = AppRunner::new_terminal(app_config)?;
     runner.init()?;
     runner.run_event_loop().await?;

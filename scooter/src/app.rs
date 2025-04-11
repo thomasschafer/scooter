@@ -323,7 +323,7 @@ impl<'a> Default for SearchFieldValues<'a> {
     }
 }
 
-impl<'a> SearchFieldValues<'a> {
+impl SearchFieldValues<'_> {
     const DEFAULT_SEARCH: &'static str = "";
     const DEFAULT_REPLACE: &'static str = "";
     const DEFAULT_FIXED_STRINGS: bool = false;
@@ -416,7 +416,7 @@ impl SearchFields {
     define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
-    pub fn with_values<'a>(search_field_values: SearchFieldValues<'a>) -> Self {
+    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         let fields = [
             SearchField {
                 name: FieldName::Search,
@@ -482,15 +482,11 @@ impl SearchFields {
                 break;
             }
         }
-        return highlighted;
+        highlighted
     }
 
     fn all_populated(&self) -> bool {
-        return self.fields.iter().all(|f| f.set_by_cli);
-    }
-
-    pub fn with_default_values() -> Self {
-        Self::with_values(SearchFieldValues::default())
+        self.fields.iter().all(|f| f.set_by_cli)
     }
 
     pub fn with_disable_populated_fields(mut self, disable_populated_fields: bool) -> Self {
