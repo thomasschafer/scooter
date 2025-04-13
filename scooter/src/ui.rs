@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table},
     Frame,
 };
 use similar::{Change, ChangeTag, TextDiff};
@@ -444,14 +444,14 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 
     match app.popup() {
         Some(Popup::Error) => render_error_popup(&app.errors(), frame, content_area),
-        Some(Popup::Help) => todo!(),
+        Some(Popup::Help) => render_help_popup(app.keymaps_long(), frame, content_area),
         None => {}
     };
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     let keys_hint = Span::styled(
-        app.keymaps()
+        app.keymaps_short()
             .map(|(from, to)| format!("{from} {to}"))
             .join(" / "),
         Color::default(),
@@ -466,41 +466,97 @@ fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
 fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     let error_lines: Vec<Line<'_>> = errors
         .iter()
-        .flat_map(|AppError { name, long, .. }| {
+        .enumerate()
+        .flat_map(|(idx, AppError { name, long, .. })| {
             let name_line = Line::from(vec![Span::styled(name, Style::default().bold())]);
 
-            let error_lines: Vec<Line<'_>> = long
+            let error_lines = long
                 .lines()
-                .map(|line| {
-                    Line::from(vec![Span::styled(
-                        line.to_string(),
-                        Style::default().fg(Color::Red),
-                    )])
-                })
-                .collect();
+                .map(|line| Line::from(vec![Span::styled(line, Style::default().fg(Color::Red))]));
 
             std::iter::once(name_line)
                 .chain(error_lines)
-                .chain(std::iter::once(Line::from("")))
-                .collect::<Vec<_>>()
+                .chain(if idx < errors.len() - 1 {
+                    Some(Line::from(""))
+                } else {
+                    None
+                })
         })
         .collect();
 
-    let content_height = error_lines.len() as u16 + 1;
+    render_paragraph_popup("Errors", error_lines, frame, area);
+}
 
-    let popup_area = center(
+// TODO: add tests
+fn render_help_popup<'a, I>(keymaps: I, frame: &mut Frame<'_>, area: Rect)
+where
+    I: Iterator<Item = (&'a str, &'a str)>,
+{
+    let keymaps_vec: Vec<(&str, &str)> = keymaps.collect();
+
+    let max_from_width = keymaps_vec
+        .iter()
+        .map(|(from, _)| from.len())
+        .max()
+        .unwrap_or(0);
+
+    let from_column_width = max_from_width as u16 + 2;
+
+    let rows: Vec<Row<'_>> = keymaps_vec
+        .into_iter()
+        .map(|(from, to)| {
+            let padded_from = format!("  {:>width$} ", from, width = max_from_width);
+
+            Row::new(vec![
+                Cell::from(Span::styled(padded_from, Style::default().fg(Color::Blue))),
+                Cell::from(Span::raw(to)),
+            ])
+        })
+        .collect();
+
+    let widths = [Constraint::Length(from_column_width), Constraint::Fill(1)];
+    let rows_len = rows.len();
+    let table = Table::new(rows, widths).column_spacing(1);
+
+    render_table_popup("Help", table, rows_len, frame, area);
+}
+
+fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame<'_>, area: Rect) {
+    let content_height = content.len() as u16 + 2;
+    let popup_area = get_popup_area(area, content_height);
+
+    let popup = Paragraph::new(content).block(create_popup_block(title));
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(popup, popup_area);
+}
+
+fn render_table_popup(
+    title: &str,
+    table: Table<'_>,
+    row_count: usize,
+    frame: &mut Frame<'_>,
+    area: Rect,
+) {
+    let content_height = row_count as u16 + 2;
+    let popup_area = get_popup_area(area, content_height);
+
+    let table = table.block(create_popup_block(title));
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(table, popup_area);
+}
+
+fn get_popup_area(area: Rect, content_height: u16) -> Rect {
+    center(
         area,
         Constraint::Percentage(80),
         Constraint::Length(content_height),
-    );
+    )
+}
 
-    let popup = Paragraph::new(error_lines).block(
-        Block::bordered()
-            .title("Errors")
-            .title_alignment(Alignment::Center),
-    );
-    frame.render_widget(Clear, popup_area);
-    frame.render_widget(popup, popup_area);
+fn create_popup_block(title: &str) -> Block<'_> {
+    Block::bordered()
+        .title(title)
+        .title_alignment(Alignment::Center)
 }
 
 #[cfg(test)]

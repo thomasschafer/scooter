@@ -1142,7 +1142,16 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_long(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.keymaps_impl(false)
+    }
+
+    pub(crate) fn keymaps_short(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.keymaps_impl(true)
+    }
+
+    fn keymaps_impl(&self, short: bool) -> impl Iterator<Item = (&str, &str)> {
+        // TODO: long and short variants
         let current_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
