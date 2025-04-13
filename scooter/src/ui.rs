@@ -450,41 +450,12 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
-    let current_keys = match app.current_screen {
-        Screen::SearchFields => {
-            vec!["<enter> search", "<tab> focus next", "<S-tab> focus prev"]
-        }
-        Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-            let mut keys = if let Screen::SearchComplete(_) = app.current_screen {
-                vec!["<enter> replace selected"]
-            } else {
-                vec![]
-            };
-            keys.append(&mut vec![
-                "<space> toggle",
-                "<a> toggle all",
-                "<o> open",
-                "<C-o> back",
-            ]);
-            keys
-        }
-        Screen::PerformingReplacement(_) => vec![],
-        Screen::Results(ref replace_state) => {
-            if !replace_state.errors.is_empty() {
-                vec!["<j> down", "<k> up"]
-            } else {
-                vec![]
-            }
-        }
-    };
-
-    let additional_keys = ["<C-r> reset", "<esc> quit", "<C-?> help"];
-
-    let all_keys = current_keys
-        .iter()
-        .chain(additional_keys.iter())
-        .join(" / ");
-    let keys_hint = Span::styled(all_keys, Color::default());
+    let keys_hint = Span::styled(
+        app.keymaps()
+            .map(|(from, to)| format!("{from} {to}"))
+            .join(" / "),
+        Color::default(),
+    );
 
     let footer = Paragraph::new(Line::from(keys_hint))
         .block(Block::default())

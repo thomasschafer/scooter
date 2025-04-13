@@ -853,8 +853,8 @@ impl App {
                 self.reset();
                 return Ok(EventHandlingResult::Rerender);
             }
-            (KeyCode::Char('?'), KeyModifiers::CONTROL) => {
-                self.show_help_menu();
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                self.set_popup(Popup::Help);
                 return Ok(EventHandlingResult::Rerender);
             }
             (_, _) => {}
@@ -914,7 +914,7 @@ impl App {
                 )))
             }
             (_, _) => {
-                self.popup = Some(Popup::Error);
+                self.set_popup(Popup::Error);
                 Ok(None)
             }
         }
@@ -1133,13 +1133,51 @@ impl App {
         self.errors.push(error);
     }
 
-    fn show_help_menu(&mut self) {
-        self.popup = Some(Popup::Help);
-    }
-
     fn clear_popup(&mut self) {
         self.popup = None;
         self.errors.clear();
+    }
+
+    fn set_popup(&mut self, popup: Popup) {
+        self.popup = Some(popup);
+    }
+
+    pub(crate) fn keymaps(&self) -> impl Iterator<Item = (&str, &str)> {
+        let current_keys = match self.current_screen {
+            Screen::SearchFields => {
+                vec![
+                    ("<enter>", "search"),
+                    ("<tab>", "focus next"),
+                    ("<S-tab>", "focus prev"),
+                ]
+            }
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
+                let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
+                    vec![("<enter>", "replace selected")]
+                } else {
+                    vec![]
+                };
+                keys.append(&mut vec![
+                    ("<space>", "toggle"),
+                    ("<a>", "toggle all"),
+                    ("<o>", "open"),
+                    ("<C-o>", "back"),
+                ]);
+                keys
+            }
+            Screen::PerformingReplacement(_) => vec![],
+            Screen::Results(ref replace_state) => {
+                if !replace_state.errors.is_empty() {
+                    vec![("<j>", "down"), ("<k>", "up")]
+                } else {
+                    vec![]
+                }
+            }
+        };
+
+        let additional_keys = vec![("<C-r>", "reset"), ("<esc>", "quit"), ("<C-h>", "help")];
+
+        current_keys.into_iter().chain(additional_keys)
     }
 }
 
