@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
-    test_with_both_regex_modes, App, EventHandlingResult, ReplaceResult, ReplaceState, Screen,
-    SearchFieldValues, SearchFields, SearchResult, SearchState,
+    test_with_both_regex_modes, App, EventHandlingResult, Popup, ReplaceResult, ReplaceState,
+    Screen, SearchFieldValues, SearchFields, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -170,7 +170,7 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
     assert!(matches!(app.current_screen, Screen::SearchFields));
-    assert!(app.show_error_popup());
+    assert!(matches!(app.popup(), Some(Popup::Error)));
 
     let res = app
         .handle_key_event(&KeyEvent {
@@ -181,7 +181,7 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
         })
         .unwrap();
     assert!(res != EventHandlingResult::Exit);
-    assert!(!app.show_error_popup());
+    assert!(!matches!(app.popup(), Some(Popup::Error)));
 
     let res = app
         .handle_key_event(&KeyEvent {

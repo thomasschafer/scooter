@@ -329,7 +329,6 @@ pub const NUM_SEARCH_FIELDS: usize = 7;
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
     pub highlighted: usize,
-    pub show_error_popup: bool,
     advanced_regex: bool,
 }
 
@@ -427,7 +426,6 @@ impl SearchFields {
                 },
             ],
             highlighted: 0,
-            show_error_popup: false,
             advanced_regex: false,
         }
     }
@@ -499,14 +497,20 @@ pub struct AppError {
     pub long: String,
 }
 
+#[derive(Debug)]
+pub enum Popup {
+    Error,
+    Help,
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    errors: Vec<AppError>,
     pub directory: PathBuf,
-    include_hidden: bool,
     pub config: Config,
-
+    errors: Vec<AppError>,
+    include_hidden: bool,
+    popup: Option<Popup>,
     event_sender: UnboundedSender<Event>,
 }
 
@@ -531,10 +535,11 @@ impl App {
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
-            errors: vec![],
             directory,
             include_hidden,
             config,
+            errors: vec![],
+            popup: None,
             event_sender,
         }
     }
@@ -834,9 +839,8 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
-        if self.show_error_popup() {
-            self.clear_app_errors();
-            self.search_fields.show_error_popup = false;
+        if self.popup.is_some() {
+            self.popup = None;
             return Ok(EventHandlingResult::Rerender);
         }
 
@@ -847,6 +851,10 @@ impl App {
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
+                return Ok(EventHandlingResult::Rerender);
+            }
+            (KeyCode::Char('?'), KeyModifiers::CONTROL) => {
+                self.show_help_menu();
                 return Ok(EventHandlingResult::Rerender);
             }
             (_, _) => {}
@@ -906,7 +914,7 @@ impl App {
                 )))
             }
             (_, _) => {
-                self.search_fields.show_error_popup = true;
+                self.popup = Some(Popup::Error);
                 Ok(None)
             }
         }
@@ -1106,8 +1114,12 @@ impl App {
         Ok(())
     }
 
-    pub fn show_error_popup(&self) -> bool {
-        !self.errors.is_empty() || self.search_fields.show_error_popup
+    pub fn show_popup(&self) -> bool {
+        self.popup.is_some()
+    }
+
+    pub fn popup(&self) -> &Option<Popup> {
+        &self.popup
     }
 
     pub fn errors(&self) -> Vec<AppError> {
@@ -1117,11 +1129,12 @@ impl App {
     }
 
     pub fn add_error(&mut self, error: AppError) {
+        self.popup = Some(Popup::Error);
         self.errors.push(error);
     }
 
-    pub fn clear_app_errors(&mut self) {
-        self.errors = vec![];
+    fn show_help_menu(&mut self) {
+        self.popup = Some(Popup::Help);
     }
 }
 

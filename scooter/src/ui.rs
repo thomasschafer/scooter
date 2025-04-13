@@ -15,8 +15,8 @@ use std::{
 
 use crate::{
     app::{
-        App, AppError, FieldName, ReplaceResult, ReplaceState, Screen, SearchField, SearchResult,
-        SearchState, NUM_SEARCH_FIELDS,
+        App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
+        SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{group_by, relative_path_from},
 };
@@ -35,7 +35,7 @@ impl FieldName {
     }
 }
 
-fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let areas: [Rect; NUM_SEARCH_FIELDS] = Layout::vertical(iter::repeat_n(
         Constraint::Length(3),
         app.search_fields.fields.len(),
@@ -57,7 +57,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &App, area: Rect) {
             )
         });
 
-    if !app.show_error_popup() {
+    if !app.show_popup() {
         if let Some(cursor_pos) = app.search_fields.highlighted_field().read().cursor_pos() {
             let highlighted_area = areas[app.search_fields.highlighted];
 
@@ -442,9 +442,11 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
         }
     };
 
-    if app.show_error_popup() {
-        render_error_popup(app, frame, content_area);
-    }
+    match app.popup() {
+        Some(Popup::Error) => render_error_popup(&app.errors(), frame, content_area),
+        Some(Popup::Help) => todo!(),
+        None => {}
+    };
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
@@ -476,7 +478,7 @@ fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
         }
     };
 
-    let additional_keys = ["<C-r> reset", "<esc> quit"];
+    let additional_keys = ["<C-r> reset", "<esc> quit", "<C-?> help"];
 
     let all_keys = current_keys
         .iter()
@@ -490,10 +492,9 @@ fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     frame.render_widget(footer, chunk);
 }
 
-fn render_error_popup(app: &App, frame: &mut Frame<'_>, area: Rect) {
-    let error_lines: Vec<Line<'_>> = app
-        .errors()
-        .into_iter()
+fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
+    let error_lines: Vec<Line<'_>> = errors
+        .iter()
         .flat_map(|AppError { name, long, .. }| {
             let name_line = Line::from(vec![Span::styled(name, Style::default().bold())]);
 
