@@ -840,7 +840,7 @@ impl App {
         }
 
         if self.popup.is_some() {
-            self.popup = None;
+            self.clear_popup();
             return Ok(EventHandlingResult::Rerender);
         }
 
@@ -1135,6 +1135,11 @@ impl App {
 
     fn show_help_menu(&mut self) {
         self.popup = Some(Popup::Help);
+    }
+
+    fn clear_popup(&mut self) {
+        self.popup = None;
+        self.errors.clear();
     }
 }
 
