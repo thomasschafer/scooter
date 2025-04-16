@@ -1142,51 +1142,69 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps_long(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_all(&self) -> impl Iterator<Item = (&str, &str)> {
         self.keymaps_impl(false)
     }
 
-    pub(crate) fn keymaps_short(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_compact(&self) -> impl Iterator<Item = (&str, &str)> {
         self.keymaps_impl(true)
     }
 
-    fn keymaps_impl(&self, short: bool) -> impl Iterator<Item = (&str, &str)> {
-        // TODO: long and short variants
+    fn keymaps_impl(&self, compact: bool) -> impl Iterator<Item = (&str, &str)> {
+        enum Show {
+            Compact,
+            FullOnly,
+        }
+
+        // TODO: complete, add missing keymaps
         let current_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
-                    ("<enter>", "search"),
-                    ("<tab>", "focus next"),
-                    ("<S-tab>", "focus prev"),
+                    ("<enter>", "search", Show::Compact),
+                    ("<tab>", "focus next", Show::Compact),
+                    ("<S-tab>", "focus prev", Show::FullOnly),
                 ]
             }
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
                 let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
-                    vec![("<enter>", "replace selected")]
+                    vec![("<enter>", "replace selected", Show::Compact)]
                 } else {
                     vec![]
                 };
                 keys.append(&mut vec![
-                    ("<space>", "toggle"),
-                    ("<a>", "toggle all"),
-                    ("<o>", "open"),
-                    ("<C-o>", "back"),
+                    ("<space>", "toggle", Show::Compact),
+                    ("<a>", "toggle all", Show::FullOnly),
+                    ("<o>", "open in editor", Show::FullOnly),
+                    ("<C-o>", "back", Show::Compact),
                 ]);
                 keys
             }
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(ref replace_state) => {
                 if !replace_state.errors.is_empty() {
-                    vec![("<j>", "down"), ("<k>", "up")]
+                    vec![("<j>", "down", Show::Compact), ("<k>", "up", Show::Compact)]
                 } else {
                     vec![]
                 }
             }
         };
 
-        let additional_keys = vec![("<C-r>", "reset"), ("<esc>", "quit"), ("<C-h>", "help")];
+        let additional_keys = vec![
+            ("<C-r>", "reset", Show::Compact),
+            ("<esc>", "quit", Show::Compact),
+            ("<C-h>", "help", Show::Compact),
+        ];
 
-        current_keys.into_iter().chain(additional_keys)
+        current_keys
+            .into_iter()
+            .chain(additional_keys)
+            .filter_map(move |(from, to, show)| {
+                if !compact || matches!(show, Show::Compact) {
+                    Some((from, to))
+                } else {
+                    None
+                }
+            })
     }
 }
 

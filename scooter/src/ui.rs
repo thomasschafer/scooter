@@ -444,14 +444,14 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 
     match app.popup() {
         Some(Popup::Error) => render_error_popup(&app.errors(), frame, content_area),
-        Some(Popup::Help) => render_help_popup(app.keymaps_long(), frame, content_area),
+        Some(Popup::Help) => render_help_popup(app.keymaps_all(), frame, content_area),
         None => {}
     };
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     let keys_hint = Span::styled(
-        app.keymaps_short()
+        app.keymaps_compact()
             .map(|(from, to)| format!("{from} {to}"))
             .join(" / "),
         Color::default(),
