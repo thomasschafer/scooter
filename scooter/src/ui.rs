@@ -487,7 +487,6 @@ fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     render_paragraph_popup("Errors", error_lines, frame, area);
 }
 
-// TODO: add tests
 fn render_help_popup<'a, I>(keymaps: I, frame: &mut Frame<'_>, area: Rect)
 where
     I: Iterator<Item = (&'a str, &'a str)>,

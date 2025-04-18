@@ -204,7 +204,7 @@ pub struct SearchInProgressState {
 }
 
 impl SearchInProgressState {
-    fn new(
+    pub fn new(
         handle: JoinHandle<()>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
