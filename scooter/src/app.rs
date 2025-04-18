@@ -204,7 +204,7 @@ pub struct SearchInProgressState {
 }
 
 impl SearchInProgressState {
-    fn new(
+    pub fn new(
         handle: JoinHandle<()>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
@@ -329,7 +329,6 @@ pub const NUM_SEARCH_FIELDS: usize = 7;
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
     pub highlighted: usize,
-    pub show_error_popup: bool,
     advanced_regex: bool,
 }
 
@@ -427,7 +426,6 @@ impl SearchFields {
                 },
             ],
             highlighted: 0,
-            show_error_popup: false,
             advanced_regex: false,
         }
     }
@@ -499,14 +497,20 @@ pub struct AppError {
     pub long: String,
 }
 
+#[derive(Debug)]
+pub enum Popup {
+    Error,
+    Help,
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    errors: Vec<AppError>,
     pub directory: PathBuf,
-    include_hidden: bool,
     pub config: Config,
-
+    errors: Vec<AppError>,
+    include_hidden: bool,
+    popup: Option<Popup>,
     event_sender: UnboundedSender<Event>,
 }
 
@@ -531,10 +535,11 @@ impl App {
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
-            errors: vec![],
             directory,
             include_hidden,
             config,
+            errors: vec![],
+            popup: None,
             event_sender,
         }
     }
@@ -834,9 +839,8 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
-        if self.show_error_popup() {
-            self.clear_app_errors();
-            self.search_fields.show_error_popup = false;
+        if self.popup.is_some() {
+            self.clear_popup();
             return Ok(EventHandlingResult::Rerender);
         }
 
@@ -847,6 +851,10 @@ impl App {
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
+                return Ok(EventHandlingResult::Rerender);
+            }
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                self.set_popup(Popup::Help);
                 return Ok(EventHandlingResult::Rerender);
             }
             (_, _) => {}
@@ -906,7 +914,7 @@ impl App {
                 )))
             }
             (_, _) => {
-                self.search_fields.show_error_popup = true;
+                self.set_popup(Popup::Error);
                 Ok(None)
             }
         }
@@ -1106,8 +1114,12 @@ impl App {
         Ok(())
     }
 
-    pub fn show_error_popup(&self) -> bool {
-        !self.errors.is_empty() || self.search_fields.show_error_popup
+    pub fn show_popup(&self) -> bool {
+        self.popup.is_some()
+    }
+
+    pub fn popup(&self) -> &Option<Popup> {
+        &self.popup
     }
 
     pub fn errors(&self) -> Vec<AppError> {
@@ -1117,11 +1129,95 @@ impl App {
     }
 
     pub fn add_error(&mut self, error: AppError) {
+        self.popup = Some(Popup::Error);
         self.errors.push(error);
     }
 
-    pub fn clear_app_errors(&mut self) {
-        self.errors = vec![];
+    fn clear_popup(&mut self) {
+        self.popup = None;
+        self.errors.clear();
+    }
+
+    fn set_popup(&mut self, popup: Popup) {
+        self.popup = Some(popup);
+    }
+
+    pub(crate) fn keymaps_all(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.keymaps_impl(false)
+    }
+
+    pub(crate) fn keymaps_compact(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.keymaps_impl(true)
+    }
+
+    fn keymaps_impl(&self, compact: bool) -> impl Iterator<Item = (&str, &str)> {
+        enum Show {
+            Compact,
+            FullOnly,
+        }
+
+        let current_keys = match self.current_screen {
+            Screen::SearchFields => {
+                vec![
+                    ("<enter>", "search", Show::Compact),
+                    ("<tab>", "focus next", Show::Compact),
+                    ("<S-tab>", "focus previous", Show::FullOnly),
+                    ("<space>", "toggle checkbox", Show::FullOnly),
+                ]
+            }
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
+                let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
+                    vec![("<enter>", "replace selected", Show::Compact)]
+                } else {
+                    vec![]
+                };
+                keys.append(&mut vec![
+                    ("<space>", "toggle", Show::Compact),
+                    ("<a>", "toggle all", Show::FullOnly),
+                    ("<o>", "open in editor", Show::FullOnly),
+                    ("<C-o>", "back", Show::Compact),
+                    ("g", "jump to top", Show::FullOnly),
+                    ("G", "jump to bottom", Show::FullOnly),
+                ]);
+                keys
+            }
+            Screen::PerformingReplacement(_) => vec![],
+            Screen::Results(ref replace_state) => {
+                if !replace_state.errors.is_empty() {
+                    vec![("<j>", "down", Show::Compact), ("<k>", "up", Show::Compact)]
+                } else {
+                    vec![]
+                }
+            }
+        };
+
+        let additional_keys = vec![
+            (
+                "<C-r>",
+                "reset",
+                if matches!(
+                    self.current_screen,
+                    Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+                ) {
+                    Show::FullOnly
+                } else {
+                    Show::Compact
+                },
+            ),
+            ("<C-h>", "help", Show::Compact),
+            ("<esc>", "quit", Show::Compact),
+        ];
+
+        current_keys
+            .into_iter()
+            .chain(additional_keys)
+            .filter_map(move |(from, to, show)| {
+                if !compact || matches!(show, Show::Compact) {
+                    Some((from, to))
+                } else {
+                    None
+                }
+            })
     }
 }
 

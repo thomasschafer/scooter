@@ -237,16 +237,28 @@ where
             .replace("%file", &file_path.to_string_lossy())
             .replace("%line", &line.to_string());
 
-        if cfg!(windows) {
+        let output = if cfg!(windows) {
             let mut cmd = Command::new("cmd");
             cmd.arg("/C").arg(&editor_command);
-            cmd.status()?;
+            cmd.output()?
         } else {
             let mut cmd = Command::new("sh");
             cmd.arg("-c").arg(&editor_command);
-            cmd.status()?;
+            cmd.output()?
+        };
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let status_code = output
+                .status
+                .code()
+                .map_or("<not found>".to_owned(), |r| r.to_string());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow::anyhow!(
+                "Failed to execute command\nStatus: {status_code}\nOutput: {stderr}",
+            ))
         }
-        Ok(())
     }
 
     fn open_default_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
