@@ -1156,13 +1156,13 @@ impl App {
             FullOnly,
         }
 
-        // TODO: complete, add missing keymaps
         let current_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
                     ("<enter>", "search", Show::Compact),
                     ("<tab>", "focus next", Show::Compact),
-                    ("<S-tab>", "focus prev", Show::FullOnly),
+                    ("<S-tab>", "focus previous", Show::FullOnly),
+                    ("<space>", "toggle checkbox", Show::FullOnly),
                 ]
             }
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
@@ -1176,6 +1176,8 @@ impl App {
                     ("<a>", "toggle all", Show::FullOnly),
                     ("<o>", "open in editor", Show::FullOnly),
                     ("<C-o>", "back", Show::Compact),
+                    ("g", "jump to top", Show::FullOnly),
+                    ("G", "jump to bottom", Show::FullOnly),
                 ]);
                 keys
             }
@@ -1190,9 +1192,20 @@ impl App {
         };
 
         let additional_keys = vec![
-            ("<C-r>", "reset", Show::Compact),
-            ("<esc>", "quit", Show::Compact),
+            (
+                "<C-r>",
+                "reset",
+                if matches!(
+                    self.current_screen,
+                    Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+                ) {
+                    Show::FullOnly
+                } else {
+                    Show::Compact
+                },
+            ),
             ("<C-h>", "help", Show::Compact),
+            ("<esc>", "quit", Show::Compact),
         ];
 
         current_keys
