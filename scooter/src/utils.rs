@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use std::path::{Path, PathBuf};
+use std::{
+    ops::{Add, Div, Rem},
+    path::{Path, PathBuf},
+};
 
 pub fn replace_start(s: String, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
@@ -49,6 +52,19 @@ pub fn validate_directory(dir_str: &str) -> Result<PathBuf> {
             dir_str
         ))
     }
+}
+
+pub fn ceil_div<T>(a: T, b: T) -> T
+where
+    T: Add<Output = T>
+        + Div<Output = T>
+        + Rem<Output = T>
+        + From<bool>
+        + From<u8>
+        + PartialEq
+        + Copy,
+{
+    a / b + T::from((a % b) != T::from(0))
 }
 
 #[macro_export]
@@ -253,5 +269,19 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);
+    }
+
+    #[test]
+    fn test_ceil_div() {
+        assert_eq!(ceil_div(1, 1), 1);
+        assert_eq!(ceil_div(2, 1), 2);
+        assert_eq!(ceil_div(1, 2), 1);
+        assert_eq!(ceil_div(0, 1), 0);
+        assert_eq!(ceil_div(2, 3), 1);
+        // assert_eq!(ceil_div(-2, 3), 0);
+        assert_eq!(ceil_div(27, 4), 7);
+        assert_eq!(ceil_div(26, 9), 3);
+        assert_eq!(ceil_div(27, 9), 3);
+        assert_eq!(ceil_div(28, 9), 4);
     }
 }

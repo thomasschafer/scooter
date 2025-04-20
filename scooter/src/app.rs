@@ -12,7 +12,7 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
-use std::iter::Iterator;
+use std::{cmp::max, iter::Iterator};
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -36,6 +36,7 @@ use crate::{
     config::{load_config, Config},
     fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
+    utils::ceil_div,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,42 +83,72 @@ pub enum EventHandlingResult {
 
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct SearchState {
-    pub results: Vec<SearchResult>,
     // TODO: make the view logic with scrolling etc. into a generic component
-    selected: usize, // TODO: allow for selection of ranges
-    pub view_offset: usize,
+    pub results: Vec<SearchResult>,
+    selected: usize,                         // TODO: allow for selection of ranges
+    pub(crate) view_offset: usize,           // Updated by UI, not app
+    pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
 }
 
 impl SearchState {
-    pub fn selected(&self) -> usize {
+    pub(crate) fn selected(&self) -> usize {
         self.selected
     }
 
-    pub fn move_selected_up(&mut self) {
+    fn move_selected_up_by(&mut self, n: usize) {
         if self.selected == 0 {
-            self.selected = self.results.len();
-        }
-        self.selected = self.selected.saturating_sub(1);
-    }
-
-    pub fn move_selected_down(&mut self) {
-        if self.selected >= self.results.len().saturating_sub(1) {
+            self.selected = self.results.len().saturating_sub(1);
+        } else if self.selected <= n {
             self.selected = 0;
         } else {
-            self.selected += 1;
+            self.selected -= n;
         }
     }
 
-    pub fn move_selected_top(&mut self) {
+    fn move_selected_down_by(&mut self, n: usize) {
+        if self.selected >= self.results.len().saturating_sub(1) {
+            self.selected = 0;
+        } else if self.selected >= self.results.len().saturating_sub(n + 1) {
+            self.selected = self.results.len().saturating_sub(1);
+        } else {
+            self.selected += n;
+        }
+    }
+
+    fn move_selected_up(&mut self) {
+        self.move_selected_up_by(1);
+    }
+
+    fn move_selected_down(&mut self) {
+        self.move_selected_down_by(1);
+    }
+
+    fn move_selected_up_full_page(&mut self) {
+        self.move_selected_up_by(max(self.num_displayed.unwrap(), 1));
+    }
+
+    fn move_selected_down_full_page(&mut self) {
+        self.move_selected_down_by(max(self.num_displayed.unwrap(), 1));
+    }
+
+    fn move_selected_up_half_page(&mut self) {
+        self.move_selected_up_by(max(ceil_div(self.num_displayed.unwrap(), 2), 1));
+    }
+
+    fn move_selected_down_half_page(&mut self) {
+        self.move_selected_down_by(max(ceil_div(self.num_displayed.unwrap(), 2), 1));
+    }
+
+    fn move_selected_top(&mut self) {
         self.selected = 0;
         self.view_offset = 0;
     }
 
-    pub fn move_selected_bottom(&mut self) {
+    fn move_selected_bottom(&mut self) {
         self.selected = self.results.len().saturating_sub(1);
     }
 
-    pub fn toggle_selected_inclusion(&mut self) {
+    fn toggle_selected_inclusion(&mut self) {
         if self.selected < self.results.len() {
             let selected_result = self.selected_field();
             selected_result.included = !selected_result.included;
@@ -126,7 +157,7 @@ impl SearchState {
         }
     }
 
-    pub fn toggle_all_selected(&mut self) {
+    fn toggle_all_selected(&mut self) {
         let all_included = self.results.iter().all(|res| res.included);
         self.results
             .iter_mut()
@@ -135,15 +166,6 @@ impl SearchState {
 
     fn selected_field(&mut self) -> &mut SearchResult {
         &mut self.results[self.selected]
-    }
-
-    #[allow(dead_code)] // Used in tests
-    pub fn with_results(results: Vec<SearchResult>) -> Self {
-        Self {
-            results,
-            selected: 0,
-            view_offset: 0,
-        }
     }
 }
 
@@ -167,9 +189,9 @@ impl ReplaceState {
                 self.scroll_replacement_errors_up();
             }
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
-            (KeyCode::PageDown, _) => {}                      // TODO: scroll down a full page
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
-            (KeyCode::PageUp, _) => {}                        // TODO: scroll up a full page
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
             (KeyCode::Enter | KeyCode::Char('q'), _) => {
                 exit = true;
             }
@@ -792,6 +814,26 @@ impl App {
             (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
                 self.current_screen.search_results_mut().move_selected_up();
             }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.current_screen
+                    .search_results_mut()
+                    .move_selected_down_half_page();
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                self.current_screen
+                    .search_results_mut()
+                    .move_selected_down_full_page();
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.current_screen
+                    .search_results_mut()
+                    .move_selected_up_half_page();
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                self.current_screen
+                    .search_results_mut()
+                    .move_selected_up_full_page();
+            }
             (KeyCode::Char('g'), _) => {
                 self.current_screen.search_results_mut().move_selected_top();
             }
@@ -1243,9 +1285,32 @@ mod tests {
         }
     }
 
+    fn build_test_search_state(num_results: usize) -> SearchState {
+        let results = (0..num_results)
+            .map(|i| SearchResult {
+                path: PathBuf::from(format!("test{i}.txt")),
+                line_number: 1,
+                line: format!("test line {i}").to_string(),
+                replacement: format!("replacement {i}").to_string(),
+                included: true,
+                replace_result: None,
+            })
+            .collect();
+        build_test_search_state_with_results(results)
+    }
+
+    fn build_test_search_state_with_results(results: Vec<SearchResult>) -> SearchState {
+        SearchState {
+            results,
+            selected: 0,
+            view_offset: 0,
+            num_displayed: Some(5),
+        }
+    }
+
     #[test]
     fn test_toggle_all_selected_when_all_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(true),
             search_result(true),
             search_result(true),
@@ -1263,7 +1328,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_none_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(false),
             search_result(false),
             search_result(false),
@@ -1281,7 +1346,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_some_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(true),
             search_result(false),
             search_result(true),
@@ -1299,7 +1364,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_no_results() {
-        let mut search_state = SearchState::with_results(vec![]);
+        let mut search_state = build_test_search_state_with_results(vec![]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1347,7 +1412,7 @@ mod tests {
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(None, false, false, event_sender);
-        app.current_screen = Screen::SearchComplete(SearchState::with_results(results));
+        app.current_screen = Screen::SearchComplete(build_test_search_state_with_results(results));
         app
     }
 
@@ -1396,5 +1461,122 @@ mod tests {
                 replacement_errors_pos: 0,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn test_search_state_toggling() {
+        let mut state = build_test_search_state(3);
+
+        fn included(state: &SearchState) -> Vec<bool> {
+            state.results.iter().map(|r| r.included).collect::<Vec<_>>()
+        }
+
+        assert_eq!(included(&state), [true, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [true, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+        state.move_selected_down();
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, false, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_single() {
+        let mut state = build_test_search_state(3);
+
+        assert_eq!(state.selected(), 0);
+        state.move_selected_down();
+        assert_eq!(state.selected(), 1);
+        state.move_selected_down();
+        assert_eq!(state.selected(), 2);
+        state.move_selected_down();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_down();
+        assert_eq!(state.selected(), 1);
+        state.move_selected_up();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_up();
+        assert_eq!(state.selected(), 2);
+        state.move_selected_up();
+        assert_eq!(state.selected(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_top_bottom() {
+        let mut state = build_test_search_state(3);
+
+        state.move_selected_top();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_bottom();
+        assert_eq!(state.selected(), 2);
+        state.move_selected_bottom();
+        assert_eq!(state.selected(), 2);
+        state.move_selected_top();
+        assert_eq!(state.selected(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_half_page_increments() {
+        let mut state = build_test_search_state(8);
+
+        assert_eq!(state.selected(), 0);
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected(), 3);
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected(), 6);
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected(), 7);
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected(), 4);
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected(), 1);
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected(), 7);
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected(), 4);
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected(), 7);
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_page_increments() {
+        let mut state = build_test_search_state(12);
+
+        assert_eq!(state.selected(), 0);
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected(), 5);
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected(), 10);
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected(), 11);
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 11);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 6);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 1);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 0);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 11);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 6);
+        state.move_selected_up();
+        assert_eq!(state.selected(), 5);
+        state.move_selected_up();
+        assert_eq!(state.selected(), 4);
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected(), 0);
     }
 }
