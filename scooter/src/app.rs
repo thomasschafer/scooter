@@ -141,7 +141,6 @@ impl SearchState {
 
     fn move_selected_top(&mut self) {
         self.selected = 0;
-        self.view_offset = 0;
     }
 
     fn move_selected_bottom(&mut self) {
