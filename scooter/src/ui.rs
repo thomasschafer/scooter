@@ -178,6 +178,7 @@ fn render_confirmation_view(
     );
 
     let num_to_render = list_area_height / item_height;
+    search_state.num_displayed = Some(num_to_render);
     if search_state.selected() < search_state.view_offset + 1 {
         search_state.view_offset = search_state.selected().saturating_sub(1);
     } else if search_state.selected() > (search_state.view_offset + num_to_render).saturating_sub(2)
