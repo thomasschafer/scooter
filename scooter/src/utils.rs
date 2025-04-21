@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::{
+    fs::File,
+    io::{self, BufRead, BufReader},
     ops::{Add, Div, Rem},
     path::{Path, PathBuf},
 };
@@ -65,6 +67,33 @@ where
         + Copy,
 {
     a / b + T::from((a % b) != T::from(0))
+}
+
+pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<(usize, String)>> {
+    if start > end {
+        panic!("Expected start <= end, found start={start}, end={end}");
+    }
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let lines = reader
+        .lines()
+        .enumerate()
+        .skip(start)
+        .take(end - start + 1)
+        .map(|(idx, line)| (idx, line.unwrap()))
+        .collect();
+    Ok(lines)
+}
+
+pub fn strip_control_chars(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\t' => String::from("  "),
+            '\n' => String::from(" "),
+            c if c.is_control() => String::from("�"),
+            c => String::from(c),
+        })
+        .collect()
 }
 
 #[macro_export]
@@ -278,10 +307,49 @@ mod tests {
         assert_eq!(ceil_div(1, 2), 1);
         assert_eq!(ceil_div(0, 1), 0);
         assert_eq!(ceil_div(2, 3), 1);
-        // assert_eq!(ceil_div(-2, 3), 0);
+        assert_eq!(ceil_div(-2, 3), 0);
         assert_eq!(ceil_div(27, 4), 7);
         assert_eq!(ceil_div(26, 9), 3);
         assert_eq!(ceil_div(27, 9), 3);
         assert_eq!(ceil_div(28, 9), 4);
+    }
+
+    #[test]
+    fn test_sanitize_normal_text() {
+        assert_eq!(strip_control_chars("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_sanitize_tabs() {
+        assert_eq!(strip_control_chars("hello\tworld"), "hello  world");
+        assert_eq!(strip_control_chars("\t\t"), "    ");
+    }
+
+    #[test]
+    fn test_sanitize_newlines() {
+        assert_eq!(strip_control_chars("hello\nworld"), "hello world");
+        assert_eq!(strip_control_chars("\n\n"), "  ");
+    }
+
+    #[test]
+    fn test_sanitize_control_chars() {
+        assert_eq!(strip_control_chars("hello\u{4}world"), "hello�world");
+        assert_eq!(strip_control_chars("test\u{7}"), "test�");
+        assert_eq!(strip_control_chars("\u{1b}[0m"), "�[0m");
+    }
+
+    #[test]
+    fn test_sanitize_unicode() {
+        assert_eq!(strip_control_chars("héllo→世界"), "héllo→世界");
+    }
+
+    #[test]
+    fn test_sanitize_empty_string() {
+        assert_eq!(strip_control_chars(""), "");
+    }
+
+    #[test]
+    fn test_sanitize_only_control_chars() {
+        assert_eq!(strip_control_chars("\u{1}\u{2}\u{3}\u{4}"), "����");
     }
 }

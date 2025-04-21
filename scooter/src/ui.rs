@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table},
     Frame,
 };
 use similar::{Change, ChangeTag, TextDiff};
@@ -18,7 +18,7 @@ use crate::{
         App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
-    utils::{group_by, relative_path_from},
+    utils::{group_by, read_lines_range, relative_path_from, strip_control_chars},
 };
 
 impl FieldName {
@@ -36,6 +36,7 @@ impl FieldName {
 }
 
 fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let area = default_width(area);
     let areas: [Rect; NUM_SEARCH_FIELDS] = Layout::vertical(iter::repeat_n(
         Constraint::Length(3),
         app.search_fields.fields.len(),
@@ -69,15 +70,15 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
 }
 
-fn strip_control_chars(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\t' => String::from("  "),
-            '\n' => String::from(" "),
-            c if c.is_control() => String::from("�"),
-            c => String::from(c),
-        })
-        .collect()
+fn default_width(area: Rect) -> Rect {
+    width(area, 80)
+}
+
+fn width(area: Rect, percentage: u16) -> Rect {
+    let [area] = Layout::horizontal([Constraint::Percentage(percentage)])
+        .flex(Flex::Center)
+        .areas(area);
+    area
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -155,13 +156,18 @@ fn render_confirmation_view(
     base_path: PathBuf,
     area: Rect,
 ) {
-    let [num_results_area, list_area] =
+    let split_view = area.width >= 130;
+    let area = if !split_view {
+        default_width(area)
+    } else {
+        width(area, 90)
+    };
+    let [num_results_area, results_area] =
         Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
             .flex(Flex::Start)
             .areas(area);
 
-    let list_area_height = list_area.height as usize;
-    let item_height = 4; // TODO: find a better way of doing this
+    let list_area_height = results_area.height as usize;
     let num_results = search_state.results.len();
 
     frame.render_widget(
@@ -177,6 +183,16 @@ fn render_confirmation_view(
         num_results_area,
     );
 
+    let results_area = if split_view {
+        // TODO: can we apply this padding to all views without losing space on other screens?
+        let [results_area, _]: [Rect; 2] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
+        results_area
+    } else {
+        results_area
+    };
+
+    let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
     let num_to_render = list_area_height / item_height;
     search_state.num_displayed = Some(num_to_render);
     if search_state.selected() < search_state.view_offset + 1 {
@@ -190,32 +206,120 @@ fn render_confirmation_view(
         );
     }
 
-    let search_results = search_state
+    if split_view {
+        let [list_area, preview_area] =
+            Layout::horizontal([Constraint::Fill(2), Constraint::Fill(3)]).areas(results_area);
+        let search_results =
+            build_search_results(search_state, base_path, list_area.width, num_to_render);
+        let search_results_list = search_results
+            .iter()
+            .flat_map(|SearchResultLines { file_path, .. }| vec![ListItem::new(file_path.clone())]);
+        frame.render_widget(List::new(search_results_list), list_area);
+        if !search_results.is_empty() {
+            let selected = search_results
+                .iter()
+                .find(|s| s.is_selected)
+                .expect("Selected item should be in view");
+            render_preview(frame, preview_area, selected);
+        }
+    } else {
+        let search_results = List::new(
+            build_search_results(search_state, base_path, results_area.width, num_to_render)
+                .into_iter()
+                .flat_map(
+                    |SearchResultLines {
+                         file_path,
+                         old_line_diff,
+                         new_line_diff,
+                         ..
+                     }| {
+                        vec![
+                            ListItem::new(file_path),
+                            ListItem::new(old_line_diff),
+                            ListItem::new(new_line_diff),
+                            ListItem::new(""),
+                        ]
+                    },
+                ),
+        );
+        frame.render_widget(search_results, results_area);
+    }
+}
+
+fn build_search_results(
+    search_state: &mut SearchState,
+    base_path: PathBuf,
+    width: u16,
+    num_to_render: usize,
+) -> Vec<SearchResultLines<'_>> {
+    search_state
         .results
         .iter()
         .enumerate()
         .skip(search_state.view_offset)
         .take(num_to_render)
-        .flat_map(|(idx, result)| {
-            render_search_result(
-                idx,
-                search_state.selected(),
-                result,
-                &base_path,
-                list_area.width,
-            )
-        });
-
-    frame.render_widget(List::new(search_results), list_area);
+        .map(|(idx, result)| search_result(idx, search_state.selected(), result, &base_path, width))
+        .collect()
 }
 
-fn render_search_result<'a>(
+// TODO: tests
+fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchResultLines<'_>) {
+    let line_number = selected.search_result.line_number;
+    let lines_to_show = preview_area.height as usize;
+    let start = line_number.saturating_sub(lines_to_show / 2 + 1);
+    let end = line_number + lines_to_show.saturating_sub(line_number - start); // TODO: show extra if start is 0
+    let lines =
+        read_lines_range(&selected.search_result.path, start, end).expect("Failed to read file");
+    let lines = lines
+        .iter()
+        .map(|(idx, line)| (idx, strip_control_chars(line)))
+        .collect::<Vec<_>>();
+    let mid = line_number.saturating_sub(start + 1);
+    let (before, after) = lines.split_at(mid);
+    let (cur, after) = after.split_first().unwrap();
+    assert_eq!(cur.1, selected.search_result.line);
+    let prefix = "  ";
+    // TODO: assert that expected line is same as old_line
+    frame.render_widget(
+        List::new(
+            before
+                .iter()
+                .map(|(_, line)| ListItem::new(format!("{}{}", prefix, line))) // TODO: deduplicate
+                .chain([
+                    ListItem::new(selected.old_line_diff.clone()),
+                    ListItem::new(selected.new_line_diff.clone()),
+                ])
+                .chain(
+                    after
+                        .iter()
+                        .map(|(_, line)| ListItem::new(format!("{}{}", prefix, line))),
+                ),
+        )
+        .block(
+            Block::new()
+                .borders(Borders::LEFT)
+                .border_style(Color::Green),
+        ),
+        preview_area,
+    );
+}
+
+struct SearchResultLines<'a> {
+    file_path: Line<'a>,
+    old_line_diff: Line<'static>,
+    new_line_diff: Line<'static>,
+    is_selected: bool,
+    search_result: &'a SearchResult,
+}
+
+fn search_result<'a>(
     idx: usize,
     selected: usize,
-    result: &SearchResult,
+    result: &'a SearchResult,
     base_path: &Path,
     list_area_width: u16,
-) -> [ListItem<'a>; 4] {
+) -> SearchResultLines<'a> {
+    let is_selected = idx == selected;
     let (old_line, new_line) = line_diff(&result.line, &result.replacement);
     let old_line = old_line
         .iter()
@@ -226,7 +330,7 @@ fn render_search_result<'a>(
         .take(list_area_width as usize)
         .collect::<Vec<_>>();
 
-    let file_path_style = if idx == selected {
+    let file_path_style = if is_selected {
         Style::new().bg(if result.included {
             Color::Blue
         } else {
@@ -255,19 +359,21 @@ fn render_search_result<'a>(
     let file_path = Line::from(vec![
         Span::raw(left_content_trimmed),
         Span::raw(spacers),
-        Span::raw(right_content),
+        Span::raw(right_content).style(Color::Blue),
     ])
     .style(file_path_style);
 
-    [
-        ListItem::new(file_path),
-        ListItem::new(diff_to_line(old_line)),
-        ListItem::new(diff_to_line(new_line)),
-        ListItem::new(""),
-    ]
+    SearchResultLines {
+        file_path,
+        old_line_diff: diff_to_line(old_line),
+        new_line_diff: diff_to_line(new_line),
+        is_selected,
+        search_result: result,
+    }
 }
 
 fn render_results_view(frame: &mut Frame<'_>, replace_state: &ReplaceState, area: Rect) {
+    let area = default_width(area);
     if replace_state.errors.is_empty() {
         render_results_success(area, replace_state, frame);
     } else {
@@ -371,6 +477,7 @@ fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
 
 fn render_loading_view(text: String) -> impl Fn(&mut Frame<'_>, &App, Rect) {
     move |frame: &mut Frame<'_>, _app: &App, area: Rect| {
+        let area = default_width(area);
         let [area] = Layout::vertical([Constraint::Length(4)])
             .flex(Flex::Center)
             .areas(area);
@@ -413,18 +520,17 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             Constraint::Length(1),
         ])
         .split(frame.size());
+    let [header_area, content_area, footer_area] = chunks[..] else {
+        panic!("Unexpected chunks length {}", chunks.len())
+    };
 
     let title_block = Block::default().style(Style::default());
     let title = Paragraph::new(Text::styled("Scooter", Style::default()))
         .block(title_block)
         .alignment(Alignment::Center);
-    frame.render_widget(title, chunks[0]);
+    frame.render_widget(title, header_area);
 
-    let [content_area] = Layout::horizontal([Constraint::Percentage(80)])
-        .flex(Flex::Center)
-        .areas(chunks[1]);
-
-    render_key_hints(app, frame, chunks[2]);
+    render_key_hints(app, frame, footer_area);
 
     let base_path = app.directory.clone();
     match &mut app.current_screen {
@@ -783,44 +889,5 @@ mod tests {
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_sanitize_normal_text() {
-        assert_eq!(strip_control_chars("hello world"), "hello world");
-    }
-
-    #[test]
-    fn test_sanitize_tabs() {
-        assert_eq!(strip_control_chars("hello\tworld"), "hello  world");
-        assert_eq!(strip_control_chars("\t\t"), "    ");
-    }
-
-    #[test]
-    fn test_sanitize_newlines() {
-        assert_eq!(strip_control_chars("hello\nworld"), "hello world");
-        assert_eq!(strip_control_chars("\n\n"), "  ");
-    }
-
-    #[test]
-    fn test_sanitize_control_chars() {
-        assert_eq!(strip_control_chars("hello\u{4}world"), "hello�world");
-        assert_eq!(strip_control_chars("test\u{7}"), "test�");
-        assert_eq!(strip_control_chars("\u{1b}[0m"), "�[0m");
-    }
-
-    #[test]
-    fn test_sanitize_unicode() {
-        assert_eq!(strip_control_chars("héllo→世界"), "héllo→世界");
-    }
-
-    #[test]
-    fn test_sanitize_empty_string() {
-        assert_eq!(strip_control_chars(""), "");
-    }
-
-    #[test]
-    fn test_sanitize_only_control_chars() {
-        assert_eq!(strip_control_chars("\u{1}\u{2}\u{3}\u{4}"), "����");
     }
 }
