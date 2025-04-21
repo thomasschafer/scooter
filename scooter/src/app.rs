@@ -1218,6 +1218,12 @@ impl App {
                     ("<a>", "toggle all", Show::FullOnly),
                     ("<o>", "open in editor", Show::FullOnly),
                     ("<C-o>", "back", Show::Compact),
+                    ("j", "up", Show::FullOnly),
+                    ("k", "down", Show::FullOnly),
+                    ("<C-u>", "up half a page", Show::FullOnly),
+                    ("<C-d>", "down half a page", Show::FullOnly),
+                    ("<C-b>", "up a full page", Show::FullOnly),
+                    ("<C-f>", "down a full page", Show::FullOnly),
                     ("g", "jump to top", Show::FullOnly),
                     ("G", "jump to bottom", Show::FullOnly),
                 ]);
