@@ -74,7 +74,6 @@ where
     a / b + T::from((a % b) != T::from(0))
 }
 
-/// Strips control chars from text
 pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<String>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
@@ -85,12 +84,11 @@ pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec
         .lines()
         .skip(start)
         .take(end - start + 1)
-        .map(|line| strip_control_chars(&line.unwrap()))
+        .map(|line| line.unwrap())
         .collect();
     Ok(lines)
 }
 
-/// Stips control chars from text and highlights using the theme selected
 pub fn read_lines_range_highlighted(
     path: &Path,
     start: usize,
@@ -116,7 +114,7 @@ pub fn read_lines_range_highlighted(
                 .highlight_line(&line, &ss)
                 .unwrap()
                 .into_iter()
-                .map(|(style, text)| (style, strip_control_chars(text).to_string()))
+                .map(|(style, text)| (style, text.to_string()))
                 .collect()
         })
         .collect();

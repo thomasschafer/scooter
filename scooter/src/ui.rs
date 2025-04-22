@@ -13,7 +13,7 @@ use std::{
     iter,
     path::{Path, PathBuf},
 };
-use syntect::highlighting::{Style as SyntectStyle, Theme, ThemeSet};
+use syntect::highlighting::{FontStyle, Style as SyntectStyle, Theme, ThemeSet};
 
 use crate::{
     app::{
@@ -290,34 +290,42 @@ fn get_theme() -> anyhow::Result<Theme> {
 }
 
 fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
-    Style::default().fg({
+    let mut ratatui_style = Style::default().fg({
         let fg = syntect_style.foreground;
         Color::Rgb(fg.r, fg.g, fg.b)
-    })
+    });
     // .bg({
     //     let bg = syntect_style.background;
     //     Color::Rgb(bg.r, bg.g, bg.b)
     // });
 
-    // if syntect_style.font_style.contains(FontStyle::BOLD) {
-    //     ratatui_style = ratatui_style.bold();
-    // }
-    // if syntect_style.font_style.contains(FontStyle::ITALIC) {
-    //     ratatui_style = ratatui_style.italic();
-    // }
-    // if syntect_style.font_style.contains(FontStyle::UNDERLINE) {
-    //     ratatui_style = ratatui_style.underlined();
-    // }
+    if syntect_style.font_style.contains(FontStyle::BOLD) {
+        ratatui_style = ratatui_style.bold();
+    }
+    if syntect_style.font_style.contains(FontStyle::ITALIC) {
+        ratatui_style = ratatui_style.italic();
+    }
+    if syntect_style.font_style.contains(FontStyle::UNDERLINE) {
+        ratatui_style = ratatui_style.underlined();
+    }
+    ratatui_style
 }
 
 fn regions_to_line(line: &Vec<(SyntectStyle, String)>) -> ListItem<'_> {
     let prefix = "  ";
-    ListItem::new(Line::from_iter(
-        iter::once(Span::raw(prefix)).chain(
-            line.iter()
-                .map(|(style, s)| Span::styled(s, convert_syntect_to_ratatui_style(style))),
-        ),
-    ))
+    ListItem::new(Line::from_iter(iter::once(Span::raw(prefix)).chain(
+        line.iter().map(|(style, s)| {
+            Span::styled(
+                strip_control_chars(s),
+                convert_syntect_to_ratatui_style(style),
+            )
+        }),
+    )))
+}
+
+fn to_line_plain(line: &str) -> ListItem<'_> {
+    let prefix = "  ";
+    ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
 // TODO: tests
@@ -325,12 +333,12 @@ fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchRe
     let line_number = selected.search_result.line_number;
     let lines_to_show = preview_area.height as usize;
 
-    let start = line_number.saturating_sub(lines_to_show / 2 + 1);
-    let end = line_number + lines_to_show.saturating_sub(line_number - start); // TODO: show extra if start is 0
+    let start = line_number.saturating_sub(lines_to_show / 2 + 1); // TODO: decrease if at end of file
+    let end = line_number + lines_to_show.saturating_sub(line_number - start);
 
     let lines =
         read_lines_range(&selected.search_result.path, start, end).expect("Failed to read file");
-
+    // .map(|line| strip_control_chars(&line.unwrap()))
     let mid = line_number.saturating_sub(start + 1);
     let (before, after) = lines.split_at(mid);
     let (cur, after) = after.split_first().unwrap();
@@ -340,12 +348,12 @@ fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchRe
         List::new(
             before
                 .iter()
-                .map(|l| ListItem::new(l.as_str()))
+                .map(|l| to_line_plain(l))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|l| ListItem::new(l.as_str()))),
+                .chain(after.iter().map(|l| to_line_plain(l))),
         )
         .block(
             Block::new()
@@ -382,6 +390,22 @@ fn search_result<'a>(
         .take(list_area_width as usize)
         .collect::<Vec<_>>();
 
+    SearchResultLines {
+        file_path: file_path_line(idx, result, base_path, is_selected, list_area_width),
+        old_line_diff: diff_to_line(old_line),
+        new_line_diff: diff_to_line(new_line),
+        is_selected,
+        search_result: result,
+    }
+}
+
+fn file_path_line<'a>(
+    idx: usize,
+    result: &SearchResult,
+    base_path: &Path,
+    is_selected: bool,
+    list_area_width: u16,
+) -> Line<'a> {
     let file_path_style = if is_selected {
         Style::new().bg(if result.included {
             Color::Blue
@@ -391,37 +415,32 @@ fn search_result<'a>(
     } else {
         Style::new()
     };
+
     let right_content = format!(" ({})", idx + 1);
-    let right_content_len = right_content.len() as u16;
-    let left_content = format!(
-        "[{}] {}:{}",
-        if result.included { 'x' } else { ' ' },
+    let right_content_len = right_content.len();
+    let left_content = format!("[{}] ", if result.included { 'x' } else { ' ' },);
+    let left_content_len = left_content.chars().count();
+    let centre_content = format!(
+        "{}:{}",
         relative_path_from(base_path, &result.path),
         result.line_number,
     );
-    let left_content_trimmed = left_content
+    let centre_content = centre_content
         .chars()
-        .take(list_area_width.saturating_sub(right_content_len) as usize)
+        .take((list_area_width as usize).saturating_sub(left_content_len + right_content_len))
         .collect::<String>();
-    let left_content_trimmed_len = left_content_trimmed.len() as u16;
     let spacers = " ".repeat(
-        list_area_width.saturating_sub(left_content_trimmed_len + right_content_len) as usize,
+        (list_area_width as usize)
+            .saturating_sub(left_content_len + centre_content.len() + right_content_len),
     );
 
-    let file_path = Line::from(vec![
-        Span::raw(left_content_trimmed),
+    Line::from(vec![
+        Span::raw(left_content).style(Color::Blue),
+        Span::raw(centre_content),
         Span::raw(spacers),
-        Span::raw(right_content).style(Color::Green),
+        Span::raw(right_content).style(Color::Blue),
     ])
-    .style(file_path_style);
-
-    SearchResultLines {
-        file_path,
-        old_line_diff: diff_to_line(old_line),
-        new_line_diff: diff_to_line(new_line),
-        is_selected,
-        search_result: result,
-    }
+    .style(file_path_style)
 }
 
 fn render_results_view(frame: &mut Frame<'_>, replace_state: &ReplaceState, area: Rect) {
