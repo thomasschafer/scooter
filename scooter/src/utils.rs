@@ -5,6 +5,11 @@ use std::{
     ops::{Add, Div, Rem},
     path::{Path, PathBuf},
 };
+use syntect::{
+    easy::HighlightFile,
+    highlighting::{Style, Theme},
+    parsing::SyntaxSet,
+};
 
 pub fn replace_start(s: String, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
@@ -69,7 +74,8 @@ where
     a / b + T::from((a % b) != T::from(0))
 }
 
-pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<(usize, String)>> {
+/// Strips control chars from text
+pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<String>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
     }
@@ -77,10 +83,42 @@ pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec
     let reader = BufReader::new(file);
     let lines = reader
         .lines()
-        .enumerate()
         .skip(start)
         .take(end - start + 1)
-        .map(|(idx, line)| (idx, line.unwrap()))
+        .map(|line| strip_control_chars(&line.unwrap()))
+        .collect();
+    Ok(lines)
+}
+
+/// Stips control chars from text and highlights using the theme selected
+pub fn read_lines_range_highlighted(
+    path: &Path,
+    start: usize,
+    end: usize,
+    theme: &Theme,
+) -> io::Result<Vec<Vec<(Style, String)>>> {
+    if start > end {
+        panic!("Expected start <= end, found start={start}, end={end}");
+    }
+
+    let ss = SyntaxSet::load_defaults_nonewlines();
+    let mut highlighter = HighlightFile::new(path, &ss, theme)?;
+
+    let lines = highlighter
+        .reader
+        .lines()
+        .skip(start)
+        .take(end - start + 1)
+        .map(|line| {
+            let line = line.unwrap();
+            highlighter
+                .highlight_lines
+                .highlight_line(&line, &ss)
+                .unwrap()
+                .into_iter()
+                .map(|(style, text)| (style, strip_control_chars(text).to_string()))
+                .collect()
+        })
         .collect();
     Ok(lines)
 }

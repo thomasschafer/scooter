@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use itertools::Itertools;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
@@ -12,13 +13,17 @@ use std::{
     iter,
     path::{Path, PathBuf},
 };
+use syntect::highlighting::{Style as SyntectStyle, Theme, ThemeSet};
 
 use crate::{
     app::{
         App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
-    utils::{group_by, read_lines_range, relative_path_from, strip_control_chars},
+    utils::{
+        group_by, read_lines_range, read_lines_range_highlighted, relative_path_from,
+        strip_control_chars,
+    },
 };
 
 impl FieldName {
@@ -166,6 +171,14 @@ fn render_confirmation_view(
         Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
             .flex(Flex::Start)
             .areas(area);
+    let results_area = if split_view {
+        // TODO: can we apply this padding to all views without losing space on other screens?
+        let [results_area, _]: [Rect; 2] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
+        results_area
+    } else {
+        results_area
+    };
 
     let list_area_height = results_area.height as usize;
     let num_results = search_state.results.len();
@@ -182,15 +195,6 @@ fn render_confirmation_view(
         )),
         num_results_area,
     );
-
-    let results_area = if split_view {
-        // TODO: can we apply this padding to all views without losing space on other screens?
-        let [results_area, _]: [Rect; 2] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
-        results_area
-    } else {
-        results_area
-    };
 
     let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
     let num_to_render = list_area_height / item_height;
@@ -262,38 +266,86 @@ fn build_search_results(
         .collect()
 }
 
+fn get_theme() -> anyhow::Result<Theme> {
+    // TODO: delete this
+    let themes_names = [
+        "InspiredGitHub",
+        "Solarized (dark)",
+        "Solarized (light)",
+        "base16-eighties.dark",
+        "base16-mocha.dark",
+        "base16-ocean.dark",
+        "base16-ocean.light",
+    ];
+    let theme_name = themes_names[4];
+    let themes = ThemeSet::load_defaults().themes;
+    // TODO: allow overriding with config
+    match themes.get(theme_name) {
+        Some(theme) => Ok(theme.clone()),
+        None => Err(anyhow!(
+            "Could not find theme {theme_name}, found {:?}",
+            themes.keys()
+        )),
+    }
+}
+
+fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
+    Style::default().fg({
+        let fg = syntect_style.foreground;
+        Color::Rgb(fg.r, fg.g, fg.b)
+    })
+    // .bg({
+    //     let bg = syntect_style.background;
+    //     Color::Rgb(bg.r, bg.g, bg.b)
+    // });
+
+    // if syntect_style.font_style.contains(FontStyle::BOLD) {
+    //     ratatui_style = ratatui_style.bold();
+    // }
+    // if syntect_style.font_style.contains(FontStyle::ITALIC) {
+    //     ratatui_style = ratatui_style.italic();
+    // }
+    // if syntect_style.font_style.contains(FontStyle::UNDERLINE) {
+    //     ratatui_style = ratatui_style.underlined();
+    // }
+}
+
+fn regions_to_line(line: &Vec<(SyntectStyle, String)>) -> ListItem<'_> {
+    let prefix = "  ";
+    ListItem::new(Line::from_iter(
+        iter::once(Span::raw(prefix)).chain(
+            line.iter()
+                .map(|(style, s)| Span::styled(s, convert_syntect_to_ratatui_style(style))),
+        ),
+    ))
+}
+
 // TODO: tests
 fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchResultLines<'_>) {
     let line_number = selected.search_result.line_number;
     let lines_to_show = preview_area.height as usize;
+
     let start = line_number.saturating_sub(lines_to_show / 2 + 1);
     let end = line_number + lines_to_show.saturating_sub(line_number - start); // TODO: show extra if start is 0
+
     let lines =
         read_lines_range(&selected.search_result.path, start, end).expect("Failed to read file");
-    let lines = lines
-        .iter()
-        .map(|(idx, line)| (idx, strip_control_chars(line)))
-        .collect::<Vec<_>>();
+
     let mid = line_number.saturating_sub(start + 1);
     let (before, after) = lines.split_at(mid);
     let (cur, after) = after.split_first().unwrap();
-    assert_eq!(cur.1, selected.search_result.line);
-    let prefix = "  ";
-    // TODO: assert that expected line is same as old_line
+    assert_eq!(*cur, selected.search_result.line);
+
     frame.render_widget(
         List::new(
             before
                 .iter()
-                .map(|(_, line)| ListItem::new(format!("{}{}", prefix, line))) // TODO: deduplicate
+                .map(|l| ListItem::new(l.as_str()))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(
-                    after
-                        .iter()
-                        .map(|(_, line)| ListItem::new(format!("{}{}", prefix, line))),
-                ),
+                .chain(after.iter().map(|l| ListItem::new(l.as_str()))),
         )
         .block(
             Block::new()
@@ -359,7 +411,7 @@ fn search_result<'a>(
     let file_path = Line::from(vec![
         Span::raw(left_content_trimmed),
         Span::raw(spacers),
-        Span::raw(right_content).style(Color::Blue),
+        Span::raw(right_content).style(Color::Green),
     ])
     .style(file_path_style);
 
