@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table},
+    widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table},
     Frame,
 };
 use similar::{Change, ChangeTag, TextDiff};
@@ -24,7 +24,7 @@ use crate::{
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
-        group_by, read_lines_range, read_lines_range_highlighted, relative_path_from,
+        ceil_div, group_by, read_lines_range, read_lines_range_highlighted, relative_path_from,
         strip_control_chars,
     },
 };
@@ -331,7 +331,7 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
 }
 
 // TODO: tests
-// TODO: syntax highlight in background processing thread
+// TODO: syntax highlight in background processing thread?
 fn build_preview_list<'a>(
     lines_to_show: usize,
     selected: &SearchResultLines<'_>,
@@ -339,55 +339,57 @@ fn build_preview_list<'a>(
 ) -> List<'a> {
     let line_number = selected.search_result.line_number;
 
-    let start = line_number.saturating_sub(lines_to_show / 2); // TODO: decrease if at end of file
-    let end = line_number + lines_to_show.saturating_sub(line_number - start);
+    let start = line_number.saturating_sub(lines_to_show); // TODO: decrease if at end of file
+    let end = line_number + ceil_div(lines_to_show, 2);
 
-    let theme = get_theme().unwrap();
-    let list = if syntax_highlight {
+    // TODO: dedup
+    if syntax_highlight {
+        let theme = get_theme().unwrap();
+
         let lines =
             read_lines_range_highlighted(&selected.search_result.path, start, end, &theme).unwrap();
+        // let lines = lines; // TODO: take last `lines_to_show-1`, split, compare cur
         let mid = line_number.saturating_sub(start + 1);
         let (before, after) = lines.split_at(mid);
         let (cur, after) = after.split_first().unwrap();
         assert_eq!(
-            *cur.iter().map(|(_, s)| s).join(""),
+            *cur.1.iter().map(|(_, s)| s).join(""),
             selected.search_result.line
         );
 
-        List::new(
+        let list = List::new(
             before
                 .iter()
-                .map(|l| regions_to_line(l))
+                .map(|(_, l)| regions_to_line(l))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|l| regions_to_line(l))),
-        )
+                .chain(after.iter().map(|(_, l)| regions_to_line(l))),
+        );
+        if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
+            list.bg(bg)
+        } else {
+            list
+        }
     } else {
         let lines = read_lines_range(&selected.search_result.path, start, end)
             .expect("Failed to read file");
         let mid = line_number.saturating_sub(start + 1);
         let (before, after) = lines.split_at(mid);
         let (cur, after) = after.split_first().unwrap();
-        assert_eq!(*cur, selected.search_result.line);
+        assert_eq!(*cur.1, selected.search_result.line);
 
         List::new(
             before
                 .iter()
-                .map(|l| to_line_plain(l))
+                .map(|(_, l)| to_line_plain(l))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|l| to_line_plain(l))),
+                .chain(after.iter().map(|(_, l)| to_line_plain(l))),
         )
-    };
-
-    if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
-        list.bg(bg)
-    } else {
-        list
     }
 }
 
