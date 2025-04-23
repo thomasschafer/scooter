@@ -13,11 +13,14 @@ use std::{
     iter,
     path::{Path, PathBuf},
 };
-use syntect::highlighting::{FontStyle, Style as SyntectStyle, Theme, ThemeSet};
+use syntect::highlighting::{
+    Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme, ThemeSet,
+};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{
-        App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
+        App, AppError, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
@@ -90,12 +93,15 @@ fn width(area: Rect, percentage: u16) -> Rect {
 pub struct Diff {
     pub text: String,
     pub fg_colour: Color,
-    pub bg_colour: Color,
+    pub bg_colour: Option<Color>,
 }
 
 fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
-        let style = Style::new().fg(d.fg_colour).bg(d.bg_colour);
+        let mut style = Style::new().fg(d.fg_colour);
+        if let Some(bg) = d.bg_colour {
+            style = style.bg(bg)
+        };
         Span::styled(strip_control_chars(&d.text), style)
     });
     Line::from_iter(diff_iter)
@@ -110,12 +116,12 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
     let mut old_spans = vec![Diff {
         text: "- ".to_owned(),
         fg_colour: Color::Red,
-        bg_colour: Color::Reset,
+        bg_colour: None,
     }];
     let mut new_spans = vec![Diff {
         text: "+ ".to_owned(),
         fg_colour: Color::Green,
-        bg_colour: Color::Reset,
+        bg_colour: None,
     }];
 
     for change_group in group_by(diff.iter_all_changes(), |c1, c2| c1.tag() == c2.tag()) {
@@ -126,26 +132,26 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
                 old_spans.push(Diff {
                     text,
                     fg_colour: Color::Black,
-                    bg_colour: Color::Red,
+                    bg_colour: Some(Color::Red),
                 });
             }
             ChangeTag::Insert => {
                 new_spans.push(Diff {
                     text,
                     fg_colour: Color::Black,
-                    bg_colour: Color::Green,
+                    bg_colour: Some(Color::Green),
                 });
             }
             ChangeTag::Equal => {
                 old_spans.push(Diff {
                     text: text.clone(),
                     fg_colour: Color::Red,
-                    bg_colour: Color::Reset,
+                    bg_colour: None,
                 });
                 new_spans.push(Diff {
                     text,
                     fg_colour: Color::Green,
-                    bg_colour: Color::Reset,
+                    bg_colour: None,
                 });
             }
         };
@@ -160,6 +166,7 @@ fn render_confirmation_view(
     search_state: &mut SearchState,
     base_path: PathBuf,
     area: Rect,
+    event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 130;
     let area = if !split_view {
@@ -211,8 +218,12 @@ fn render_confirmation_view(
     }
 
     if split_view {
-        let [list_area, preview_area] =
-            Layout::horizontal([Constraint::Fill(2), Constraint::Fill(3)]).areas(results_area);
+        let [list_area, _, preview_area] = Layout::horizontal([
+            Constraint::Fill(2),
+            Constraint::Length(1),
+            Constraint::Fill(3),
+        ])
+        .areas(results_area);
         let search_results =
             build_search_results(search_state, base_path, list_area.width, num_to_render);
         let search_results_list = search_results
@@ -224,7 +235,9 @@ fn render_confirmation_view(
                 .iter()
                 .find(|s| s.is_selected)
                 .expect("Selected item should be in view");
-            render_preview(frame, preview_area, selected);
+            let lines_to_show = preview_area.height as usize;
+            let preview = build_preview_list(lines_to_show, selected, true);
+            frame.render_widget(preview, preview_area);
         }
     } else {
         let search_results = List::new(
@@ -267,17 +280,7 @@ fn build_search_results(
 }
 
 fn get_theme() -> anyhow::Result<Theme> {
-    // TODO: delete this
-    let themes_names = [
-        "InspiredGitHub",
-        "Solarized (dark)",
-        "Solarized (light)",
-        "base16-eighties.dark",
-        "base16-mocha.dark",
-        "base16-ocean.dark",
-        "base16-ocean.light",
-    ];
-    let theme_name = themes_names[4];
+    let theme_name = "base16-eighties.dark";
     let themes = ThemeSet::load_defaults().themes;
     // TODO: allow overriding with config
     match themes.get(theme_name) {
@@ -289,15 +292,14 @@ fn get_theme() -> anyhow::Result<Theme> {
     }
 }
 
+fn to_ratatui_colour(colour: SyntectColour) -> Color {
+    Color::Rgb(colour.r, colour.g, colour.b)
+}
+
 fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
-    let mut ratatui_style = Style::default().fg({
-        let fg = syntect_style.foreground;
-        Color::Rgb(fg.r, fg.g, fg.b)
-    });
-    // .bg({
-    //     let bg = syntect_style.background;
-    //     Color::Rgb(bg.r, bg.g, bg.b)
-    // });
+    let mut ratatui_style = Style::default()
+        .fg(to_ratatui_colour(syntect_style.foreground))
+        .bg(to_ratatui_colour(syntect_style.background));
 
     if syntect_style.font_style.contains(FontStyle::BOLD) {
         ratatui_style = ratatui_style.bold();
@@ -311,7 +313,7 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
     ratatui_style
 }
 
-fn regions_to_line(line: &Vec<(SyntectStyle, String)>) -> ListItem<'_> {
+fn regions_to_line<'a>(line: &[(SyntectStyle, String)]) -> ListItem<'a> {
     let prefix = "  ";
     ListItem::new(Line::from_iter(iter::once(Span::raw(prefix)).chain(
         line.iter().map(|(style, s)| {
@@ -323,28 +325,53 @@ fn regions_to_line(line: &Vec<(SyntectStyle, String)>) -> ListItem<'_> {
     )))
 }
 
-fn to_line_plain(line: &str) -> ListItem<'_> {
+fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
     let prefix = "  ";
     ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
 // TODO: tests
-fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchResultLines<'_>) {
+// TODO: syntax highlight in background processing thread
+fn build_preview_list<'a>(
+    lines_to_show: usize,
+    selected: &SearchResultLines<'_>,
+    syntax_highlight: bool,
+) -> List<'a> {
     let line_number = selected.search_result.line_number;
-    let lines_to_show = preview_area.height as usize;
 
-    let start = line_number.saturating_sub(lines_to_show / 2 + 1); // TODO: decrease if at end of file
+    let start = line_number.saturating_sub(lines_to_show / 2); // TODO: decrease if at end of file
     let end = line_number + lines_to_show.saturating_sub(line_number - start);
 
-    let lines =
-        read_lines_range(&selected.search_result.path, start, end).expect("Failed to read file");
-    // .map(|line| strip_control_chars(&line.unwrap()))
-    let mid = line_number.saturating_sub(start + 1);
-    let (before, after) = lines.split_at(mid);
-    let (cur, after) = after.split_first().unwrap();
-    assert_eq!(*cur, selected.search_result.line);
+    let theme = get_theme().unwrap();
+    let list = if syntax_highlight {
+        let lines =
+            read_lines_range_highlighted(&selected.search_result.path, start, end, &theme).unwrap();
+        let mid = line_number.saturating_sub(start + 1);
+        let (before, after) = lines.split_at(mid);
+        let (cur, after) = after.split_first().unwrap();
+        assert_eq!(
+            *cur.iter().map(|(_, s)| s).join(""),
+            selected.search_result.line
+        );
 
-    frame.render_widget(
+        List::new(
+            before
+                .iter()
+                .map(|l| regions_to_line(l))
+                .chain([
+                    ListItem::new(selected.old_line_diff.clone()),
+                    ListItem::new(selected.new_line_diff.clone()),
+                ])
+                .chain(after.iter().map(|l| regions_to_line(l))),
+        )
+    } else {
+        let lines = read_lines_range(&selected.search_result.path, start, end)
+            .expect("Failed to read file");
+        let mid = line_number.saturating_sub(start + 1);
+        let (before, after) = lines.split_at(mid);
+        let (cur, after) = after.split_first().unwrap();
+        assert_eq!(*cur, selected.search_result.line);
+
         List::new(
             before
                 .iter()
@@ -355,13 +382,13 @@ fn render_preview(frame: &mut Frame<'_>, preview_area: Rect, selected: &SearchRe
                 ])
                 .chain(after.iter().map(|l| to_line_plain(l))),
         )
-        .block(
-            Block::new()
-                .borders(Borders::LEFT)
-                .border_style(Color::Green),
-        ),
-        preview_area,
-    );
+    };
+
+    if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
+        list.bg(bg)
+    } else {
+        list
+    }
 }
 
 struct SearchResultLines<'a> {
@@ -607,10 +634,24 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     match &mut app.current_screen {
         Screen::SearchFields => render_search_view(frame, app, content_area),
         Screen::SearchProgressing(ref mut s) => {
-            render_confirmation_view(frame, false, &mut s.search_state, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                false,
+                &mut s.search_state,
+                base_path,
+                content_area,
+                app.event_sender.clone(),
+            );
         }
         Screen::SearchComplete(ref mut s) => {
-            render_confirmation_view(frame, true, s, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                true,
+                s,
+                base_path,
+                content_area,
+                app.event_sender.clone(),
+            );
         }
         Screen::PerformingReplacement(_) => {
             render_loading_view("Performing replacement...".to_owned())(frame, app, content_area);
@@ -750,12 +791,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -763,12 +804,12 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -784,22 +825,22 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "e".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Red,
+                bg_colour: Some(Color::Red),
             },
             Diff {
                 text: "llo".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -807,22 +848,22 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "a".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
             Diff {
                 text: "llo".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -838,12 +879,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "foo".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Red,
+                bg_colour: Some(Color::Red),
             },
         ];
 
@@ -851,12 +892,12 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "bar".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
         ];
 
@@ -871,13 +912,13 @@ mod tests {
         let old_expected = vec![Diff {
             text: "- ".to_owned(),
             fg_colour: Color::Red,
-            bg_colour: Color::Reset,
+            bg_colour: None,
         }];
 
         let new_expected = vec![Diff {
             text: "+ ".to_owned(),
             fg_colour: Color::Green,
-            bg_colour: Color::Reset,
+            bg_colour: None,
         }];
 
         assert_eq!(old_expected, old_actual);
@@ -892,12 +933,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -905,17 +946,17 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "!".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
         ];
 
@@ -931,12 +972,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -944,17 +985,17 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "!".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 

@@ -529,10 +529,10 @@ pub struct App {
     pub search_fields: SearchFields,
     pub directory: PathBuf,
     pub config: Config,
+    pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
     popup: Option<Popup>,
-    event_sender: UnboundedSender<Event>,
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
