@@ -316,13 +316,16 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
     ratatui_style
 }
 
-fn regions_to_line<'a>(line: &[(SyntectStyle, String)]) -> ListItem<'a> {
+fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
     let prefix = "  ";
     ListItem::new(Line::from_iter(iter::once(Span::raw(prefix)).chain(
         line.iter().map(|(style, s)| {
             Span::styled(
                 strip_control_chars(s),
-                convert_syntect_to_ratatui_style(style),
+                match style {
+                    Some(style) => convert_syntect_to_ratatui_style(style),
+                    None => Style::default(),
+                },
             )
         }),
     )))
@@ -333,8 +336,6 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
     ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
-// TODO: tests
-// TODO: syntax highlight in background processing thread?
 fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,

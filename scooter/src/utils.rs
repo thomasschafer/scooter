@@ -77,7 +77,6 @@ where
     a / b + T::from((a * b > T::from(0)) && (a % b) != T::from(0))
 }
 
-// TODO: tests
 pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<(usize, String)>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
@@ -103,15 +102,14 @@ pub fn read_lines_range_highlighted(
     end: usize,
     theme: &Theme,
     syntax_set: &SyntaxSet,
-) -> io::Result<Vec<(usize, Vec<(Style, String)>)>> {
+) -> io::Result<Vec<(usize, Vec<(Option<Style>, String)>)>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
     }
 
     let syntax_ref = syntax_set
-        .find_syntax_for_file(path)
-        .unwrap_or_else(|_| Some(syntax_set.find_syntax_plain_text()))
-        .expect("Failed to determine syntax");
+        .find_syntax_for_file(path)?
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
     let mut highlighter = HighlightLines::new(syntax_ref, theme);
 
@@ -121,24 +119,25 @@ pub fn read_lines_range_highlighted(
         path,
         start.saturating_sub(SYNTAX_HIGHLIGHTING_CONTEXT_LEN),
         end,
-    )
-    .unwrap();
+    )?;
     let lines = lines
         .iter()
         .skip_while(|(idx, _)| *idx < start)
         .take(end - start + 1)
         .map(|(idx, line)| {
-            let highlighted = highlighter.highlight_line(line, syntax_set);
-            Ok((
-                *idx,
-                highlighted
-                    .unwrap()
+            let highlighted = match highlighter.highlight_line(line, syntax_set) {
+                Ok(l) => l
                     .into_iter()
-                    .map(|(style, text)| (style, text.to_string()))
-                    .collect::<Vec<_>>(),
-            ))
+                    .map(|(style, text)| (Some(style), text.to_string()))
+                    .collect(),
+                Err(e) => {
+                    log::error!("Error when highlighting line {line}: {e}");
+                    vec![(None, line.clone())]
+                }
+            };
+            (*idx, highlighted)
         })
-        .collect::<io::Result<Vec<_>>>()?;
+        .collect();
 
     Ok(lines)
 }
@@ -654,7 +653,10 @@ mod tests {
         SyntaxSet::load_defaults_nonewlines()
     }
 
-    fn extract_text(highlighted_lines: &[(usize, Vec<(Style, String)>)]) -> Vec<(usize, String)> {
+    #[allow(clippy::type_complexity)]
+    fn extract_text(
+        highlighted_lines: &[(usize, Vec<(Option<Style>, String)>)],
+    ) -> Vec<(usize, String)> {
         highlighted_lines
             .iter()
             .map(|(idx, styles)| {
