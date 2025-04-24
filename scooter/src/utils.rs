@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use syntect::{
-    easy::HighlightFile,
+    easy::HighlightLines,
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
 };
@@ -94,39 +94,52 @@ pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec
     Ok(lines)
 }
 
-// TODO: tests
+static SYNTAX_HIGHLIGHTING_CONTEXT_LEN: usize = 20;
+
 #[allow(clippy::type_complexity)]
 pub fn read_lines_range_highlighted(
     path: &Path,
     start: usize,
     end: usize,
     theme: &Theme,
+    syntax_set: &SyntaxSet,
 ) -> io::Result<Vec<(usize, Vec<(Style, String)>)>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
     }
 
-    let ss = SyntaxSet::load_defaults_nonewlines();
-    let mut highlighter = HighlightFile::new(path, &ss, theme)?;
+    let syntax_ref = syntax_set
+        .find_syntax_for_file(path)
+        .unwrap_or_else(|_| Some(syntax_set.find_syntax_plain_text()))
+        .expect("Failed to determine syntax");
 
-    let lines = highlighter
-        .reader
-        .lines()
-        .enumerate()
-        .skip(start)
+    let mut highlighter = HighlightLines::new(syntax_ref, theme);
+
+    // Get additional lines before start for context when syntax highlighting - ideally we would read
+    // entire file but this would be slow
+    let lines = read_lines_range(
+        path,
+        start.saturating_sub(SYNTAX_HIGHLIGHTING_CONTEXT_LEN),
+        end,
+    )
+    .unwrap();
+    let lines = lines
+        .iter()
+        .skip_while(|(idx, _)| *idx < start)
         .take(end - start + 1)
         .map(|(idx, line)| {
-            let line = line.unwrap();
-            let line = highlighter
-                .highlight_lines
-                .highlight_line(&line, &ss)
-                .unwrap()
-                .into_iter()
-                .map(|(style, text)| (style, text.to_string()))
-                .collect();
-            (idx, line)
+            let highlighted = highlighter.highlight_line(line, syntax_set);
+            Ok((
+                *idx,
+                highlighted
+                    .unwrap()
+                    .into_iter()
+                    .map(|(style, text)| (style, text.to_string()))
+                    .collect::<Vec<_>>(),
+            ))
         })
-        .collect();
+        .collect::<io::Result<Vec<_>>>()?;
+
     Ok(lines)
 }
 
@@ -637,6 +650,10 @@ mod tests {
         ts.themes["base16-ocean.dark"].clone()
     }
 
+    fn get_syntax() -> SyntaxSet {
+        SyntaxSet::load_defaults_nonewlines()
+    }
+
     fn extract_text(highlighted_lines: &[(usize, Vec<(Style, String)>)]) -> Vec<(usize, String)> {
         highlighted_lines
             .iter()
@@ -655,7 +672,8 @@ mod tests {
         let contents = "line1\nline2\nline3\nline4\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 1, 3, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 1, 3, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -672,7 +690,8 @@ mod tests {
         let contents = "line1\nline2\nline3\nline4\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 2, 2, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 2, 2, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(extract_text(&result), vec![(2, "line3".to_string())]);
     }
@@ -682,7 +701,8 @@ mod tests {
         let contents = "line1\nline2\nline3\nline4\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 0, 2, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -699,7 +719,8 @@ mod tests {
         let contents = "line1\nline2\nline3\nline4\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 3, 4, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 3, 4, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -712,7 +733,8 @@ mod tests {
         let contents = "line1\nline2\nline3\nline4\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 0, 4, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 0, 4, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -731,7 +753,8 @@ mod tests {
         let contents = "";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 0, 2, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
     }
@@ -741,7 +764,8 @@ mod tests {
         let contents = "line1\nline2\nline3";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 1, 10, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 1, 10, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -754,7 +778,8 @@ mod tests {
         let contents = "line1\nline2\nline3";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 5, 10, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 5, 10, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
     }
@@ -764,7 +789,7 @@ mod tests {
     fn test_start_greater_than_end_highlighted() {
         let contents = "line1\nline2\nline3";
         let file = create_test_file(contents);
-        let _ = read_lines_range_highlighted(file.path(), 3, 1, &get_theme());
+        let _ = read_lines_range_highlighted(file.path(), 3, 1, &get_theme(), &get_syntax());
     }
 
     #[test]
@@ -772,7 +797,8 @@ mod tests {
         let contents = "line1\n\nline3\n\nline5";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 0, 4, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 0, 4, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),
@@ -790,7 +816,7 @@ mod tests {
     fn test_file_not_found_highlighted() {
         let path = Path::new("non_existent_file.txt");
 
-        let result = read_lines_range_highlighted(path, 0, 5, &get_theme());
+        let result = read_lines_range_highlighted(path, 0, 5, &get_theme(), &get_syntax());
 
         assert!(result.is_err());
     }
@@ -800,7 +826,8 @@ mod tests {
         let contents = "fn main() {\n    println!(\"Hello, world!\");\n}";
         let file = create_test_file(contents);
 
-        let result = read_lines_range_highlighted(file.path(), 0, 2, &get_theme()).unwrap();
+        let result =
+            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
 
         assert_eq!(
             extract_text(&result),

@@ -12,9 +12,11 @@ use std::{
     cmp::min,
     iter,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
-use syntect::highlighting::{
-    Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme, ThemeSet,
+use syntect::{
+    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme, ThemeSet},
+    parsing::SyntaxSet,
 };
 
 use crate::{
@@ -277,15 +279,18 @@ fn build_search_results(
         .collect()
 }
 
+static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+
 fn get_theme() -> anyhow::Result<Theme> {
     let theme_name = "base16-eighties.dark";
-    let themes = ThemeSet::load_defaults().themes;
+    let themes = THEME_SET.get_or_init(ThemeSet::load_defaults);
     // TODO: allow overriding with config
-    match themes.get(theme_name) {
+    match themes.themes.get(theme_name) {
         Some(theme) => Ok(theme.clone()),
         None => Err(anyhow!(
             "Could not find theme {theme_name}, found {:?}",
-            themes.keys()
+            themes.themes.keys()
         )),
     }
 }
@@ -341,9 +346,16 @@ fn build_preview_list<'a>(
 
     if syntax_highlight {
         let theme = get_theme().unwrap();
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
 
-        let lines =
-            read_lines_range_highlighted(&selected.search_result.path, start, end, &theme).unwrap();
+        let lines = read_lines_range_highlighted(
+            &selected.search_result.path,
+            start,
+            end,
+            &theme,
+            syntax_set,
+        )
+        .unwrap();
         let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(
             *cur.1.iter().map(|(_, s)| s).join(""),
