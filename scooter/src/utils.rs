@@ -141,14 +141,7 @@ pub fn strip_control_chars(text: &str) -> String {
         .collect()
 }
 
-pub fn last_n<T: Clone>(vec: &[T], n: usize) -> Vec<T> {
-    if n >= vec.len() {
-        vec.to_vec()
-    } else {
-        vec[vec.len() - n..].to_vec()
-    }
-}
-
+#[allow(dead_code)]
 pub fn split_while<T, F>(vec: &[T], predicate: F) -> (&[T], &[T])
 where
     F: Fn(&T) -> bool,
@@ -190,7 +183,7 @@ pub fn largest_range_centered_on(
 ) -> (usize, usize) {
     if centre < lower_bound || centre > upper_bound {
         panic!(
-            "Expected start <= pos <= end, found start={lower_bound}, pos={centre}, end={upper_bound}"
+            "Expected start<=pos<=end, found start={lower_bound}, pos={centre}, end={upper_bound}"
         );
     }
     if max_size == 0 {
@@ -475,58 +468,6 @@ mod tests {
     #[test]
     fn test_sanitize_only_control_chars() {
         assert_eq!(strip_control_chars("\u{1}\u{2}\u{3}\u{4}"), "����");
-    }
-
-    #[test]
-    fn test_last_n() {
-        let vec = vec![1, 2, 3, 4, 5];
-        assert_eq!(last_n(&vec, 3), vec![3, 4, 5]);
-        assert_eq!(last_n(&vec, 5), vec![1, 2, 3, 4, 5]);
-        assert_eq!(last_n(&vec, 10), vec![1, 2, 3, 4, 5]);
-        assert_eq!(last_n(&vec, 0), Vec::<i32>::new());
-
-        let empty_vec: Vec<i32> = Vec::new();
-        assert_eq!(last_n(&empty_vec, 3), Vec::<i32>::new());
-
-        let vec = vec!["a", "b", "c", "d", "e"];
-        assert_eq!(last_n(&vec, 2), vec!["d", "e"]);
-    }
-
-    #[test]
-    fn test_last_n_with_custom_type() {
-        #[derive(Debug, Clone, PartialEq)]
-        struct Person {
-            name: String,
-            age: u32,
-        }
-
-        let people = vec![
-            Person {
-                name: "Alice".to_string(),
-                age: 30,
-            },
-            Person {
-                name: "Bob".to_string(),
-                age: 25,
-            },
-            Person {
-                name: "Charlie".to_string(),
-                age: 35,
-            },
-        ];
-
-        let expected = vec![
-            Person {
-                name: "Bob".to_string(),
-                age: 25,
-            },
-            Person {
-                name: "Charlie".to_string(),
-                age: 35,
-            },
-        ];
-
-        assert_eq!(last_n(&people, 2), expected);
     }
 
     fn create_test_file(contents: &str) -> NamedTempFile {

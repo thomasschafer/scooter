@@ -23,8 +23,8 @@ use crate::{
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
-        group_by, largest_range_centered_on, last_n, read_lines_range,
-        read_lines_range_highlighted, relative_path_from, split_while, strip_control_chars,
+        group_by, largest_range_centered_on, read_lines_range, read_lines_range_highlighted,
+        relative_path_from, strip_control_chars,
     },
 };
 
@@ -331,32 +331,20 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
 // TODO: tests
 // TODO: syntax highlight in background processing thread?
 fn build_preview_list<'a>(
-    lines_to_show: usize,
+    num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlight: bool,
 ) -> List<'a> {
     let line_idx = selected.search_result.line_number - 1;
+    let start = line_idx.saturating_sub(num_lines_to_show);
+    let end = line_idx + num_lines_to_show;
 
-    let start = line_idx.saturating_sub(lines_to_show); // TODO: decrease if at end of file
-    let end = line_idx + lines_to_show;
-
-    // TODO: dedup
     if syntax_highlight {
         let theme = get_theme().unwrap();
 
         let lines =
             read_lines_range_highlighted(&selected.search_result.path, start, end, &theme).unwrap();
-        let file_start = lines.first().unwrap().0;
-        let file_end = lines.last().unwrap().0;
-        let (new_start, new_end) =
-            largest_range_centered_on(line_idx, file_start, file_end, lines_to_show - 1);
-        let lines = lines
-            .iter()
-            .skip_while(|(idx, _)| *idx < new_start)
-            .take_while(|(idx, _)| *idx <= new_end)
-            .collect::<Vec<_>>();
-        let (before, after) = split_while(&lines, |(idx, _)| *idx < line_idx);
-        let (cur, after) = after.split_first().unwrap();
+        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(
             *cur.1.iter().map(|(_, s)| s).join(""),
             selected.search_result.line
@@ -380,10 +368,7 @@ fn build_preview_list<'a>(
     } else {
         let lines = read_lines_range(&selected.search_result.path, start, end)
             .expect("Failed to read file");
-        let lines = last_n(&lines, lines_to_show);
-        // TODO: longest window stuff etc.
-        let (before, after) = split_while(&lines, |(idx, _)| *idx < line_idx);
-        let (cur, after) = after.split_first().unwrap();
+        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(*cur.1, selected.search_result.line);
 
         List::new(
@@ -397,6 +382,33 @@ fn build_preview_list<'a>(
                 .chain(after.iter().map(|(_, l)| to_line_plain(l))),
         )
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn split_indexed_lines<T>(
+    indexed_lines: Vec<(usize, T)>,
+    line_idx: usize,
+    num_lines_to_show: usize,
+) -> (Vec<(usize, T)>, (usize, T), Vec<(usize, T)>) {
+    let file_start = indexed_lines.first().unwrap().0;
+    let file_end = indexed_lines.last().unwrap().0;
+    let (new_start, new_end) =
+        largest_range_centered_on(line_idx, file_start, file_end, num_lines_to_show);
+
+    let mut filtered_lines = indexed_lines
+        .into_iter()
+        .skip_while(|(idx, _)| *idx < new_start)
+        .take_while(|(idx, _)| *idx <= new_end)
+        .collect::<Vec<_>>();
+
+    let position = filtered_lines
+        .iter()
+        .position(|(idx, _)| *idx == line_idx)
+        .unwrap();
+    let after = filtered_lines.split_off(position + 1);
+    let current = filtered_lines.pop().unwrap();
+
+    (filtered_lines, current, after)
 }
 
 struct SearchResultLines<'a> {
@@ -995,5 +1007,123 @@ mod tests {
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
+    }
+
+    #[test]
+    fn test_split_lines_centered() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 5, 5);
+
+        assert_eq!(cur, (5, "Line 5".to_string()));
+        assert_eq!(
+            before,
+            vec![(3, "Line 3".to_string()), (4, "Line 4".to_string()),]
+        );
+        assert_eq!(
+            after,
+            vec![(6, "Line 6".to_string()), (7, "Line 7".to_string()),]
+        );
+    }
+
+    #[test]
+    fn test_split_lines_at_start() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 0, 3);
+
+        assert_eq!(cur, (0, "Line 0".to_string()));
+        assert_eq!(before, vec![]); // No lines before 0
+        assert_eq!(
+            after,
+            vec![(1, "Line 1".to_string()), (2, "Line 2".to_string()),]
+        );
+    }
+
+    #[test]
+    fn test_split_lines_at_end() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 10, 3);
+
+        assert_eq!(cur, (10, "Line 10".to_string()));
+        assert_eq!(
+            before,
+            vec![(8, "Line 8".to_string()), (9, "Line 9".to_string()),]
+        );
+        assert_eq!(after, vec![]);
+    }
+
+    #[test]
+    fn test_split_lines_with_small_window() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 5, 1);
+
+        assert_eq!(cur, (5, "Line 5".to_string()));
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![]);
+    }
+
+    #[test]
+    fn test_split_lines_with_custom_data_type() {
+        let lines: Vec<(usize, Vec<u8>)> = (0..=5)
+            .map(|idx| (idx, vec![idx as u8, (idx * 2) as u8]))
+            .collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 3, 2);
+
+        assert_eq!(cur, (3, vec![3, 6]));
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![(4, vec![4, 8])]);
+    }
+
+    #[test]
+    fn test_split_lines_non_sequential_indices() {
+        let lines: Vec<(usize, &str)> = vec![
+            (10, "Line 10"),
+            (20, "Line 20"),
+            (30, "Line 30"),
+            (40, "Line 40"),
+            (50, "Line 50"),
+        ];
+
+        let (before, cur, after) = split_indexed_lines(lines, 30, 3);
+
+        assert_eq!(cur, (30, "Line 30"));
+        // Both before and after should be empty - `num_lines_to_show` should be just sequential lines
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![]);
+    }
+
+    #[test]
+    fn test_split_lines_non_sequential_indices_large_window() {
+        let lines: Vec<(usize, &str)> = vec![
+            (10, "Line 10"),
+            (20, "Line 20"),
+            (30, "Line 30"),
+            (40, "Line 40"),
+            (50, "Line 50"),
+        ];
+
+        let (before, cur, after) = split_indexed_lines(lines, 30, 30);
+
+        assert_eq!(cur, (30, "Line 30"));
+        assert_eq!(before, vec![(20, "Line 20")]);
+        assert_eq!(after, vec![(40, "Line 40")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected start<=pos<=end, found start=0, pos=10, end=5")]
+    fn test_split_lines_line_idx_not_found() {
+        let lines: Vec<(usize, String)> =
+            (0..=5).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let _ = split_indexed_lines(lines, 10, 3);
+        // Should panic because line 10 is not in the data
     }
 }
