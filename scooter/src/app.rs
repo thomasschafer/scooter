@@ -49,6 +49,7 @@ pub enum ReplaceResult {
 pub struct SearchResult {
     pub path: PathBuf,
     pub line_number: usize,
+    /// 1-indexed
     pub line: String,
     pub replacement: String,
     pub included: bool,

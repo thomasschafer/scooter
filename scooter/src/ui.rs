@@ -16,16 +16,15 @@ use std::{
 use syntect::highlighting::{
     Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme, ThemeSet,
 };
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{
-        App, AppError, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
+        App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
-        ceil_div, group_by, read_lines_range, read_lines_range_highlighted, relative_path_from,
-        strip_control_chars,
+        group_by, largest_range_centered_on, last_n, read_lines_range,
+        read_lines_range_highlighted, relative_path_from, split_while, strip_control_chars,
     },
 };
 
@@ -166,7 +165,6 @@ fn render_confirmation_view(
     search_state: &mut SearchState,
     base_path: PathBuf,
     area: Rect,
-    event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 130;
     let area = if !split_view {
@@ -337,10 +335,10 @@ fn build_preview_list<'a>(
     selected: &SearchResultLines<'_>,
     syntax_highlight: bool,
 ) -> List<'a> {
-    let line_number = selected.search_result.line_number;
+    let line_idx = selected.search_result.line_number - 1;
 
-    let start = line_number.saturating_sub(lines_to_show); // TODO: decrease if at end of file
-    let end = line_number + ceil_div(lines_to_show, 2);
+    let start = line_idx.saturating_sub(lines_to_show); // TODO: decrease if at end of file
+    let end = line_idx + lines_to_show;
 
     // TODO: dedup
     if syntax_highlight {
@@ -348,9 +346,16 @@ fn build_preview_list<'a>(
 
         let lines =
             read_lines_range_highlighted(&selected.search_result.path, start, end, &theme).unwrap();
-        // let lines = lines; // TODO: take last `lines_to_show-1`, split, compare cur
-        let mid = line_number.saturating_sub(start + 1);
-        let (before, after) = lines.split_at(mid);
+        let file_start = lines.first().unwrap().0;
+        let file_end = lines.last().unwrap().0;
+        let (new_start, new_end) =
+            largest_range_centered_on(line_idx, file_start, file_end, lines_to_show - 1);
+        let lines = lines
+            .iter()
+            .skip_while(|(idx, _)| *idx < new_start)
+            .take_while(|(idx, _)| *idx <= new_end)
+            .collect::<Vec<_>>();
+        let (before, after) = split_while(&lines, |(idx, _)| *idx < line_idx);
         let (cur, after) = after.split_first().unwrap();
         assert_eq!(
             *cur.1.iter().map(|(_, s)| s).join(""),
@@ -375,8 +380,9 @@ fn build_preview_list<'a>(
     } else {
         let lines = read_lines_range(&selected.search_result.path, start, end)
             .expect("Failed to read file");
-        let mid = line_number.saturating_sub(start + 1);
-        let (before, after) = lines.split_at(mid);
+        let lines = last_n(&lines, lines_to_show);
+        // TODO: longest window stuff etc.
+        let (before, after) = split_while(&lines, |(idx, _)| *idx < line_idx);
         let (cur, after) = after.split_first().unwrap();
         assert_eq!(*cur.1, selected.search_result.line);
 
@@ -636,24 +642,10 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     match &mut app.current_screen {
         Screen::SearchFields => render_search_view(frame, app, content_area),
         Screen::SearchProgressing(ref mut s) => {
-            render_confirmation_view(
-                frame,
-                false,
-                &mut s.search_state,
-                base_path,
-                content_area,
-                app.event_sender.clone(),
-            );
+            render_confirmation_view(frame, false, &mut s.search_state, base_path, content_area);
         }
         Screen::SearchComplete(ref mut s) => {
-            render_confirmation_view(
-                frame,
-                true,
-                s,
-                base_path,
-                content_area,
-                app.event_sender.clone(),
-            );
+            render_confirmation_view(frame, true, s, base_path, content_area);
         }
         Screen::PerformingReplacement(_) => {
             render_loading_view("Performing replacement...".to_owned())(frame, app, content_area);

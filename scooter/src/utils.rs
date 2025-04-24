@@ -141,12 +141,77 @@ pub fn strip_control_chars(text: &str) -> String {
         .collect()
 }
 
-fn last_n<T: Clone>(vec: &[T], n: usize) -> Vec<T> {
+pub fn last_n<T: Clone>(vec: &[T], n: usize) -> Vec<T> {
     if n >= vec.len() {
         vec.to_vec()
     } else {
         vec[vec.len() - n..].to_vec()
     }
+}
+
+pub fn split_while<T, F>(vec: &[T], predicate: F) -> (&[T], &[T])
+where
+    F: Fn(&T) -> bool,
+{
+    match vec.iter().position(|x| !predicate(x)) {
+        Some(index) => vec.split_at(index),
+        None => (vec, &[]),
+    }
+}
+
+/// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
+/// and no larger than `max_size`.
+///
+/// # Example
+/// ```
+/// use scooter::utils::largest_range_centered_on;
+///
+/// // Simple case - centered range with room on both sides
+/// let (start, end) = largest_range_centered_on(5, 0, 10, 5);
+/// assert_eq!((3, 7), (start, end));
+///
+/// // Range limited by lower bound
+/// let (start, end) = largest_range_centered_on(0, 0, 10, 5);
+/// assert_eq!((0, 4), (start, end));
+///
+/// // Range limited by upper bound
+/// let (start, end) = largest_range_centered_on(8, 0, 10, 5);
+/// assert_eq!((6, 10), (start, end));
+///
+/// // Range limited by max_size
+/// let (start, end) = largest_range_centered_on(5, 0, 20, 3);
+/// assert_eq!((4, 6), (start, end));
+/// ```
+pub fn largest_range_centered_on(
+    centre: usize,
+    lower_bound: usize,
+    upper_bound: usize,
+    max_size: usize,
+) -> (usize, usize) {
+    if centre < lower_bound || centre > upper_bound {
+        panic!(
+            "Expected start <= pos <= end, found start={lower_bound}, pos={centre}, end={upper_bound}"
+        );
+    }
+    if max_size == 0 {
+        panic!("Expected max_size > 0, found {max_size}");
+    }
+
+    let mut cur_size = 1;
+    let mut cur_start = centre;
+    let mut cur_end = centre;
+    while cur_size < max_size && (cur_start > lower_bound || cur_end < upper_bound) {
+        if cur_end < upper_bound {
+            cur_end += 1;
+            cur_size += 1;
+        }
+        if cur_size < max_size && cur_start > lower_bound {
+            cur_start -= 1;
+            cur_size += 1;
+        }
+    }
+
+    (cur_start, cur_end)
 }
 
 #[macro_export]
@@ -804,5 +869,94 @@ mod tests {
                 (2, "}".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn test_split_empty() {
+        let empty: Vec<i32> = vec![];
+        let (prefix, rest) = split_while(&empty, |&x| x > 0);
+        assert_eq!(prefix, &[] as &[i32]);
+        assert_eq!(rest, &[] as &[i32]);
+    }
+
+    #[test]
+    fn test_all_satisfy() {
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x > 0);
+        assert_eq!(prefix, &[1, 2, 3, 4, 5]);
+        assert_eq!(rest, &[] as &[i32]);
+    }
+
+    #[test]
+    fn test_none_satisfy() {
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x > 5);
+        assert_eq!(prefix, &[] as &[i32]);
+        assert_eq!(rest, &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_some_satisfy() {
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x < 3);
+        assert_eq!(prefix, &[1, 2]);
+        assert_eq!(rest, &[3, 4, 5]);
+    }
+
+    #[test]
+    fn test_only_first_satisfies() {
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x == 1);
+        assert_eq!(prefix, &[1]);
+        assert_eq!(rest, &[2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_only_last_fails() {
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x < 5);
+        assert_eq!(prefix, &[1, 2, 3, 4]);
+        assert_eq!(rest, &[5]);
+    }
+
+    #[test]
+    fn test_with_strings() {
+        let vec = vec!["apple", "banana", "cherry", "date", "elderberry"];
+        let (prefix, rest) = split_while(&vec, |&s| s.starts_with('a') || s.starts_with('b'));
+        assert_eq!(prefix, &["apple", "banana"]);
+        assert_eq!(rest, &["cherry", "date", "elderberry"]);
+    }
+
+    #[test]
+    fn test_owned_vec() {
+        // Test for the owned version if you implemented it
+        let vec = vec![1, 2, 3, 4, 5];
+        let (prefix, rest) = split_while(&vec, |&x| x < 3);
+        assert_eq!(prefix, vec![1, 2]);
+        assert_eq!(rest, vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn test_largest_window_around() {
+        assert_eq!(largest_range_centered_on(5, 0, 9, 1), (5, 5));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 2), (5, 6));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 3), (4, 6));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 4), (4, 7));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 5), (3, 7));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 6), (3, 8));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 7), (2, 8));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 8), (2, 9));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 9), (1, 9));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 10), (0, 9));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 11), (0, 9));
+        assert_eq!(largest_range_centered_on(5, 0, 9, 999), (0, 9));
+
+        assert_eq!(largest_range_centered_on(0, 0, 9, 1), (0, 0));
+        assert_eq!(largest_range_centered_on(0, 0, 9, 2), (0, 1));
+        assert_eq!(largest_range_centered_on(0, 0, 9, 100), (0, 9));
+
+        assert_eq!(largest_range_centered_on(5, 3, 5, 1), (5, 5));
+        assert_eq!(largest_range_centered_on(5, 3, 5, 2), (4, 5));
+        assert_eq!(largest_range_centered_on(5, 3, 5, 100), (3, 5));
     }
 }
