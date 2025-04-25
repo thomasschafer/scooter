@@ -156,6 +156,24 @@ where
     }
 }
 
+#[allow(dead_code)]
+pub fn last_n<T>(vec: &[T], n: usize) -> &[T] {
+    &vec[vec.len().saturating_sub(n)..]
+}
+
+pub fn last_n_chars(s: &str, n: usize) -> &str {
+    if n == 0 || s.is_empty() {
+        return "";
+    }
+    let char_count = s.chars().count();
+    if n >= char_count {
+        return s;
+    }
+
+    let (idx, _) = s.char_indices().rev().nth(n - 1).unwrap();
+    &s[idx..]
+}
+
 /// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
 /// and no larger than `max_size`.
 ///
@@ -920,5 +938,83 @@ mod tests {
         assert_eq!(largest_range_centered_on(5, 3, 5, 1), (5, 5));
         assert_eq!(largest_range_centered_on(5, 3, 5, 2), (4, 5));
         assert_eq!(largest_range_centered_on(5, 3, 5, 100), (3, 5));
+    }
+
+    #[test]
+    fn test_last_n_empty() {
+        let vec: Vec<usize> = vec![];
+        assert_eq!(last_n(&vec, 0), &(vec![] as Vec<usize>));
+        assert_eq!(last_n(&vec, 3), &(vec![] as Vec<usize>));
+    }
+
+    #[test]
+    fn test_last_n_non_empty() {
+        let vec = (0..10).collect::<Vec<usize>>();
+        assert_eq!(last_n(&vec, 0), &(vec![] as Vec<usize>));
+        assert_eq!(last_n(&vec, 1), &vec![9]);
+        assert_eq!(last_n(&vec, 3), &vec![7, 8, 9]);
+        assert_eq!(last_n(&vec, 10), &vec);
+        assert_eq!(last_n(&vec, 200), &vec);
+    }
+
+    #[test]
+    fn test_last_string_n_empty() {
+        let s = "".chars().collect::<Vec<_>>();
+        assert_eq!(last_n(&s, 0), &(vec![] as Vec<char>));
+        assert_eq!(last_n(&s, 3), &(vec![] as Vec<char>));
+    }
+
+    #[test]
+    fn test_last_n_string_non_empty() {
+        let s = "abcdefghijkl".chars().collect::<Vec<_>>();
+        assert_eq!(last_n(&s, 0), "".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 1), "l".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 3), "jkl".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 10), "cdefghijkl".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 12), "abcdefghijkl".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 13), "abcdefghijkl".chars().collect::<Vec<_>>());
+        assert_eq!(last_n(&s, 200), "abcdefghijkl".chars().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_empty_string() {
+        assert_eq!(last_n_chars("", 5), "");
+    }
+
+    #[test]
+    fn test_zero_chars() {
+        assert_eq!(last_n_chars("hello", 0), "");
+    }
+
+    #[test]
+    fn test_ascii_full_string() {
+        assert_eq!(last_n_chars("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_ascii_partial_string() {
+        assert_eq!(last_n_chars("hello", 3), "llo");
+    }
+
+    #[test]
+    fn test_ascii_more_than_string() {
+        assert_eq!(last_n_chars("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_unicode_chars() {
+        assert_eq!(last_n_chars("héllö wörld", 5), "wörld");
+    }
+
+    #[test]
+    fn test_multibyte_chars() {
+        let s = "こんにちは世界";
+        assert_eq!(last_n_chars(s, 2), "世界");
+    }
+
+    #[test]
+    fn test_emoji() {
+        let s = "Hello 👋 World 🌍";
+        assert_eq!(last_n_chars(s, 9), "👋 World 🌍");
     }
 }

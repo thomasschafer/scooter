@@ -24,8 +24,8 @@ use crate::{
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
-        group_by, largest_range_centered_on, read_lines_range, read_lines_range_highlighted,
-        relative_path_from, strip_control_chars,
+        group_by, largest_range_centered_on, last_n_chars, read_lines_range,
+        read_lines_range_highlighted, relative_path_from, strip_control_chars,
     },
 };
 
@@ -180,7 +180,7 @@ fn render_confirmation_view(
             .areas(area);
     let results_area = if split_view {
         // TODO: can we apply this padding to all views without losing space on other screens?
-        let [results_area, _]: [Rect; 2] =
+        let [results_area, _] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
         results_area
     } else {
@@ -444,6 +444,8 @@ fn search_result<'a>(
     }
 }
 
+static TRUNCATION_PREFIX: &str = "…";
+
 fn file_path_line<'a>(
     idx: usize,
     result: &SearchResult,
@@ -470,10 +472,17 @@ fn file_path_line<'a>(
         relative_path_from(base_path, &result.path),
         result.line_number,
     );
-    let centre_content = centre_content
-        .chars()
-        .take((list_area_width as usize).saturating_sub(left_content_len + right_content_len))
-        .collect::<String>();
+    let centre_content_space =
+        (list_area_width as usize).saturating_sub(left_content_len + right_content_len);
+    let centre_content = if centre_content.len() > centre_content_space {
+        let truncated = last_n_chars(
+            &centre_content,
+            centre_content_space - TRUNCATION_PREFIX.chars().count(),
+        );
+        format!("{TRUNCATION_PREFIX}{truncated}").to_string()
+    } else {
+        centre_content
+    };
     let spacers = " ".repeat(
         (list_area_width as usize)
             .saturating_sub(left_content_len + centre_content.len() + right_content_len),

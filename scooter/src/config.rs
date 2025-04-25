@@ -49,6 +49,7 @@ pub struct Config {
     pub editor_open: Option<EditorOpenConfig>,
     pub preview: Option<PreviewConfig>,
 }
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EditorOpenConfig {
@@ -64,7 +65,6 @@ pub struct EditorOpenConfig {
     pub exit: bool,
 }
 
-// TODO: test with some present, others not
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewConfig {
@@ -121,7 +121,7 @@ where
 impl Config {
     /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
     /// is the user's selected theme or otherwise the default
-    // TODO(config): make it easier to get default - refactor Config, then delete this whole method?
+    // TODO(config): make it easier to get default - refactor Config, then simplify this whole method
     pub(crate) fn get_theme(&self) -> Option<&Theme> {
         match &self.preview {
             Some(p) if p.syntax_highlighting => Some(&p.syntax_highlighting_theme),
