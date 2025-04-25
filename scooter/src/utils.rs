@@ -93,7 +93,7 @@ pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec
     Ok(lines)
 }
 
-static SYNTAX_HIGHLIGHTING_CONTEXT_LEN: usize = 20;
+static SYNTAX_HIGHLIGHTING_CONTEXT_LEN: usize = 100;
 
 #[allow(clippy::type_complexity)]
 pub fn read_lines_range_highlighted(

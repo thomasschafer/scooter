@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use itertools::Itertools;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
@@ -15,7 +14,7 @@ use std::{
     sync::OnceLock,
 };
 use syntect::{
-    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme, ThemeSet},
+    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
 };
 
@@ -24,7 +23,6 @@ use crate::{
         App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
-    config::SyntaxHighlightingTheme,
     utils::{
         group_by, largest_range_centered_on, read_lines_range, read_lines_range_highlighted,
         relative_path_from, strip_control_chars,
@@ -168,7 +166,7 @@ fn render_confirmation_view(
     search_state: &mut SearchState,
     base_path: PathBuf,
     area: Rect,
-    theme: Option<SyntaxHighlightingTheme>,
+    theme: Option<&Theme>,
 ) {
     let split_view = area.width >= 130;
     let area = if !split_view {
@@ -281,21 +279,7 @@ fn build_search_results(
         .collect()
 }
 
-static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-
-fn get_theme(theme: SyntaxHighlightingTheme) -> anyhow::Result<Theme> {
-    let themes = THEME_SET.get_or_init(ThemeSet::load_defaults);
-    // TODO: allow overriding with config
-    let theme_name = theme.to_theme_string();
-    match themes.themes.get(&theme_name) {
-        Some(theme) => Ok(theme.clone()),
-        None => Err(anyhow!(
-            "Could not find theme {theme_name}, found {:?}",
-            themes.themes.keys()
-        )),
-    }
-}
 
 fn to_ratatui_colour(colour: SyntectColour) -> Color {
     Color::Rgb(colour.r, colour.g, colour.b)
@@ -341,21 +325,20 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
 fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
-    syntax_highlighting_theme: Option<SyntaxHighlightingTheme>,
+    syntax_highlighting_theme: Option<&Theme>,
 ) -> List<'a> {
     let line_idx = selected.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
     if let Some(theme) = syntax_highlighting_theme {
-        let theme = get_theme(theme).unwrap();
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
 
         let lines = read_lines_range_highlighted(
             &selected.search_result.path,
             start,
             end,
-            &theme,
+            theme,
             syntax_set,
         )
         .unwrap();

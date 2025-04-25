@@ -161,7 +161,8 @@ The following options can be set in your configuration file:
 
 #### `command`
 
-The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced
+with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
 ```toml
 [editor_open]
 command = "vi %file +%line"
@@ -179,8 +180,17 @@ Whether to apply syntax highlighting to the preview.
 
 #### `syntax_highlighting_theme`
 
-The theme to use when syntax highlighting is enabled. Default is `base16_eighties_dark`, other options are
-`base16_ocean_dark`, `base16_mocha_dark`, `base16_ocean_light`, `inspired_github`, `solarized_dark` or `solarized_light`.
+The theme to use when syntax highlighting is enabled.
+
+The default is `"base16-eighties.dark"`. Other built-in options are
+`"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
+
+You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
+and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+```sh
+wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
+```
+and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
 <!-- CONFIG END -->
 
