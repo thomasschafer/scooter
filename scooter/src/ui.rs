@@ -325,7 +325,7 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
 fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
-    syntax_highlighting_theme: Option<&Theme>,
+    syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
 ) -> List<'a> {
     let line_idx = selected.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);

@@ -93,8 +93,6 @@ pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec
     Ok(lines)
 }
 
-static SYNTAX_HIGHLIGHTING_CONTEXT_LEN: usize = 100;
-
 #[allow(clippy::type_complexity)]
 pub fn read_lines_range_highlighted(
     path: &Path,
@@ -113,13 +111,7 @@ pub fn read_lines_range_highlighted(
 
     let mut highlighter = HighlightLines::new(syntax_ref, theme);
 
-    // Get additional lines before start for context when syntax highlighting - ideally we would read
-    // entire file but this would be slow
-    let lines = read_lines_range(
-        path,
-        start.saturating_sub(SYNTAX_HIGHLIGHTING_CONTEXT_LEN),
-        end,
-    )?;
+    let lines = read_lines_range(path, 0, end)?;
     let lines = lines
         .iter()
         .skip_while(|(idx, _)| *idx < start)
