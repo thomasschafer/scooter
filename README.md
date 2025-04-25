@@ -171,6 +171,17 @@ command = "vi %file +%line"
 
 Whether to exit after running the command defined by `editor_open.command`.
 
+### `[preview]` section
+
+#### `syntax_highlighting`
+
+Whether to apply syntax highlighting to the preview.
+
+#### `syntax_highlighting_theme`
+
+The theme to use when syntax highlighting is enabled. Default is `base16_eighties_dark`, other options are
+`base16_ocean_dark`, `base16_mocha_dark`, `base16_ocean_light`, `inspired_github`, `solarized_dark` or `solarized_light`.
+
 <!-- CONFIG END -->
 
 

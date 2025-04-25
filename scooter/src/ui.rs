@@ -24,6 +24,7 @@ use crate::{
         App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
         SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
+    config::SyntaxHighlightingTheme,
     utils::{
         group_by, largest_range_centered_on, read_lines_range, read_lines_range_highlighted,
         relative_path_from, strip_control_chars,
@@ -167,6 +168,7 @@ fn render_confirmation_view(
     search_state: &mut SearchState,
     base_path: PathBuf,
     area: Rect,
+    theme: Option<SyntaxHighlightingTheme>,
 ) {
     let split_view = area.width >= 130;
     let area = if !split_view {
@@ -236,7 +238,7 @@ fn render_confirmation_view(
                 .find(|s| s.is_selected)
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
-            let preview = build_preview_list(lines_to_show, selected, true);
+            let preview = build_preview_list(lines_to_show, selected, theme);
             frame.render_widget(preview, preview_area);
         }
     } else {
@@ -282,11 +284,11 @@ fn build_search_results(
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
-fn get_theme() -> anyhow::Result<Theme> {
-    let theme_name = "base16-eighties.dark";
+fn get_theme(theme: SyntaxHighlightingTheme) -> anyhow::Result<Theme> {
     let themes = THEME_SET.get_or_init(ThemeSet::load_defaults);
     // TODO: allow overriding with config
-    match themes.themes.get(theme_name) {
+    let theme_name = theme.to_theme_string();
+    match themes.themes.get(&theme_name) {
         Some(theme) => Ok(theme.clone()),
         None => Err(anyhow!(
             "Could not find theme {theme_name}, found {:?}",
@@ -339,14 +341,14 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
 fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
-    syntax_highlight: bool,
+    syntax_highlighting_theme: Option<SyntaxHighlightingTheme>,
 ) -> List<'a> {
     let line_idx = selected.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
-    if syntax_highlight {
-        let theme = get_theme().unwrap();
+    if let Some(theme) = syntax_highlighting_theme {
+        let theme = get_theme(theme).unwrap();
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
 
         let lines = read_lines_range_highlighted(
@@ -667,10 +669,24 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     match &mut app.current_screen {
         Screen::SearchFields => render_search_view(frame, app, content_area),
         Screen::SearchProgressing(ref mut s) => {
-            render_confirmation_view(frame, false, &mut s.search_state, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                false,
+                &mut s.search_state,
+                base_path,
+                content_area,
+                app.config.get_theme(),
+            );
         }
         Screen::SearchComplete(ref mut s) => {
-            render_confirmation_view(frame, true, s, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                true,
+                s,
+                base_path,
+                content_area,
+                app.config.get_theme(),
+            );
         }
         Screen::PerformingReplacement(_) => {
             render_loading_view("Performing replacement...".to_owned())(frame, app, content_area);
