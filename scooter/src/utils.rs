@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Lines},
     ops::{Add, Div, Mul, Rem},
     path::{Path, PathBuf},
 };
@@ -77,61 +77,118 @@ where
     a / b + T::from((a * b > T::from(0)) && (a % b) != T::from(0))
 }
 
-pub fn read_lines_range(path: &Path, start: usize, end: usize) -> io::Result<Vec<(usize, String)>> {
+pub fn read_lines_range(
+    path: &Path,
+    start: usize,
+    end: usize,
+) -> io::Result<impl Iterator<Item = (usize, String)>> {
     if start > end {
         panic!("Expected start <= end, found start={start}, end={end}");
     }
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
+
     let lines = reader
         .lines()
         .enumerate()
         .skip(start)
         .take(end - start + 1)
-        .map(|(idx, line)| (idx, line.unwrap()))
-        .collect();
+        .map(|(idx, line)| (idx, line.unwrap()));
+
     Ok(lines)
 }
 
-#[allow(clippy::type_complexity)]
-pub fn read_lines_range_highlighted(
-    path: &Path,
-    start: usize,
-    end: usize,
-    theme: &Theme,
-    syntax_set: &SyntaxSet,
-) -> io::Result<Vec<(usize, Vec<(Option<Style>, String)>)>> {
-    if start > end {
-        panic!("Expected start <= end, found start={start}, end={end}");
+pub type HighlightedLine = Vec<(Option<Style>, String)>;
+
+struct HighlightedLinesIterator<'a> {
+    lines: Lines<BufReader<File>>,
+    highlighter: HighlightLines<'a>,
+    syntax_set: &'a SyntaxSet,
+    current_idx: usize,
+    start_idx: usize,
+    end_idx: Option<usize>,
+    full_highlighting: bool,
+}
+
+impl Iterator for HighlightedLinesIterator<'_> {
+    type Item = (usize, HighlightedLine);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(end) = self.end_idx {
+            if self.current_idx > end {
+                return None;
+            }
+        }
+
+        for line_result in self.lines.by_ref() {
+            let idx = self.current_idx;
+            self.current_idx += 1;
+
+            match line_result {
+                Ok(line) => {
+                    if !self.full_highlighting && idx < self.start_idx {
+                        continue;
+                    }
+
+                    let highlighted = match self.highlighter.highlight_line(&line, self.syntax_set)
+                    {
+                        Ok(line) => line
+                            .into_iter()
+                            .map(|(style, text)| (Some(style), text.to_string()))
+                            .collect(),
+                        Err(e) => {
+                            log::error!("Error when highlighting line {line}: {e}");
+                            vec![(None, line.to_owned())]
+                        }
+                    };
+
+                    if idx >= self.start_idx {
+                        return Some((idx, highlighted));
+                    }
+                }
+                Err(e) => {
+                    log::error!("Error reading line: {e}");
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+}
+
+pub fn read_lines_range_highlighted<'a>(
+    path: &'a Path,
+    start: Option<usize>,
+    end: Option<usize>,
+    theme: &'a Theme,
+    syntax_set: &'a SyntaxSet,
+    full_highlighting: bool,
+) -> io::Result<impl Iterator<Item = (usize, HighlightedLine)> + 'a> {
+    let start = start.unwrap_or(0);
+    if let Some(end_idx) = end {
+        if start > end_idx {
+            panic!("Expected start <= end, found start={start}, end={end_idx}");
+        }
     }
 
     let syntax_ref = syntax_set
         .find_syntax_for_file(path)?
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
-    let mut highlighter = HighlightLines::new(syntax_ref, theme);
+    let file = File::open(path)?;
 
-    let lines = read_lines_range(path, 0, end)?;
-    let lines = lines
-        .iter()
-        .skip_while(|(idx, _)| *idx < start)
-        .take(end - start + 1)
-        .map(|(idx, line)| {
-            let highlighted = match highlighter.highlight_line(line, syntax_set) {
-                Ok(l) => l
-                    .into_iter()
-                    .map(|(style, text)| (Some(style), text.to_string()))
-                    .collect(),
-                Err(e) => {
-                    log::error!("Error when highlighting line {line}: {e}");
-                    vec![(None, line.clone())]
-                }
-            };
-            (*idx, highlighted)
-        })
-        .collect();
-
-    Ok(lines)
+    let iterator = HighlightedLinesIterator {
+        lines: BufReader::new(file).lines(),
+        highlighter: HighlightLines::new(syntax_ref, theme),
+        syntax_set,
+        current_idx: 0,
+        start_idx: start,
+        end_idx: end,
+        full_highlighting,
+    };
+    Ok(iterator)
 }
 
 pub fn strip_control_chars(text: &str) -> String {
@@ -504,7 +561,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 1, 3).unwrap();
+        let result = read_lines_range(path, 1, 3).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -522,7 +579,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 2, 2).unwrap();
+        let result = read_lines_range(path, 2, 2).unwrap().collect::<Vec<_>>();
 
         assert_eq!(result, vec![(2, "line3".to_string())]);
     }
@@ -533,7 +590,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 0, 2).unwrap();
+        let result = read_lines_range(path, 0, 2).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -551,7 +608,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 3, 4).unwrap();
+        let result = read_lines_range(path, 3, 4).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -565,7 +622,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 0, 4).unwrap();
+        let result = read_lines_range(path, 0, 4).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -585,7 +642,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 0, 2).unwrap();
+        let result = read_lines_range(path, 0, 2).unwrap().collect::<Vec<_>>();
 
         assert_eq!(result, Vec::<(usize, String)>::new());
     }
@@ -596,7 +653,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 1, 10).unwrap();
+        let result = read_lines_range(path, 1, 10).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -610,7 +667,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 5, 10).unwrap();
+        let result = read_lines_range(path, 5, 10).unwrap().collect::<Vec<_>>();
 
         assert_eq!(result, Vec::<(usize, String)>::new());
     }
@@ -631,7 +688,7 @@ mod tests {
         let file = create_test_file(contents);
         let path = file.path();
 
-        let result = read_lines_range(path, 0, 4).unwrap();
+        let result = read_lines_range(path, 0, 4).unwrap().collect::<Vec<_>>();
 
         assert_eq!(
             result,
@@ -681,154 +738,255 @@ mod tests {
 
     #[test]
     fn test_read_lines_in_range_highlighted() {
-        let contents = "line1\nline2\nline3\nline4\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3\nline4\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 1, 3, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(1),
+                Some(3),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![
-                (1, "line2".to_string()),
-                (2, "line3".to_string()),
-                (3, "line4".to_string())
-            ]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![
+                    (1, "line2".to_string()),
+                    (2, "line3".to_string()),
+                    (3, "line4".to_string())
+                ]
+            );
+        }
     }
 
     #[test]
     fn test_read_single_line_highlighted() {
-        let contents = "line1\nline2\nline3\nline4\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3\nline4\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 2, 2, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(2),
+                Some(2),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(extract_text(&result), vec![(2, "line3".to_string())]);
+            assert_eq!(extract_text(&result), vec![(2, "line3".to_string())]);
+        }
     }
 
     #[test]
     fn test_read_from_beginning_highlighted() {
-        let contents = "line1\nline2\nline3\nline4\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3\nline4\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(0),
+                Some(2),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![
-                (0, "line1".to_string()),
-                (1, "line2".to_string()),
-                (2, "line3".to_string())
-            ]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![
+                    (0, "line1".to_string()),
+                    (1, "line2".to_string()),
+                    (2, "line3".to_string())
+                ]
+            );
+        }
     }
 
     #[test]
     fn test_read_to_end_highlighted() {
-        let contents = "line1\nline2\nline3\nline4\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3\nline4\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 3, 4, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(3),
+                Some(4),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![(3, "line4".to_string()), (4, "line5".to_string())]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![(3, "line4".to_string()), (4, "line5".to_string())]
+            );
+        }
     }
 
     #[test]
     fn test_read_all_lines_highlighted() {
-        let contents = "line1\nline2\nline3\nline4\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3\nline4\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 0, 4, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(0),
+                Some(4),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![
-                (0, "line1".to_string()),
-                (1, "line2".to_string()),
-                (2, "line3".to_string()),
-                (3, "line4".to_string()),
-                (4, "line5".to_string())
-            ]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![
+                    (0, "line1".to_string()),
+                    (1, "line2".to_string()),
+                    (2, "line3".to_string()),
+                    (3, "line4".to_string()),
+                    (4, "line5".to_string())
+                ]
+            );
+        }
     }
 
     #[test]
     fn test_empty_file_highlighted() {
-        let contents = "";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(0),
+                Some(2),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
+            assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
+        }
     }
 
     #[test]
     fn test_range_exceeds_file_length_highlighted() {
-        let contents = "line1\nline2\nline3";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 1, 10, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(1),
+                Some(10),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![(1, "line2".to_string()), (2, "line3".to_string())]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![(1, "line2".to_string()), (2, "line3".to_string())]
+            );
+        }
     }
 
     #[test]
     fn test_start_exceeds_file_length_highlighted() {
-        let contents = "line1\nline2\nline3";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 5, 10, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(5),
+                Some(10),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
+            assert_eq!(extract_text(&result), Vec::<(usize, String)>::new());
+        }
     }
 
     #[test]
     #[should_panic(expected = "Expected start <= end")]
     fn test_start_greater_than_end_highlighted() {
-        let contents = "line1\nline2\nline3";
-        let file = create_test_file(contents);
-        let _ = read_lines_range_highlighted(file.path(), 3, 1, &get_theme(), &get_syntax());
+        for full in [true, false] {
+            let contents = "line1\nline2\nline3";
+            let file = create_test_file(contents);
+            let _ = read_lines_range_highlighted(
+                file.path(),
+                Some(3),
+                Some(1),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            );
+        }
     }
 
     #[test]
     fn test_with_empty_lines_highlighted() {
-        let contents = "line1\n\nline3\n\nline5";
-        let file = create_test_file(contents);
+        for full in [true, false] {
+            let contents = "line1\n\nline3\n\nline5";
+            let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 0, 4, &get_theme(), &get_syntax()).unwrap();
+            let result = read_lines_range_highlighted(
+                file.path(),
+                Some(0),
+                Some(4),
+                &get_theme(),
+                &get_syntax(),
+                full,
+            )
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            extract_text(&result),
-            vec![
-                (0, "line1".to_string()),
-                (1, "".to_string()),
-                (2, "line3".to_string()),
-                (3, "".to_string()),
-                (4, "line5".to_string())
-            ]
-        );
+            assert_eq!(
+                extract_text(&result),
+                vec![
+                    (0, "line1".to_string()),
+                    (1, "".to_string()),
+                    (2, "line3".to_string()),
+                    (3, "".to_string()),
+                    (4, "line5".to_string())
+                ]
+            );
+        }
     }
 
     #[test]
     fn test_file_not_found_highlighted() {
         let path = Path::new("non_existent_file.txt");
 
-        let result = read_lines_range_highlighted(path, 0, 5, &get_theme(), &get_syntax());
+        let theme = get_theme();
+        let syntax = get_syntax();
+        let result = read_lines_range_highlighted(path, Some(0), Some(5), &theme, &syntax, true);
 
         assert!(result.is_err());
     }
@@ -838,8 +996,16 @@ mod tests {
         let contents = "fn main() {\n    println!(\"Hello, world!\");\n}";
         let file = create_test_file(contents);
 
-        let result =
-            read_lines_range_highlighted(file.path(), 0, 2, &get_theme(), &get_syntax()).unwrap();
+        let result = read_lines_range_highlighted(
+            file.path(),
+            Some(0),
+            Some(2),
+            &get_theme(),
+            &get_syntax(),
+            true,
+        )
+        .unwrap()
+        .collect::<Vec<_>>();
 
         assert_eq!(
             extract_text(&result),

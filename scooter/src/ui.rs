@@ -25,7 +25,7 @@ use crate::{
     },
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
-        read_lines_range_highlighted, relative_path_from, strip_control_chars,
+        read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
     },
 };
 
@@ -236,8 +236,18 @@ fn render_confirmation_view(
                 .find(|s| s.is_selected)
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
-            let preview = build_preview_list(lines_to_show, selected, theme);
-            frame.render_widget(preview, preview_area);
+
+            match build_preview_list(lines_to_show, selected, theme) {
+                Ok(preview) => {
+                    frame.render_widget(preview, preview_area);
+                }
+                Err(e) => {
+                    frame.render_widget(
+                        Span::raw(format!("Error generating preview:\n{e}")).fg(Color::Red),
+                        preview_area,
+                    );
+                }
+            };
         }
     } else {
         let search_results = List::new(
@@ -322,26 +332,43 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
     ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
+// TODO: kick off highlighting of
+fn read_lines_range_highlighted_with_cache(
+    path: &Path,
+    start: usize,
+    end: usize,
+    theme: &Theme,
+) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
+    let in_cache = false;
+    if in_cache {
+    } else {
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        // let full = read_lines_range_highlighted(path, None, None, theme, syntax_set, false)?;
+        // return Ok(full.skip(start).take(end - start + 1).collect());
+        let full =
+            read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?;
+        return Ok(full.collect());
+    };
+
+    Ok(vec![])
+}
+
 fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
-) -> List<'a> {
+) -> anyhow::Result<List<'a>> {
     let line_idx = selected.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
     if let Some(theme) = syntax_highlighting_theme {
-        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
-
-        let lines = read_lines_range_highlighted(
+        let lines = read_lines_range_highlighted_with_cache(
             &selected.search_result.path,
             start,
             end,
             theme,
-            syntax_set,
-        )
-        .unwrap();
+        )?;
         let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(
             *cur.1.iter().map(|(_, s)| s).join(""),
@@ -359,17 +386,18 @@ fn build_preview_list<'a>(
                 .chain(after.iter().map(|(_, l)| regions_to_line(l))),
         );
         if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
-            list.bg(bg)
+            Ok(list.bg(bg))
         } else {
-            list
+            Ok(list)
         }
     } else {
         let lines = read_lines_range(&selected.search_result.path, start, end)
             .expect("Failed to read file");
-        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
+        let (before, cur, after) =
+            split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(*cur.1, selected.search_result.line);
 
-        List::new(
+        Ok(List::new(
             before
                 .iter()
                 .map(|(_, l)| to_line_plain(l))
@@ -378,7 +406,7 @@ fn build_preview_list<'a>(
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
                 .chain(after.iter().map(|(_, l)| to_line_plain(l))),
-        )
+        ))
     }
 }
 
