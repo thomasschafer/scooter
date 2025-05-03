@@ -111,6 +111,50 @@ struct HighlightedLinesIterator<'a> {
     full_highlighting: bool,
 }
 
+impl<'a> HighlightedLinesIterator<'a> {
+    pub fn new(
+        path: &Path,
+        theme: &'a Theme,
+        syntax_set: &'a SyntaxSet,
+        start_idx: Option<usize>,
+        end_idx: Option<usize>,
+        full_highlighting: bool,
+    ) -> io::Result<Self> {
+        let start_idx = start_idx.unwrap_or(0);
+        if let Some(end_idx) = end_idx {
+            if start_idx > end_idx {
+                panic!("Expected start <= end, found start={start_idx}, end={end_idx}");
+            }
+        }
+
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        if !full_highlighting {
+            for _ in 0..start_idx {
+                if lines.next().is_none() {
+                    break;
+                }
+            }
+        }
+
+        let syntax = syntax_set
+            .find_syntax_for_file(path)?
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+
+        Ok(Self {
+            lines,
+            highlighter: HighlightLines::new(syntax, theme),
+            syntax_set,
+            current_idx: if full_highlighting { 0 } else { start_idx },
+            start_idx,
+            end_idx,
+            full_highlighting,
+        })
+    }
+}
+
 impl Iterator for HighlightedLinesIterator<'_> {
     type Item = (usize, HighlightedLine);
 
@@ -125,35 +169,35 @@ impl Iterator for HighlightedLinesIterator<'_> {
             let idx = self.current_idx;
             self.current_idx += 1;
 
+            debug_assert!(
+                self.full_highlighting || idx >= self.start_idx,
+                "Should have skipped early lines before iteration"
+            );
+
             match line_result {
                 Ok(line) => {
-                    if !self.full_highlighting && idx < self.start_idx {
-                        continue;
-                    }
-
                     let highlighted = match self.highlighter.highlight_line(&line, self.syntax_set)
                     {
                         Ok(line) => line
                             .into_iter()
-                            .map(|(style, text)| (Some(style), text.to_string()))
+                            .map(|(style, text)| (Some(style), text.to_owned()))
                             .collect(),
                         Err(e) => {
-                            log::error!("Error when highlighting line {line}: {e}");
-                            vec![(None, line.to_owned())]
+                            log::error!("Highlighting error at line {idx}: {e}");
+                            vec![(None, line)]
                         }
                     };
-
-                    if idx >= self.start_idx {
-                        return Some((idx, highlighted));
+                    if idx < self.start_idx {
+                        continue;
                     }
+                    return Some((idx, highlighted));
                 }
                 Err(e) => {
-                    log::error!("Error reading line: {e}");
+                    log::error!("Error reading line {}: {e}", self.current_idx);
                     return None;
                 }
             }
         }
-
         None
     }
 }
@@ -166,29 +210,7 @@ pub fn read_lines_range_highlighted<'a>(
     syntax_set: &'a SyntaxSet,
     full_highlighting: bool,
 ) -> io::Result<impl Iterator<Item = (usize, HighlightedLine)> + 'a> {
-    let start = start.unwrap_or(0);
-    if let Some(end_idx) = end {
-        if start > end_idx {
-            panic!("Expected start <= end, found start={start}, end={end_idx}");
-        }
-    }
-
-    let syntax_ref = syntax_set
-        .find_syntax_for_file(path)?
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-
-    let file = File::open(path)?;
-
-    let iterator = HighlightedLinesIterator {
-        lines: BufReader::new(file).lines(),
-        highlighter: HighlightLines::new(syntax_ref, theme),
-        syntax_set,
-        current_idx: 0,
-        start_idx: start,
-        end_idx: end,
-        full_highlighting,
-    };
-    Ok(iterator)
+    HighlightedLinesIterator::new(path, theme, syntax_set, start, end, full_highlighting)
 }
 
 pub fn strip_control_chars(text: &str) -> String {

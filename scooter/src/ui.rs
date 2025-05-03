@@ -341,16 +341,20 @@ fn read_lines_range_highlighted_with_cache(
 ) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
     let in_cache = false;
     if in_cache {
+        // Lookup in cache, pull out window
+        // let full = <read from cache>;
+        // return Ok(full.skip(start).take(end - start + 1).collect());
+        todo!()
     } else {
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
-        // let full = read_lines_range_highlighted(path, None, None, theme, syntax_set, false)?;
-        // return Ok(full.skip(start).take(end - start + 1).collect());
-        let full =
-            read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?;
-        return Ok(full.collect());
-    };
-
-    Ok(vec![])
+        let lines =
+            read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
+                .collect();
+        // Kick off highlighting async
+        // let full = read_lines_range_highlighted(path, None, None, theme, syntax_set, true)?;
+        // Stick full in cache
+        Ok(lines)
+    }
 }
 
 fn build_preview_list<'a>(
