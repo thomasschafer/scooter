@@ -9,19 +9,21 @@ use ratatui::{
 use similar::{Change, ChangeTag, TextDiff};
 use std::{
     cmp::min,
+    collections::HashMap,
     iter,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 use syntect::{
     highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
 };
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{
-        App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
-        SearchResult, SearchState, NUM_SEARCH_FIELDS,
+        App, AppError, AppEvent, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen,
+        SearchField, SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
@@ -167,6 +169,7 @@ fn render_confirmation_view(
     base_path: PathBuf,
     area: Rect,
     theme: Option<&Theme>,
+    event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 120;
     let area = if !split_view {
@@ -237,7 +240,7 @@ fn render_confirmation_view(
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
 
-            match build_preview_list(lines_to_show, selected, theme) {
+            match build_preview_list(lines_to_show, selected, theme, event_sender) {
                 Ok(preview) => {
                     frame.render_widget(preview, preview_area);
                 }
@@ -332,27 +335,63 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
     ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
-// TODO: kick off highlighting of
+type HighlightedLinesCache = Mutex<HashMap<PathBuf, Vec<(usize, HighlightedLine)>>>;
+
+static HIGHLIGHTED_LINES_CACHE: OnceLock<HighlightedLinesCache> = OnceLock::new();
+
+pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
+    HIGHLIGHTED_LINES_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
+    tokio::spawn(async move {
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
+            Ok(full) => full.collect(),
+            Err(e) => {
+                log::error!("Error highlighting file {path:?}: {e}");
+                return;
+            }
+        };
+
+        let cache = highlighted_lines_cache();
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.insert(path, full);
+
+        if let Err(e) = event_sender.send(Event::App(AppEvent::Rerender)) {
+            log::error!("Error sending rerender event in spawn_highlight_full_file: {e}");
+        }
+    });
+}
+
 fn read_lines_range_highlighted_with_cache(
     path: &Path,
     start: usize,
     end: usize,
     theme: &Theme,
+    event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
-    let in_cache = false;
-    if in_cache {
-        // Lookup in cache, pull out window
-        // let full = <read from cache>;
-        // return Ok(full.skip(start).take(end - start + 1).collect());
-        todo!()
+    let cache = highlighted_lines_cache();
+    let cache_guard = cache.lock().unwrap();
+
+    if let Some(cached_lines) = cache_guard.get(path) {
+        let lines = cached_lines
+            .iter()
+            .skip(start)
+            .take(end - start + 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(lines)
     } else {
+        drop(cache_guard);
+
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
         let lines =
             read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
                 .collect();
-        // Kick off highlighting async
-        // let full = read_lines_range_highlighted(path, None, None, theme, syntax_set, true)?;
-        // Stick full in cache
+
+        spawn_highlight_full_file(path.to_path_buf(), theme.clone(), event_sender);
+
         Ok(lines)
     }
 }
@@ -361,6 +400,7 @@ fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
+    event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
     let line_idx = selected.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
@@ -372,6 +412,7 @@ fn build_preview_list<'a>(
             start,
             end,
             theme,
+            event_sender,
         )?;
         let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
         assert_eq!(
@@ -700,6 +741,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.event_sender.clone(),
             );
         }
         Screen::SearchComplete(ref mut s) => {
@@ -710,6 +752,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.event_sender.clone(),
             );
         }
         Screen::PerformingReplacement(_) => {
