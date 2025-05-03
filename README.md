@@ -8,6 +8,9 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ![Scooter preview](media/preview.gif)
 
+You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
+
+![Scooter with Catppuccin Macchiato theme](media/preview_catppuccin_macchiato.png)
 
 ## Contents
 
