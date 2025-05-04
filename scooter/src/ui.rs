@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use lru::LruCache;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -9,8 +10,8 @@ use ratatui::{
 use similar::{Change, ChangeTag, TextDiff};
 use std::{
     cmp::min,
-    collections::HashMap,
     iter,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
@@ -335,12 +336,15 @@ fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
     ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
 }
 
-type HighlightedLinesCache = Mutex<HashMap<PathBuf, Vec<(usize, HighlightedLine)>>>;
+type HighlightedLinesCache = Mutex<LruCache<PathBuf, Vec<(usize, HighlightedLine)>>>;
 
 static HIGHLIGHTED_LINES_CACHE: OnceLock<HighlightedLinesCache> = OnceLock::new();
 
 pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
-    HIGHLIGHTED_LINES_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    HIGHLIGHTED_LINES_CACHE.get_or_init(|| {
+        let cache_capacity = NonZeroUsize::new(200).unwrap();
+        Mutex::new(LruCache::new(cache_capacity))
+    })
 }
 
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
@@ -357,7 +361,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
 
         let cache = highlighted_lines_cache();
         let mut cache_guard = cache.lock().unwrap();
-        cache_guard.insert(path, full);
+        cache_guard.put(path, full);
 
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::App(AppEvent::Rerender));
@@ -372,7 +376,7 @@ fn read_lines_range_highlighted_with_cache(
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
     let cache = highlighted_lines_cache();
-    let cache_guard = cache.lock().unwrap();
+    let mut cache_guard = cache.lock().unwrap();
 
     if let Some(cached_lines) = cache_guard.get(path) {
         let lines = cached_lines
