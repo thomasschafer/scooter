@@ -93,6 +93,44 @@ pub struct SearchState {
 }
 
 impl SearchState {
+    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('j') | KeyCode::Down, _)
+            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                self.move_selected_down();
+            }
+            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.move_selected_up();
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_half_page();
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_full_page();
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_half_page();
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_full_page();
+            }
+            (KeyCode::Char('g'), _) => {
+                self.move_selected_top();
+            }
+            (KeyCode::Char('G'), _) => {
+                self.move_selected_bottom();
+            }
+            (KeyCode::Char(' '), _) => {
+                self.toggle_selected_inclusion();
+            }
+            (KeyCode::Char('a'), _) => {
+                self.toggle_all_selected();
+            }
+            _ => {}
+        };
+        false
+    }
+
     pub(crate) fn selected(&self) -> usize {
         self.selected
     }
@@ -802,57 +840,22 @@ impl App {
         false
     }
 
-    fn handle_key_confirmation(&mut self, key: &KeyEvent) -> bool {
+    /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
+    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<bool> {
+        if matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        ) {
+            panic!(
+                "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
+                self.current_screen
+            );
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down();
-            }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                self.current_screen.search_results_mut().move_selected_up();
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down_half_page();
-            }
-            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down_full_page();
-            }
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_up_half_page();
-            }
-            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_up_full_page();
-            }
-            (KeyCode::Char('g'), _) => {
-                self.current_screen.search_results_mut().move_selected_top();
-            }
-            (KeyCode::Char('G'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_bottom();
-            }
-            (KeyCode::Char(' '), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_selected_inclusion();
-            }
-            (KeyCode::Char('a'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_all_selected();
-            }
             (KeyCode::Enter, _) => {
                 self.trigger_replacement();
+                Some(false)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
@@ -860,6 +863,7 @@ impl App {
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
+                Some(false)
             }
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
                 let selected = self.current_screen.search_results_mut().selected_field();
@@ -869,10 +873,10 @@ impl App {
                         selected.line_number,
                     )))
                     .unwrap();
+                Some(false)
             }
-            _ => {}
-        };
-        false
+            _ => None,
+        }
     }
 
     pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
@@ -904,7 +908,20 @@ impl App {
         let exit = match &mut self.current_screen {
             Screen::SearchFields => self.handle_key_searching(key),
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                self.handle_key_confirmation(key)
+                if let Some(rerender) = self.try_handle_key_search(key) {
+                    rerender
+                } else {
+                    match &mut self.current_screen {
+                        Screen::SearchProgressing(SearchInProgressState {
+                            search_state, ..
+                        }) => search_state.handle_key(key),
+                        Screen::SearchComplete(search_state) => search_state.handle_key(key),
+                        screen => panic!(
+                            "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
+                            screen
+                        ),
+                    }
+                }
             }
             Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
