@@ -176,20 +176,24 @@ impl Iterator for HighlightedLinesIterator<'_> {
 
             match line_result {
                 Ok(line) => {
-                    let highlighted = match self.highlighter.highlight_line(&line, self.syntax_set)
-                    {
+                    let highlighted_res = self.highlighter.highlight_line(&line, self.syntax_set);
+                    if let Err(ref e) = highlighted_res {
+                        log::error!("Highlighting error at line {idx}: {e}");
+                    }
+
+                    if idx < self.start_idx {
+                        continue;
+                    }
+
+                    let highlighted = match highlighted_res {
                         Ok(line) => line
                             .into_iter()
                             .map(|(style, text)| (Some(style), text.to_owned()))
                             .collect(),
-                        Err(e) => {
-                            log::error!("Highlighting error at line {idx}: {e}");
+                        Err(_) => {
                             vec![(None, line)]
                         }
                     };
-                    if idx < self.start_idx {
-                        continue;
-                    }
                     return Some((idx, highlighted));
                 }
                 Err(e) => {
@@ -254,7 +258,7 @@ pub fn last_n_chars(s: &str, n: usize) -> &str {
 }
 
 /// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
-/// and no larger than `max_size`.
+/// and is no larger than `max_size`.
 ///
 /// # Example
 /// ```

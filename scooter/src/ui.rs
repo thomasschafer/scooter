@@ -344,6 +344,7 @@ pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
 }
 
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
+    // TODO: cancel thread if app closes
     tokio::spawn(async move {
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
         let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
@@ -358,9 +359,8 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
         let mut cache_guard = cache.lock().unwrap();
         cache_guard.insert(path, full);
 
-        if let Err(e) = event_sender.send(Event::App(AppEvent::Rerender)) {
-            log::error!("Error sending rerender event in spawn_highlight_full_file: {e}");
-        }
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::App(AppEvent::Rerender));
     });
 }
 
