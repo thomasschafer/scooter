@@ -8,6 +8,9 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ![Scooter preview](media/preview.gif)
 
+You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
+
+![Scooter with Catppuccin Macchiato theme](media/preview_catppuccin_macchiato.png)
 
 ## Contents
 
@@ -161,7 +164,8 @@ The following options can be set in your configuration file:
 
 #### `command`
 
-The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced
+with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
 ```toml
 [editor_open]
 command = "vi %file +%line"
@@ -170,6 +174,26 @@ command = "vi %file +%line"
 #### `exit`
 
 Whether to exit after running the command defined by `editor_open.command`.
+
+### `[preview]` section
+
+#### `syntax_highlighting`
+
+Whether to apply syntax highlighting to the preview.
+
+#### `syntax_highlighting_theme`
+
+The theme to use when syntax highlighting is enabled.
+
+The default is `"base16-eighties.dark"`. Other built-in options are
+`"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
+
+You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
+and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+```sh
+wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
+```
+and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
 <!-- CONFIG END -->
 

@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use lru::LruCache;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -9,16 +10,26 @@ use ratatui::{
 use similar::{Change, ChangeTag, TextDiff};
 use std::{
     cmp::min,
-    iter,
+    fs, iter,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
+use syntect::{
+    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
+    parsing::SyntaxSet,
+};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{
-        App, AppError, FieldName, Popup, ReplaceResult, ReplaceState, Screen, SearchField,
-        SearchResult, SearchState, NUM_SEARCH_FIELDS,
+        App, AppError, AppEvent, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen,
+        SearchField, SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
-    utils::{group_by, relative_path_from},
+    utils::{
+        group_by, largest_range_centered_on, last_n_chars, read_lines_range,
+        read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
+    },
 };
 
 impl FieldName {
@@ -36,6 +47,7 @@ impl FieldName {
 }
 
 fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
+    let area = default_width(area);
     let areas: [Rect; NUM_SEARCH_FIELDS] = Layout::vertical(iter::repeat_n(
         Constraint::Length(3),
         app.search_fields.fields.len(),
@@ -69,27 +81,30 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     }
 }
 
-fn strip_control_chars(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\t' => String::from("  "),
-            '\n' => String::from(" "),
-            c if c.is_control() => String::from("�"),
-            c => String::from(c),
-        })
-        .collect()
+fn default_width(area: Rect) -> Rect {
+    width(area, 80)
+}
+
+fn width(area: Rect, percentage: u16) -> Rect {
+    let [area] = Layout::horizontal([Constraint::Percentage(percentage)])
+        .flex(Flex::Center)
+        .areas(area);
+    area
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Diff {
     pub text: String,
     pub fg_colour: Color,
-    pub bg_colour: Color,
+    pub bg_colour: Option<Color>,
 }
 
 fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
-        let style = Style::new().fg(d.fg_colour).bg(d.bg_colour);
+        let mut style = Style::new().fg(d.fg_colour);
+        if let Some(bg) = d.bg_colour {
+            style = style.bg(bg)
+        };
         Span::styled(strip_control_chars(&d.text), style)
     });
     Line::from_iter(diff_iter)
@@ -104,12 +119,12 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
     let mut old_spans = vec![Diff {
         text: "- ".to_owned(),
         fg_colour: Color::Red,
-        bg_colour: Color::Reset,
+        bg_colour: None,
     }];
     let mut new_spans = vec![Diff {
         text: "+ ".to_owned(),
         fg_colour: Color::Green,
-        bg_colour: Color::Reset,
+        bg_colour: None,
     }];
 
     for change_group in group_by(diff.iter_all_changes(), |c1, c2| c1.tag() == c2.tag()) {
@@ -120,26 +135,26 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
                 old_spans.push(Diff {
                     text,
                     fg_colour: Color::Black,
-                    bg_colour: Color::Red,
+                    bg_colour: Some(Color::Red),
                 });
             }
             ChangeTag::Insert => {
                 new_spans.push(Diff {
                     text,
                     fg_colour: Color::Black,
-                    bg_colour: Color::Green,
+                    bg_colour: Some(Color::Green),
                 });
             }
             ChangeTag::Equal => {
                 old_spans.push(Diff {
                     text: text.clone(),
                     fg_colour: Color::Red,
-                    bg_colour: Color::Reset,
+                    bg_colour: None,
                 });
                 new_spans.push(Diff {
                     text,
                     fg_colour: Color::Green,
-                    bg_colour: Color::Reset,
+                    bg_colour: None,
                 });
             }
         };
@@ -154,14 +169,29 @@ fn render_confirmation_view(
     search_state: &mut SearchState,
     base_path: PathBuf,
     area: Rect,
+    theme: Option<&Theme>,
+    event_sender: UnboundedSender<Event>,
 ) {
-    let [num_results_area, list_area] =
+    let split_view = area.width >= 120;
+    let area = if !split_view {
+        default_width(area)
+    } else {
+        width(area, 90)
+    };
+    let [num_results_area, results_area] =
         Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
             .flex(Flex::Start)
             .areas(area);
+    let results_area = if split_view {
+        // TODO: can we apply this padding to all views without losing space on other screens?
+        let [results_area, _] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
+        results_area
+    } else {
+        results_area
+    };
 
-    let list_area_height = list_area.height as usize;
-    let item_height = 4; // TODO: find a better way of doing this
+    let list_area_height = results_area.height as usize;
     let num_results = search_state.results.len();
 
     frame.render_widget(
@@ -177,6 +207,7 @@ fn render_confirmation_view(
         num_results_area,
     );
 
+    let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
     let num_to_render = list_area_height / item_height;
     search_state.num_displayed = Some(num_to_render);
     if search_state.selected() < search_state.view_offset + 1 {
@@ -190,32 +221,303 @@ fn render_confirmation_view(
         );
     }
 
-    let search_results = search_state
+    if split_view {
+        let [list_area, _, preview_area] = Layout::horizontal([
+            Constraint::Fill(2),
+            Constraint::Length(1),
+            Constraint::Fill(3),
+        ])
+        .areas(results_area);
+        let search_results =
+            build_search_results(search_state, base_path, list_area.width, num_to_render);
+        let search_results_list = search_results
+            .iter()
+            .flat_map(|SearchResultLines { file_path, .. }| vec![ListItem::new(file_path.clone())]);
+        frame.render_widget(List::new(search_results_list), list_area);
+        if !search_results.is_empty() {
+            let selected = search_results
+                .iter()
+                .find(|s| s.is_selected)
+                .expect("Selected item should be in view");
+            let lines_to_show = preview_area.height as usize;
+
+            match build_preview_list(lines_to_show, selected, theme, event_sender) {
+                Ok(preview) => {
+                    frame.render_widget(preview, preview_area);
+                }
+                Err(e) => {
+                    frame.render_widget(
+                        Span::raw(format!("Error generating preview:\n{e}")).fg(Color::Red),
+                        preview_area,
+                    );
+                }
+            };
+        }
+    } else {
+        let search_results = List::new(
+            build_search_results(search_state, base_path, results_area.width, num_to_render)
+                .into_iter()
+                .flat_map(
+                    |SearchResultLines {
+                         file_path,
+                         old_line_diff,
+                         new_line_diff,
+                         ..
+                     }| {
+                        vec![
+                            ListItem::new(file_path),
+                            ListItem::new(old_line_diff),
+                            ListItem::new(new_line_diff),
+                            ListItem::new(""),
+                        ]
+                    },
+                ),
+        );
+        frame.render_widget(search_results, results_area);
+    }
+}
+
+fn build_search_results(
+    search_state: &mut SearchState,
+    base_path: PathBuf,
+    width: u16,
+    num_to_render: usize,
+) -> Vec<SearchResultLines<'_>> {
+    search_state
         .results
         .iter()
         .enumerate()
         .skip(search_state.view_offset)
         .take(num_to_render)
-        .flat_map(|(idx, result)| {
-            render_search_result(
-                idx,
-                search_state.selected(),
-                result,
-                &base_path,
-                list_area.width,
-            )
-        });
-
-    frame.render_widget(List::new(search_results), list_area);
+        .map(|(idx, result)| search_result(idx, search_state.selected(), result, &base_path, width))
+        .collect()
 }
 
-fn render_search_result<'a>(
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+
+fn to_ratatui_colour(colour: SyntectColour) -> Color {
+    Color::Rgb(colour.r, colour.g, colour.b)
+}
+
+fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
+    let mut ratatui_style = Style::default()
+        .fg(to_ratatui_colour(syntect_style.foreground))
+        .bg(to_ratatui_colour(syntect_style.background));
+
+    if syntect_style.font_style.contains(FontStyle::BOLD) {
+        ratatui_style = ratatui_style.bold();
+    }
+    if syntect_style.font_style.contains(FontStyle::ITALIC) {
+        ratatui_style = ratatui_style.italic();
+    }
+    if syntect_style.font_style.contains(FontStyle::UNDERLINE) {
+        ratatui_style = ratatui_style.underlined();
+    }
+    ratatui_style
+}
+
+fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
+    let prefix = "  ";
+    ListItem::new(Line::from_iter(iter::once(Span::raw(prefix)).chain(
+        line.iter().map(|(style, s)| {
+            Span::styled(
+                strip_control_chars(s),
+                match style {
+                    Some(style) => convert_syntect_to_ratatui_style(style),
+                    None => Style::default(),
+                },
+            )
+        }),
+    )))
+}
+
+fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
+    let prefix = "  ";
+    ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
+}
+
+type HighlightedLinesCache = Mutex<LruCache<PathBuf, Vec<(usize, HighlightedLine)>>>;
+
+static HIGHLIGHTED_LINES_CACHE: OnceLock<HighlightedLinesCache> = OnceLock::new();
+
+pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
+    HIGHLIGHTED_LINES_CACHE.get_or_init(|| {
+        let cache_capacity = NonZeroUsize::new(200).unwrap();
+        Mutex::new(LruCache::new(cache_capacity))
+    })
+}
+
+fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
+    // TODO: cancel thread if app closes
+    tokio::spawn(async move {
+        match fs::metadata(&path) {
+            Ok(metadata) => {
+                const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB limit
+                if metadata.len() > MAX_FILE_SIZE {
+                    log::info!(
+                        "File {path:?} too large for caching ({} bytes)",
+                        metadata.len()
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                log::error!("Error reading file metadata for {path:?}: {e}");
+            }
+        }
+
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
+            Ok(full) => full.collect(),
+            Err(e) => {
+                log::error!("Error highlighting file {path:?}: {e}");
+                return;
+            }
+        };
+
+        let cache = highlighted_lines_cache();
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.put(path, full);
+
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+    });
+}
+
+fn read_lines_range_highlighted_with_cache(
+    path: &Path,
+    start: usize,
+    end: usize,
+    theme: &Theme,
+    event_sender: UnboundedSender<Event>,
+) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
+    let cache = highlighted_lines_cache();
+    let mut cache_guard = cache.lock().unwrap();
+
+    if let Some(cached_lines) = cache_guard.get(path) {
+        let lines = cached_lines
+            .iter()
+            .skip(start)
+            .take(end - start + 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        Ok(lines)
+    } else {
+        drop(cache_guard);
+
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let lines =
+            read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
+                .collect();
+
+        spawn_highlight_full_file(path.to_path_buf(), theme.clone(), event_sender);
+
+        Ok(lines)
+    }
+}
+
+fn build_preview_list<'a>(
+    num_lines_to_show: usize,
+    selected: &SearchResultLines<'_>,
+    syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
+    event_sender: UnboundedSender<Event>,
+) -> anyhow::Result<List<'a>> {
+    let line_idx = selected.search_result.line_number - 1;
+    let start = line_idx.saturating_sub(num_lines_to_show);
+    let end = line_idx + num_lines_to_show;
+
+    if let Some(theme) = syntax_highlighting_theme {
+        let lines = read_lines_range_highlighted_with_cache(
+            &selected.search_result.path,
+            start,
+            end,
+            theme,
+            event_sender,
+        )?;
+        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
+        assert_eq!(
+            *cur.1.iter().map(|(_, s)| s).join(""),
+            selected.search_result.line
+        );
+
+        let list = List::new(
+            before
+                .iter()
+                .map(|(_, l)| regions_to_line(l))
+                .chain([
+                    ListItem::new(selected.old_line_diff.clone()),
+                    ListItem::new(selected.new_line_diff.clone()),
+                ])
+                .chain(after.iter().map(|(_, l)| regions_to_line(l))),
+        );
+        if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
+            Ok(list.bg(bg))
+        } else {
+            Ok(list)
+        }
+    } else {
+        let lines = read_lines_range(&selected.search_result.path, start, end)
+            .expect("Failed to read file");
+        let (before, cur, after) =
+            split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
+        assert_eq!(*cur.1, selected.search_result.line);
+
+        Ok(List::new(
+            before
+                .iter()
+                .map(|(_, l)| to_line_plain(l))
+                .chain([
+                    ListItem::new(selected.old_line_diff.clone()),
+                    ListItem::new(selected.new_line_diff.clone()),
+                ])
+                .chain(after.iter().map(|(_, l)| to_line_plain(l))),
+        ))
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn split_indexed_lines<T>(
+    indexed_lines: Vec<(usize, T)>,
+    line_idx: usize,
+    num_lines_to_show: usize,
+) -> (Vec<(usize, T)>, (usize, T), Vec<(usize, T)>) {
+    let file_start = indexed_lines.first().unwrap().0;
+    let file_end = indexed_lines.last().unwrap().0;
+    let (new_start, new_end) =
+        largest_range_centered_on(line_idx, file_start, file_end, num_lines_to_show);
+
+    let mut filtered_lines = indexed_lines
+        .into_iter()
+        .skip_while(|(idx, _)| *idx < new_start)
+        .take_while(|(idx, _)| *idx <= new_end)
+        .collect::<Vec<_>>();
+
+    let position = filtered_lines
+        .iter()
+        .position(|(idx, _)| *idx == line_idx)
+        .unwrap();
+    let after = filtered_lines.split_off(position + 1);
+    let current = filtered_lines.pop().unwrap();
+
+    (filtered_lines, current, after)
+}
+
+struct SearchResultLines<'a> {
+    file_path: Line<'a>,
+    old_line_diff: Line<'static>,
+    new_line_diff: Line<'static>,
+    is_selected: bool,
+    search_result: &'a SearchResult,
+}
+
+fn search_result<'a>(
     idx: usize,
     selected: usize,
-    result: &SearchResult,
+    result: &'a SearchResult,
     base_path: &Path,
     list_area_width: u16,
-) -> [ListItem<'a>; 4] {
+) -> SearchResultLines<'a> {
+    let is_selected = idx == selected;
     let (old_line, new_line) = line_diff(&result.line, &result.replacement);
     let old_line = old_line
         .iter()
@@ -226,7 +528,25 @@ fn render_search_result<'a>(
         .take(list_area_width as usize)
         .collect::<Vec<_>>();
 
-    let file_path_style = if idx == selected {
+    SearchResultLines {
+        file_path: file_path_line(idx, result, base_path, is_selected, list_area_width),
+        old_line_diff: diff_to_line(old_line),
+        new_line_diff: diff_to_line(new_line),
+        is_selected,
+        search_result: result,
+    }
+}
+
+static TRUNCATION_PREFIX: &str = "…";
+
+fn file_path_line<'a>(
+    idx: usize,
+    result: &SearchResult,
+    base_path: &Path,
+    is_selected: bool,
+    list_area_width: u16,
+) -> Line<'a> {
+    let file_path_style = if is_selected {
         Style::new().bg(if result.included {
             Color::Blue
         } else {
@@ -235,39 +555,43 @@ fn render_search_result<'a>(
     } else {
         Style::new()
     };
+
     let right_content = format!(" ({})", idx + 1);
-    let right_content_len = right_content.len() as u16;
-    let left_content = format!(
-        "[{}] {}:{}",
-        if result.included { 'x' } else { ' ' },
+    let right_content_len = right_content.len();
+    let left_content = format!("[{}] ", if result.included { 'x' } else { ' ' },);
+    let left_content_len = left_content.chars().count();
+    let centre_content = format!(
+        "{}:{}",
         relative_path_from(base_path, &result.path),
         result.line_number,
     );
-    let left_content_trimmed = left_content
-        .chars()
-        .take(list_area_width.saturating_sub(right_content_len) as usize)
-        .collect::<String>();
-    let left_content_trimmed_len = left_content_trimmed.len() as u16;
+    let centre_content_space =
+        (list_area_width as usize).saturating_sub(left_content_len + right_content_len);
+    let centre_content = if centre_content.len() > centre_content_space {
+        let truncated = last_n_chars(
+            &centre_content,
+            centre_content_space - TRUNCATION_PREFIX.chars().count(),
+        );
+        format!("{TRUNCATION_PREFIX}{truncated}").to_string()
+    } else {
+        centre_content
+    };
     let spacers = " ".repeat(
-        list_area_width.saturating_sub(left_content_trimmed_len + right_content_len) as usize,
+        (list_area_width as usize)
+            .saturating_sub(left_content_len + centre_content.len() + right_content_len),
     );
 
-    let file_path = Line::from(vec![
-        Span::raw(left_content_trimmed),
+    Line::from(vec![
+        Span::raw(left_content).style(Color::Blue),
+        Span::raw(centre_content),
         Span::raw(spacers),
-        Span::raw(right_content),
+        Span::raw(right_content).style(Color::Blue),
     ])
-    .style(file_path_style);
-
-    [
-        ListItem::new(file_path),
-        ListItem::new(diff_to_line(old_line)),
-        ListItem::new(diff_to_line(new_line)),
-        ListItem::new(""),
-    ]
+    .style(file_path_style)
 }
 
 fn render_results_view(frame: &mut Frame<'_>, replace_state: &ReplaceState, area: Rect) {
+    let area = default_width(area);
     if replace_state.errors.is_empty() {
         render_results_success(area, replace_state, frame);
     } else {
@@ -371,6 +695,7 @@ fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
 
 fn render_loading_view(text: String) -> impl Fn(&mut Frame<'_>, &App, Rect) {
     move |frame: &mut Frame<'_>, _app: &App, area: Rect| {
+        let area = default_width(area);
         let [area] = Layout::vertical([Constraint::Length(4)])
             .flex(Flex::Center)
             .areas(area);
@@ -413,27 +738,42 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             Constraint::Length(1),
         ])
         .split(frame.size());
+    let [header_area, content_area, footer_area] = chunks[..] else {
+        panic!("Unexpected chunks length {}", chunks.len())
+    };
 
     let title_block = Block::default().style(Style::default());
     let title = Paragraph::new(Text::styled("Scooter", Style::default()))
         .block(title_block)
         .alignment(Alignment::Center);
-    frame.render_widget(title, chunks[0]);
+    frame.render_widget(title, header_area);
 
-    let [content_area] = Layout::horizontal([Constraint::Percentage(80)])
-        .flex(Flex::Center)
-        .areas(chunks[1]);
-
-    render_key_hints(app, frame, chunks[2]);
+    render_key_hints(app, frame, footer_area);
 
     let base_path = app.directory.clone();
     match &mut app.current_screen {
         Screen::SearchFields => render_search_view(frame, app, content_area),
         Screen::SearchProgressing(ref mut s) => {
-            render_confirmation_view(frame, false, &mut s.search_state, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                false,
+                &mut s.search_state,
+                base_path,
+                content_area,
+                app.config.get_theme(),
+                app.event_sender.clone(),
+            );
         }
         Screen::SearchComplete(ref mut s) => {
-            render_confirmation_view(frame, true, s, base_path, content_area);
+            render_confirmation_view(
+                frame,
+                true,
+                s,
+                base_path,
+                content_area,
+                app.config.get_theme(),
+                app.event_sender.clone(),
+            );
         }
         Screen::PerformingReplacement(_) => {
             render_loading_view("Performing replacement...".to_owned())(frame, app, content_area);
@@ -573,12 +913,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -586,12 +926,12 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -607,22 +947,22 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "e".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Red,
+                bg_colour: Some(Color::Red),
             },
             Diff {
                 text: "llo".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -630,22 +970,22 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "a".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
             Diff {
                 text: "llo".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -661,12 +1001,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "foo".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Red,
+                bg_colour: Some(Color::Red),
             },
         ];
 
@@ -674,12 +1014,12 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "bar".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
         ];
 
@@ -694,13 +1034,13 @@ mod tests {
         let old_expected = vec![Diff {
             text: "- ".to_owned(),
             fg_colour: Color::Red,
-            bg_colour: Color::Reset,
+            bg_colour: None,
         }];
 
         let new_expected = vec![Diff {
             text: "+ ".to_owned(),
             fg_colour: Color::Green,
-            bg_colour: Color::Reset,
+            bg_colour: None,
         }];
 
         assert_eq!(old_expected, old_actual);
@@ -715,12 +1055,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -728,17 +1068,17 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "!".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
         ];
 
@@ -754,12 +1094,12 @@ mod tests {
             Diff {
                 text: "- ".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Red,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -767,17 +1107,17 @@ mod tests {
             Diff {
                 text: "+ ".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
             Diff {
                 text: "!".to_owned(),
                 fg_colour: Color::Black,
-                bg_colour: Color::Green,
+                bg_colour: Some(Color::Green),
             },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: Color::Green,
-                bg_colour: Color::Reset,
+                bg_colour: None,
             },
         ];
 
@@ -786,41 +1126,120 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_normal_text() {
-        assert_eq!(strip_control_chars("hello world"), "hello world");
+    fn test_split_lines_centered() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 5, 5);
+
+        assert_eq!(cur, (5, "Line 5".to_string()));
+        assert_eq!(
+            before,
+            vec![(3, "Line 3".to_string()), (4, "Line 4".to_string()),]
+        );
+        assert_eq!(
+            after,
+            vec![(6, "Line 6".to_string()), (7, "Line 7".to_string()),]
+        );
     }
 
     #[test]
-    fn test_sanitize_tabs() {
-        assert_eq!(strip_control_chars("hello\tworld"), "hello  world");
-        assert_eq!(strip_control_chars("\t\t"), "    ");
+    fn test_split_lines_at_start() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 0, 3);
+
+        assert_eq!(cur, (0, "Line 0".to_string()));
+        assert_eq!(before, vec![]); // No lines before 0
+        assert_eq!(
+            after,
+            vec![(1, "Line 1".to_string()), (2, "Line 2".to_string()),]
+        );
     }
 
     #[test]
-    fn test_sanitize_newlines() {
-        assert_eq!(strip_control_chars("hello\nworld"), "hello world");
-        assert_eq!(strip_control_chars("\n\n"), "  ");
+    fn test_split_lines_at_end() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 10, 3);
+
+        assert_eq!(cur, (10, "Line 10".to_string()));
+        assert_eq!(
+            before,
+            vec![(8, "Line 8".to_string()), (9, "Line 9".to_string()),]
+        );
+        assert_eq!(after, vec![]);
     }
 
     #[test]
-    fn test_sanitize_control_chars() {
-        assert_eq!(strip_control_chars("hello\u{4}world"), "hello�world");
-        assert_eq!(strip_control_chars("test\u{7}"), "test�");
-        assert_eq!(strip_control_chars("\u{1b}[0m"), "�[0m");
+    fn test_split_lines_with_small_window() {
+        let lines: Vec<(usize, String)> =
+            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 5, 1);
+
+        assert_eq!(cur, (5, "Line 5".to_string()));
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![]);
     }
 
     #[test]
-    fn test_sanitize_unicode() {
-        assert_eq!(strip_control_chars("héllo→世界"), "héllo→世界");
+    fn test_split_lines_with_custom_data_type() {
+        let lines: Vec<(usize, Vec<u8>)> = (0..=5)
+            .map(|idx| (idx, vec![idx as u8, (idx * 2) as u8]))
+            .collect();
+
+        let (before, cur, after) = split_indexed_lines(lines, 3, 2);
+
+        assert_eq!(cur, (3, vec![3, 6]));
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![(4, vec![4, 8])]);
     }
 
     #[test]
-    fn test_sanitize_empty_string() {
-        assert_eq!(strip_control_chars(""), "");
+    fn test_split_lines_non_sequential_indices() {
+        let lines: Vec<(usize, &str)> = vec![
+            (10, "Line 10"),
+            (20, "Line 20"),
+            (30, "Line 30"),
+            (40, "Line 40"),
+            (50, "Line 50"),
+        ];
+
+        let (before, cur, after) = split_indexed_lines(lines, 30, 3);
+
+        assert_eq!(cur, (30, "Line 30"));
+        // Both before and after should be empty - `num_lines_to_show` should be just sequential lines
+        assert_eq!(before, vec![]);
+        assert_eq!(after, vec![]);
     }
 
     #[test]
-    fn test_sanitize_only_control_chars() {
-        assert_eq!(strip_control_chars("\u{1}\u{2}\u{3}\u{4}"), "����");
+    fn test_split_lines_non_sequential_indices_large_window() {
+        let lines: Vec<(usize, &str)> = vec![
+            (10, "Line 10"),
+            (20, "Line 20"),
+            (30, "Line 30"),
+            (40, "Line 40"),
+            (50, "Line 50"),
+        ];
+
+        let (before, cur, after) = split_indexed_lines(lines, 30, 30);
+
+        assert_eq!(cur, (30, "Line 30"));
+        assert_eq!(before, vec![(20, "Line 20")]);
+        assert_eq!(after, vec![(40, "Line 40")]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected start<=pos<=end, found start=0, pos=10, end=5")]
+    fn test_split_lines_line_idx_not_found() {
+        let lines: Vec<(usize, String)> =
+            (0..=5).map(|idx| (idx, format!("Line {}", idx))).collect();
+
+        let _ = split_indexed_lines(lines, 10, 3);
+        // Should panic because line 10 is not in the data
     }
 }

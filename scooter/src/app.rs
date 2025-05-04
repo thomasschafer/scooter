@@ -49,6 +49,7 @@ pub enum ReplaceResult {
 pub struct SearchResult {
     pub path: PathBuf,
     pub line_number: usize,
+    /// 1-indexed
     pub line: String,
     pub replacement: String,
     pub included: bool,
@@ -81,13 +82,14 @@ pub enum EventHandlingResult {
     None,
 }
 
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct SearchState {
     // TODO: make the view logic with scrolling etc. into a generic component
     pub results: Vec<SearchResult>,
     selected: usize,                         // TODO: allow for selection of ranges
     pub(crate) view_offset: usize,           // Updated by UI, not app
     pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
+    processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
 }
 
 impl SearchState {
@@ -166,6 +168,16 @@ impl SearchState {
     fn selected_field(&mut self) -> &mut SearchResult {
         &mut self.results[self.selected]
     }
+
+    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
+        Self {
+            results: vec![],
+            selected: 0,
+            view_offset: 0,
+            num_displayed: None,
+            processing_receiver,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -220,22 +232,17 @@ pub struct SearchInProgressState {
     pub search_state: SearchState,
     pub last_render: Instant,
     handle: JoinHandle<()>,
-    processing_sender: UnboundedSender<BackgroundProcessingEvent>,
-    processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
 }
 
 impl SearchInProgressState {
     pub fn new(
         handle: JoinHandle<()>,
-        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     ) -> Self {
         Self {
-            search_state: SearchState::default(),
+            search_state: SearchState::new(processing_receiver),
             last_render: Instant::now(),
             handle,
-            processing_sender,
-            processing_receiver,
         }
     }
 }
@@ -529,10 +536,10 @@ pub struct App {
     pub search_fields: SearchFields,
     pub directory: PathBuf,
     pub config: Config,
+    pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
     popup: Option<Popup>,
-    event_sender: UnboundedSender<Event>,
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
@@ -607,6 +614,14 @@ impl App {
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
         match &mut self.current_screen {
             Screen::SearchProgressing(SearchInProgressState {
+                search_state:
+                    SearchState {
+                        processing_receiver,
+                        ..
+                    },
+                ..
+            }) => processing_receiver.recv().await,
+            Screen::SearchComplete(SearchState {
                 processing_receiver,
                 ..
             }) => processing_receiver.recv().await,
@@ -615,20 +630,6 @@ impl App {
                 ..
             }) => processing_receiver.recv().await,
             _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn background_processing_sender(
-        &mut self,
-    ) -> Option<&mut UnboundedSender<BackgroundProcessingEvent>> {
-        if let Screen::SearchProgressing(SearchInProgressState {
-            processing_sender, ..
-        }) = &mut self.current_screen
-        {
-            Some(processing_sender)
-        } else {
-            None
         }
     }
 
@@ -657,7 +658,6 @@ impl App {
                 );
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
-                    background_processing_sender,
                     background_processing_receiver,
                 ));
             }
@@ -1305,11 +1305,13 @@ mod tests {
     }
 
     fn build_test_search_state_with_results(results: Vec<SearchResult>) -> SearchState {
+        let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
         SearchState {
             results,
             selected: 0,
             view_offset: 0,
             num_displayed: Some(5),
+            processing_receiver,
         }
     }
 

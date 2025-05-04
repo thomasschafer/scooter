@@ -61,7 +61,8 @@ async fn test_app_reset() {
 #[tokio::test]
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
-    app.current_screen = Screen::SearchComplete(SearchState::default());
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen = Screen::SearchComplete(SearchState::new(receiver));
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: "foo",
         replace: "bar",
@@ -203,12 +204,9 @@ async fn test_help_popup_on_search_fields() {
 
 #[tokio::test]
 async fn test_help_popup_on_search_in_progress() {
-    let (sender, receiver) = mpsc::unbounded_channel();
-    let initial_screen = Screen::SearchProgressing(SearchInProgressState::new(
-        tokio::spawn(async {}),
-        sender,
-        receiver,
-    ));
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let initial_screen =
+        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
     test_help_popup_on_screen(initial_screen).await;
 }
 
@@ -224,7 +222,8 @@ async fn test_help_popup_on_search_complete() {
             replace_result: None,
         })
         .collect();
-    let mut search_state = SearchState::default();
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let mut search_state = SearchState::new(receiver);
     search_state.results = results;
 
     test_help_popup_on_screen(Screen::SearchComplete(search_state)).await;
