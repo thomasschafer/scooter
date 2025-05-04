@@ -10,7 +10,7 @@ use ratatui::{
 use similar::{Change, ChangeTag, TextDiff};
 use std::{
     cmp::min,
-    iter,
+    fs, iter,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
@@ -350,6 +350,22 @@ pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
     // TODO: cancel thread if app closes
     tokio::spawn(async move {
+        match fs::metadata(&path) {
+            Ok(metadata) => {
+                const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB limit
+                if metadata.len() > MAX_FILE_SIZE {
+                    log::info!(
+                        "File {path:?} too large for caching ({} bytes)",
+                        metadata.len()
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                log::error!("Error reading file metadata for {path:?}: {e}");
+            }
+        }
+
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
         let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
             Ok(full) => full.collect(),
