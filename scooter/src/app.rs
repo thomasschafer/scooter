@@ -231,7 +231,7 @@ impl SearchState {
 
     fn toggle_selected_inclusion(&mut self) {
         let all_included = self.selected_fields().iter().all(|res| res.included);
-        self.selected_fields().iter_mut().for_each(|selected| {
+        self.selected_fields_mut().iter_mut().for_each(|selected| {
             selected.included = !all_included;
         });
     }
@@ -244,14 +244,21 @@ impl SearchState {
     }
 
     // TODO: add tests
-    fn selected_fields(&mut self) -> Vec<&mut SearchResult> {
+    fn selected_range(&self) -> (usize, usize) {
         match &self.selected {
-            Selected::Single(sel) => vec![&mut self.results[*sel]],
-            Selected::Multi(ms) => {
-                let (low, high) = ms.ordered();
-                self.results[low..(high + 1)].iter_mut().collect() // TODO: is there a better way of doing this?
-            }
+            Selected::Single(sel) => (*sel, *sel),
+            Selected::Multi(ms) => ms.ordered(),
         }
+    }
+
+    fn selected_fields(&self) -> &[SearchResult] {
+        let (low, high) = self.selected_range();
+        &self.results[low..=high]
+    }
+
+    fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+        let (low, high) = self.selected_range();
+        &mut self.results[low..=high]
     }
 
     pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResult {
@@ -1453,8 +1460,8 @@ mod tests {
         }
     }
 
-    fn build_test_search_state(num_results: usize) -> SearchState {
-        let results = (0..num_results)
+    fn build_test_results(num_results: usize) -> Vec<SearchResult> {
+        (0..num_results)
             .map(|i| SearchResult {
                 path: PathBuf::from(format!("test{i}.txt")),
                 line_number: 1,
@@ -1463,7 +1470,11 @@ mod tests {
                 included: true,
                 replace_result: None,
             })
-            .collect();
+            .collect()
+    }
+
+    fn build_test_search_state(num_results: usize) -> SearchState {
+        let results = build_test_results(num_results);
         build_test_search_state_with_results(results)
     }
 
@@ -1748,5 +1759,121 @@ mod tests {
         assert_eq!(state.selected, Selected::Single(4));
         state.move_selected_up_full_page();
         assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[test]
+    fn test_selected_fields_movement() {
+        let mut results = build_test_results(10);
+        let mut state = build_test_search_state_with_results(results.clone());
+
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 0,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 2,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+    }
+
+    #[test]
+    fn test_selected_fields_toggling() {
+        let mut state = build_test_search_state(6);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 4,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[4..=4]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, true, true, true, true]
+        );
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, false, false, false, true]
+        );
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &state.results[2..=2]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &state.results[0..=0]);
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![false, true, false, false, false, true]
+        );
     }
 }
