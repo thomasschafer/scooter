@@ -1,0 +1,170 @@
+name: Test WinGet Installation (Using PR Branch)
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test_installation:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout WinGet PR branch
+        shell: pwsh
+        run: |
+          # Create a temp directory for testing
+          $tempDir = New-Item -ItemType Directory -Path "$env:TEMP\winget-test" -Force
+          Set-Location $tempDir
+          
+          # Clone the winget-pkgs repository
+          Write-Host "Cloning WinGet-pkgs repository..."
+          git clone https://github.com/microsoft/winget-pkgs.git .
+          
+          # Checkout the specific branch for the PR
+          Write-Host "Checking out PR branch..."
+          git remote add pr https://github.com/thomasschafer/winget-pkgs.git
+          git fetch pr
+          git checkout pr/thomasschafer.scooter-0.5.0-0F9ACA5930774E9EB97FEC9ACA1DC12A
+          
+          # Find manifest files
+          $manifestDir = "manifests/t/thomasschafer/scooter/0.5.0"
+          if (-not (Test-Path $manifestDir)) {
+              Write-Error "Could not find manifest directory: $manifestDir"
+              
+              # Try to find the actual manifest directory
+              Write-Host "Searching for manifest directory..."
+              $possibleDirs = Get-ChildItem -Path "manifests" -Recurse -Directory -Filter "scooter" | Where-Object { $_.FullName -like "*thomasschafer*" }
+              
+              if ($possibleDirs.Count -gt 0) {
+                  Write-Host "Found possible manifest directories:"
+                  $possibleDirs | ForEach-Object { Write-Host " - $($_.FullName)" }
+                  $manifestDir = $possibleDirs[0].FullName
+              } else {
+                  Write-Error "Could not find any manifest directories for 'thomasschafer/scooter'"
+                  exit 1
+              }
+          }
+          
+          # Find manifest files
+          $manifestFiles = Get-ChildItem -Path $manifestDir -Filter "*.json"
+          Write-Host "Found $($manifestFiles.Count) manifest files in $manifestDir"
+          
+          # Find installer manifest
+          $installerManifest = $manifestFiles | Where-Object { $_.Name -like "*.installer.json" } | Select-Object -First 1
+          if (-not $installerManifest) {
+              Write-Error "Could not find installer manifest in $manifestDir"
+              exit 1
+          }
+          
+          Write-Host "Found installer manifest: $($installerManifest.FullName)"
+          
+          # Parse installer manifest
+          $installerJson = Get-Content -Path $installerManifest.FullName | ConvertFrom-Json
+          $installerUrl = $installerJson.Installers[0].InstallerUrl
+          $installerHash = $installerJson.Installers[0].InstallerSha256
+          $nestedFiles = $installerJson.NestedInstallerFiles
+          $installerType = $installerJson.InstallerType
+          
+          Write-Host "Installer Type: $installerType"
+          Write-Host "Installer URL: $installerUrl"
+          Write-Host "Installer SHA256: $installerHash"
+          Write-Host "Nested Files: $($nestedFiles | ConvertTo-Json -Compress)"
+          
+          # Download the installer
+          $tempInstallerPath = Join-Path -Path $env:TEMP -ChildPath "scooter-installer.zip"
+          
+          Write-Host "Downloading installer from $installerUrl to $tempInstallerPath..."
+          try {
+              Invoke-WebRequest -Uri $installerUrl -OutFile $tempInstallerPath -ErrorAction Stop
+              Write-Host "Download successful"
+          } catch {
+              Write-Error "Failed to download installer: $_"
+              exit 1
+          }
+          
+          # Verify hash
+          $downloadedHash = (Get-FileHash -Path $tempInstallerPath -Algorithm SHA256).Hash
+          Write-Host "Downloaded file hash: $downloadedHash"
+          
+          if ($downloadedHash -ne $installerHash) {
+              Write-Error "Hash mismatch: Expected $installerHash but got $downloadedHash"
+              exit 1
+          }
+          
+          # Extract ZIP
+          $extractPath = Join-Path -Path $env:TEMP -ChildPath "scooter-extract"
+          New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+          
+          Write-Host "Extracting installer to $extractPath..."
+          try {
+              Expand-Archive -Path $tempInstallerPath -DestinationPath $extractPath -Force -ErrorAction Stop
+              Write-Host "Extraction successful"
+          } catch {
+              Write-Error "Failed to extract installer: $_"
+              exit 1
+          }
+          
+          # List all extracted content with structure
+          Write-Host "Contents of extracted folder (detailed structure):"
+          Get-ChildItem -Path $extractPath -Recurse | ForEach-Object { 
+              $indent = " " * ($_.FullName.Split("\").Count - $extractPath.Split("\").Count)
+              $itemType = if ($_.PSIsContainer) { "DIR" } else { "FILE" }
+              Write-Host "$indent$itemType $($_.Name)"
+          }
+          
+          # Look for executable based on NestedInstallerFiles
+          $executableFound = $false
+          
+          foreach ($nestedFile in $nestedFiles) {
+              $relativePath = $nestedFile.RelativeFilePath
+              $exePath = Join-Path -Path $extractPath -ChildPath $relativePath
+              
+              Write-Host "Looking for executable at: $exePath"
+              
+              if (Test-Path -Path $exePath) {
+                  Write-Host "Found executable, testing..."
+                  $executableFound = $true
+                  
+                  # Check if it's actually executable
+                  if ((Get-Item $exePath).Extension -ne ".exe") {
+                      Write-Error "File exists but is not an executable: $exePath"
+                      exit 1
+                  }
+                  
+                  try {
+                      Write-Host "Running version command..."
+                      $output = & $exePath --version
+                      Write-Host "Version output: $output"
+                      
+                      Write-Host "Running help command..."
+                      $output = & $exePath --help
+                      Write-Host "Help command successful"
+                      
+                      Write-Host "Executable test passed!"
+                  }
+                  catch {
+                      Write-Error "Error running executable: $_"
+                      exit 1
+                  }
+              }
+              else {
+                  Write-Error "Could not find nested file: $relativePath"
+                  
+                  # Try to find similar files
+                  Write-Host "Searching for similarly named files..."
+                  $fileName = Split-Path -Path $relativePath -Leaf
+                  $similarFiles = Get-ChildItem -Path $extractPath -Recurse -Filter "*$fileName*"
+                  
+                  if ($similarFiles.Count -gt 0) {
+                      Write-Host "Found similar files that might match:"
+                      $similarFiles | ForEach-Object { Write-Host " - $($_.FullName)" }
+                  }
+                  
+                  exit 1
+              }
+          }
+          
+          if (-not $executableFound) {
+              Write-Error "No executables were specified in the manifest or none were found"
+              exit 1
+          }
+          
+          Write-Host "All tests passed! The manifest appears to be valid."
