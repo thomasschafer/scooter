@@ -804,6 +804,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     let keys_hint = Span::styled(
         app.keymaps_compact()
+            .iter()
             .map(|(from, to)| format!("{from} {to}"))
             .join(" / "),
         Color::default(),
@@ -839,13 +840,8 @@ fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     render_paragraph_popup("Errors", error_lines, frame, area);
 }
 
-fn render_help_popup<'a, I>(keymaps: I, frame: &mut Frame<'_>, area: Rect)
-where
-    I: Iterator<Item = (&'a str, &'a str)>,
-{
-    let keymaps_vec: Vec<(&str, &str)> = keymaps.collect();
-
-    let max_from_width = keymaps_vec
+fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: Rect) {
+    let max_from_width = keymaps
         .iter()
         .map(|(from, _)| from.len())
         .max()
@@ -853,7 +849,7 @@ where
 
     let from_column_width = max_from_width as u16 + 2;
 
-    let rows: Vec<Row<'_>> = keymaps_vec
+    let rows: Vec<Row<'_>> = keymaps
         .into_iter()
         .map(|(from, to)| {
             let padded_from = format!("  {:>width$} ", from, width = max_from_width);

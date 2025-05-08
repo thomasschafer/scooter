@@ -1311,15 +1311,15 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps_all(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_all(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(false)
     }
 
-    pub(crate) fn keymaps_compact(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_compact(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(true)
     }
 
-    fn keymaps_impl(&self, compact: bool) -> impl Iterator<Item = (&str, &str)> {
+    fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
         enum Show {
             Both,
             FullOnly,
@@ -1368,14 +1368,24 @@ impl App {
             }
         };
 
+        let is_search_screen = matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        );
+        let esc_help = format!(
+            "quit / close popup{}",
+            if is_search_screen {
+                " / exit multiselect"
+            } else {
+                ""
+            }
+        );
+
         let additional_keys = vec![
             (
                 "<C-r>",
                 "reset",
-                if matches!(
-                    self.current_screen,
-                    Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-                ) {
+                if is_search_screen {
                     Show::FullOnly
                 } else {
                     Show::Both
@@ -1393,11 +1403,7 @@ impl App {
                 },
                 Show::CompactOnly,
             ),
-            (
-                "<esc>",
-                "quit / close popup / exit multiselect",
-                Show::FullOnly,
-            ),
+            ("<esc>", &esc_help, Show::FullOnly),
             ("<C-c>", "quit", Show::FullOnly),
         ];
 
@@ -1411,11 +1417,12 @@ impl App {
                     Show::FullOnly => !compact,
                 };
                 if include {
-                    Some((from, to))
+                    Some((from, to.to_owned()))
                 } else {
                     None
                 }
             })
+            .collect()
     }
 
     fn multiselect_enabled(&self) -> bool {
