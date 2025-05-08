@@ -172,7 +172,7 @@ fn render_confirmation_view(
     theme: Option<&Theme>,
     event_sender: UnboundedSender<Event>,
 ) {
-    let split_view = area.width >= 120;
+    let split_view = area.width >= 110;
     let area = if !split_view {
         default_width(area)
     } else {
