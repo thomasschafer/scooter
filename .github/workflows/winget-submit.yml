@@ -1,7 +1,7 @@
 name: Publish to WinGet
 on:
   release:
-    types: [released]
+    types: [edited, published]
 
 jobs:
   publish_to_winget:
@@ -11,7 +11,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version
+      - name: Get version from tag
         id: get-version
         shell: pwsh
         run: |
@@ -19,7 +19,8 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
           Write-Output "version=$version"
 
-      - uses: vedantmgoyal9/winget-releaser@main
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: thomasschafer.scooter
           version: ${{ steps.get-version.outputs.version }}
