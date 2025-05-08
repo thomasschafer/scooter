@@ -210,13 +210,14 @@ fn render_confirmation_view(
     let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
     let num_to_render = list_area_height / item_height;
     search_state.num_displayed = Some(num_to_render);
-    if search_state.selected() < search_state.view_offset + 1 {
-        search_state.view_offset = search_state.selected().saturating_sub(1);
-    } else if search_state.selected() > (search_state.view_offset + num_to_render).saturating_sub(2)
+    if search_state.primary_selected_pos() < search_state.view_offset + 1 {
+        search_state.view_offset = search_state.primary_selected_pos().saturating_sub(1);
+    } else if search_state.primary_selected_pos()
+        > (search_state.view_offset + num_to_render).saturating_sub(2)
         || search_state.view_offset + num_to_render > num_results
     {
         search_state.view_offset = min(
-            (search_state.selected() + 2).saturating_sub(num_to_render),
+            (search_state.primary_selected_pos() + 2).saturating_sub(num_to_render),
             num_results.saturating_sub(num_to_render),
         );
     }
@@ -228,6 +229,7 @@ fn render_confirmation_view(
             Constraint::Fill(3),
         ])
         .areas(results_area);
+
         let search_results =
             build_search_results(search_state, base_path, list_area.width, num_to_render);
         let search_results_list = search_results
@@ -237,7 +239,7 @@ fn render_confirmation_view(
         if !search_results.is_empty() {
             let selected = search_results
                 .iter()
-                .find(|s| s.is_selected)
+                .find(|s| s.is_primary_selected)
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
 
@@ -289,7 +291,16 @@ fn build_search_results(
         .enumerate()
         .skip(search_state.view_offset)
         .take(num_to_render)
-        .map(|(idx, result)| search_result(idx, search_state.selected(), result, &base_path, width))
+        .map(|(idx, result)| {
+            search_result(
+                idx,
+                search_state.is_selected(idx),
+                search_state.is_primary_selected(idx),
+                result,
+                &base_path,
+                width,
+            )
+        })
         .collect()
 }
 
@@ -506,18 +517,18 @@ struct SearchResultLines<'a> {
     file_path: Line<'a>,
     old_line_diff: Line<'static>,
     new_line_diff: Line<'static>,
-    is_selected: bool,
+    is_primary_selected: bool,
     search_result: &'a SearchResult,
 }
 
 fn search_result<'a>(
     idx: usize,
-    selected: usize,
+    is_selected: bool,
+    is_primary_selected: bool,
     result: &'a SearchResult,
     base_path: &Path,
     list_area_width: u16,
 ) -> SearchResultLines<'a> {
-    let is_selected = idx == selected;
     let (old_line, new_line) = line_diff(&result.line, &result.replacement);
     let old_line = old_line
         .iter()
@@ -532,7 +543,7 @@ fn search_result<'a>(
         file_path: file_path_line(idx, result, base_path, is_selected, list_area_width),
         old_line_diff: diff_to_line(old_line),
         new_line_diff: diff_to_line(new_line),
-        is_selected,
+        is_primary_selected,
         search_result: result,
     }
 }
@@ -793,6 +804,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
     let keys_hint = Span::styled(
         app.keymaps_compact()
+            .iter()
             .map(|(from, to)| format!("{from} {to}"))
             .join(" / "),
         Color::default(),
@@ -828,13 +840,8 @@ fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     render_paragraph_popup("Errors", error_lines, frame, area);
 }
 
-fn render_help_popup<'a, I>(keymaps: I, frame: &mut Frame<'_>, area: Rect)
-where
-    I: Iterator<Item = (&'a str, &'a str)>,
-{
-    let keymaps_vec: Vec<(&str, &str)> = keymaps.collect();
-
-    let max_from_width = keymaps_vec
+fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: Rect) {
+    let max_from_width = keymaps
         .iter()
         .map(|(from, _)| from.len())
         .max()
@@ -842,7 +849,7 @@ where
 
     let from_column_width = max_from_width as u16 + 2;
 
-    let rows: Vec<Row<'_>> = keymaps_vec
+    let rows: Vec<Row<'_>> = keymaps
         .into_iter()
         .map(|(from, to)| {
             let padded_from = format!("  {:>width$} ", from, width = max_from_width);

@@ -82,38 +82,108 @@ pub enum EventHandlingResult {
     None,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct MultiSelected {
+    anchor: usize,
+    primary: usize,
+}
+impl MultiSelected {
+    fn ordered(&self) -> (usize, usize) {
+        if self.anchor < self.primary {
+            (self.anchor, self.primary)
+        } else {
+            (self.primary, self.anchor)
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Selected {
+    Single(usize),
+    Multi(MultiSelected),
+}
+
 #[derive(Debug)]
 pub struct SearchState {
     // TODO: make the view logic with scrolling etc. into a generic component
     pub results: Vec<SearchResult>,
-    selected: usize,                         // TODO: allow for selection of ranges
+    selected: Selected,
     pub(crate) view_offset: usize,           // Updated by UI, not app
     pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
     processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
 }
 
 impl SearchState {
-    pub(crate) fn selected(&self) -> usize {
-        self.selected
+    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
+        Self {
+            results: vec![],
+            selected: Selected::Single(0),
+            view_offset: 0,
+            num_displayed: None,
+            processing_receiver,
+        }
+    }
+
+    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> bool {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('j') | KeyCode::Down, _)
+            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                self.move_selected_down();
+            }
+            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.move_selected_up();
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_half_page();
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_full_page();
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_half_page();
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_full_page();
+            }
+            (KeyCode::Char('g'), _) => {
+                self.move_selected_top();
+            }
+            (KeyCode::Char('G'), _) => {
+                self.move_selected_bottom();
+            }
+            (KeyCode::Char(' '), _) => {
+                self.toggle_selected_inclusion();
+            }
+            (KeyCode::Char('a'), _) => {
+                self.toggle_all_selected();
+            }
+            (KeyCode::Char('v'), _) => {
+                self.toggle_multiselect_mode();
+            }
+            _ => {}
+        };
+        false
     }
 
     fn move_selected_up_by(&mut self, n: usize) {
-        if self.selected == 0 {
-            self.selected = self.results.len().saturating_sub(1);
-        } else if self.selected <= n {
-            self.selected = 0;
+        let primary_selected_pos = self.primary_selected_pos();
+        if primary_selected_pos == 0 {
+            self.selected = Selected::Single(self.results.len().saturating_sub(1));
+        } else if primary_selected_pos <= n {
+            self.selected = Selected::Single(0);
         } else {
-            self.selected -= n;
+            self.move_primary_sel(primary_selected_pos - n);
         }
     }
 
     fn move_selected_down_by(&mut self, n: usize) {
-        if self.selected >= self.results.len().saturating_sub(1) {
-            self.selected = 0;
-        } else if self.selected >= self.results.len().saturating_sub(n + 1) {
-            self.selected = self.results.len().saturating_sub(1);
+        let primary_selected_pos = self.primary_selected_pos();
+        if primary_selected_pos >= self.results.len().saturating_sub(1) {
+            self.selected = Selected::Single(0);
+        } else if primary_selected_pos >= self.results.len().saturating_sub(n + 1) {
+            self.selected = Selected::Single(self.results.len().saturating_sub(1));
         } else {
-            self.selected += n;
+            self.move_primary_sel(primary_selected_pos + n);
         }
     }
 
@@ -142,20 +212,28 @@ impl SearchState {
     }
 
     fn move_selected_top(&mut self) {
-        self.selected = 0;
+        self.move_primary_sel(0);
     }
 
     fn move_selected_bottom(&mut self) {
-        self.selected = self.results.len().saturating_sub(1);
+        self.move_primary_sel(self.results.len().saturating_sub(1));
+    }
+
+    fn move_primary_sel(&mut self, idx: usize) {
+        self.selected = match &self.selected {
+            Selected::Single(_) => Selected::Single(idx),
+            Selected::Multi(MultiSelected { anchor, .. }) => Selected::Multi(MultiSelected {
+                anchor: *anchor,
+                primary: idx,
+            }),
+        };
     }
 
     fn toggle_selected_inclusion(&mut self) {
-        if self.selected < self.results.len() {
-            let selected_result = self.selected_field();
-            selected_result.included = !selected_result.included;
-        } else {
-            self.selected = self.results.len().saturating_sub(1);
-        }
+        let all_included = self.selected_fields().iter().all(|res| res.included);
+        self.selected_fields_mut().iter_mut().for_each(|selected| {
+            selected.included = !all_included;
+        });
     }
 
     fn toggle_all_selected(&mut self) {
@@ -165,18 +243,65 @@ impl SearchState {
             .for_each(|res| res.included = !all_included);
     }
 
-    fn selected_field(&mut self) -> &mut SearchResult {
-        &mut self.results[self.selected]
+    // TODO: add tests
+    fn selected_range(&self) -> (usize, usize) {
+        match &self.selected {
+            Selected::Single(sel) => (*sel, *sel),
+            Selected::Multi(ms) => ms.ordered(),
+        }
     }
 
-    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
-        Self {
-            results: vec![],
-            selected: 0,
-            view_offset: 0,
-            num_displayed: None,
-            processing_receiver,
+    fn selected_fields(&self) -> &[SearchResult] {
+        let (low, high) = self.selected_range();
+        &self.results[low..=high]
+    }
+
+    fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+        let (low, high) = self.selected_range();
+        &mut self.results[low..=high]
+    }
+
+    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResult {
+        let sel = self.primary_selected_pos();
+        &mut self.results[sel]
+    }
+
+    pub(crate) fn primary_selected_pos(&self) -> usize {
+        match self.selected {
+            Selected::Single(sel) => sel,
+            Selected::Multi(MultiSelected { primary, .. }) => primary,
         }
+    }
+
+    fn toggle_multiselect_mode(&mut self) {
+        self.selected = match &self.selected {
+            Selected::Single(sel) => Selected::Multi(MultiSelected {
+                anchor: *sel,
+                primary: *sel,
+            }),
+            Selected::Multi(MultiSelected { primary, .. }) => Selected::Single(*primary),
+        };
+    }
+
+    pub(crate) fn is_selected(&self, idx: usize) -> bool {
+        match &self.selected {
+            Selected::Single(sel) => idx == *sel,
+            Selected::Multi(ms) => {
+                let (low, high) = ms.ordered();
+                idx >= low && idx <= high
+            }
+        }
+    }
+
+    fn multiselect_enabled(&self) -> bool {
+        match &self.selected {
+            Selected::Single(_) => false,
+            Selected::Multi(_) => true,
+        }
+    }
+
+    pub(crate) fn is_primary_selected(&self, idx: usize) -> bool {
+        idx == self.primary_selected_pos()
     }
 }
 
@@ -291,6 +416,17 @@ impl Screen {
                 "Expected SearchInProgress or SearchComplete, found {:?}",
                 self
             ),
+        }
+    }
+
+    fn name(&self) -> &str {
+        // TODO: is there a better way of doing this?
+        match &self {
+            Screen::SearchFields => "SearchFields",
+            Screen::SearchProgressing(_) => "SearchProgressing",
+            Screen::SearchComplete(_) => "SearchComplete",
+            Screen::PerformingReplacement(_) => "PerformingReplacement",
+            Screen::Results(_) => "Results",
         }
     }
 }
@@ -802,57 +938,22 @@ impl App {
         false
     }
 
-    fn handle_key_confirmation(&mut self, key: &KeyEvent) -> bool {
+    /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
+    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<bool> {
+        if !matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        ) {
+            panic!(
+                "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
+                self.current_screen
+            );
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down();
-            }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                self.current_screen.search_results_mut().move_selected_up();
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down_half_page();
-            }
-            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down_full_page();
-            }
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_up_half_page();
-            }
-            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_up_full_page();
-            }
-            (KeyCode::Char('g'), _) => {
-                self.current_screen.search_results_mut().move_selected_top();
-            }
-            (KeyCode::Char('G'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_bottom();
-            }
-            (KeyCode::Char(' '), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_selected_inclusion();
-            }
-            (KeyCode::Char('a'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_all_selected();
-            }
             (KeyCode::Enter, _) => {
                 self.trigger_replacement();
+                Some(false)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
@@ -860,19 +961,23 @@ impl App {
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
+                Some(false)
             }
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
-                let selected = self.current_screen.search_results_mut().selected_field();
+                let selected = self
+                    .current_screen
+                    .search_results_mut()
+                    .primary_selected_field_mut();
                 self.event_sender
                     .send(Event::LaunchEditor((
                         selected.path.clone(),
                         selected.line_number,
                     )))
                     .unwrap();
+                Some(false)
             }
-            _ => {}
-        };
-        false
+            _ => None,
+        }
     }
 
     pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
@@ -880,15 +985,25 @@ impl App {
             return Ok(EventHandlingResult::Rerender);
         }
 
+        if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
+            self.reset();
+            return Ok(EventHandlingResult::Exit);
+        };
+
         if self.popup.is_some() {
             self.clear_popup();
             return Ok(EventHandlingResult::Rerender);
         }
 
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.reset();
-                return Ok(EventHandlingResult::Exit);
+            (KeyCode::Esc, _) => {
+                if self.multiselect_enabled() {
+                    self.toggle_multiselect_mode();
+                    return Ok(EventHandlingResult::Rerender);
+                } else {
+                    self.reset();
+                    return Ok(EventHandlingResult::Exit);
+                }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
@@ -904,7 +1019,20 @@ impl App {
         let exit = match &mut self.current_screen {
             Screen::SearchFields => self.handle_key_searching(key),
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                self.handle_key_confirmation(key)
+                if let Some(rerender) = self.try_handle_key_search(key) {
+                    rerender
+                } else {
+                    match &mut self.current_screen {
+                        Screen::SearchProgressing(SearchInProgressState {
+                            search_state, ..
+                        }) => search_state.handle_key(key),
+                        Screen::SearchComplete(search_state) => search_state.handle_key(key),
+                        screen => panic!(
+                            "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
+                            screen
+                        ),
+                    }
+                }
             }
             Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
@@ -1183,40 +1311,42 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps_all(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_all(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(false)
     }
 
-    pub(crate) fn keymaps_compact(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn keymaps_compact(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(true)
     }
 
-    fn keymaps_impl(&self, compact: bool) -> impl Iterator<Item = (&str, &str)> {
+    fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
         enum Show {
-            Compact,
+            Both,
             FullOnly,
+            CompactOnly,
         }
 
         let current_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
-                    ("<enter>", "search", Show::Compact),
-                    ("<tab>", "focus next", Show::Compact),
+                    ("<enter>", "search", Show::Both),
+                    ("<tab>", "focus next", Show::Both),
                     ("<S-tab>", "focus previous", Show::FullOnly),
                     ("<space>", "toggle checkbox", Show::FullOnly),
                 ]
             }
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
                 let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
-                    vec![("<enter>", "replace selected", Show::Compact)]
+                    vec![("<enter>", "replace selected", Show::Both)]
                 } else {
                     vec![]
                 };
                 keys.append(&mut vec![
-                    ("<space>", "toggle", Show::Compact),
-                    ("<a>", "toggle all", Show::FullOnly),
-                    ("<o>", "open in editor", Show::FullOnly),
-                    ("<C-o>", "back", Show::Compact),
+                    ("<space>", "toggle", Show::Both),
+                    ("a", "toggle all", Show::FullOnly),
+                    ("v", "toggle multiselect mode", Show::FullOnly),
+                    ("o", "open in editor", Show::FullOnly),
+                    ("<C-o>", "back", Show::Both),
                     ("j", "up", Show::FullOnly),
                     ("k", "down", Show::FullOnly),
                     ("<C-u>", "up half a page", Show::FullOnly),
@@ -1231,40 +1361,87 @@ impl App {
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(ref replace_state) => {
                 if !replace_state.errors.is_empty() {
-                    vec![("<j>", "down", Show::Compact), ("<k>", "up", Show::Compact)]
+                    vec![("<j>", "down", Show::Both), ("<k>", "up", Show::Both)]
                 } else {
                     vec![]
                 }
             }
         };
 
+        let is_search_screen = matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        );
+        let esc_help = format!(
+            "quit / close popup{}",
+            if is_search_screen {
+                " / exit multiselect"
+            } else {
+                ""
+            }
+        );
+
         let additional_keys = vec![
             (
                 "<C-r>",
                 "reset",
-                if matches!(
-                    self.current_screen,
-                    Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-                ) {
+                if is_search_screen {
                     Show::FullOnly
                 } else {
-                    Show::Compact
+                    Show::Both
                 },
             ),
-            ("<C-h>", "help", Show::Compact),
-            ("<esc>", "quit", Show::Compact),
+            ("<C-h>", "help", Show::Both),
+            (
+                "<esc>",
+                if self.popup.is_some() {
+                    "close popup"
+                } else if self.multiselect_enabled() {
+                    "exit multiselect"
+                } else {
+                    "quit"
+                },
+                Show::CompactOnly,
+            ),
+            ("<esc>", &esc_help, Show::FullOnly),
+            ("<C-c>", "quit", Show::FullOnly),
         ];
 
         current_keys
             .into_iter()
             .chain(additional_keys)
             .filter_map(move |(from, to, show)| {
-                if !compact || matches!(show, Show::Compact) {
-                    Some((from, to))
+                let include = match show {
+                    Show::Both => true,
+                    Show::CompactOnly => compact,
+                    Show::FullOnly => !compact,
+                };
+                if include {
+                    Some((from, to.to_owned()))
                 } else {
                     None
                 }
             })
+            .collect()
+    }
+
+    fn multiselect_enabled(&self) -> bool {
+        match &self.current_screen {
+            Screen::SearchProgressing(s) => s.search_state.multiselect_enabled(),
+            Screen::SearchComplete(s) => s.multiselect_enabled(),
+            _ => false,
+        }
+    }
+
+    fn toggle_multiselect_mode(&mut self) {
+        match &mut self.current_screen {
+            Screen::SearchProgressing(s) => s.search_state.toggle_multiselect_mode(),
+            Screen::SearchComplete(s) => s.toggle_multiselect_mode(),
+            _ => panic!(
+                "Tried to disable multiselect on {:?}",
+                self.current_screen.name()
+            ),
+        }
     }
 }
 
@@ -1290,8 +1467,8 @@ mod tests {
         }
     }
 
-    fn build_test_search_state(num_results: usize) -> SearchState {
-        let results = (0..num_results)
+    fn build_test_results(num_results: usize) -> Vec<SearchResult> {
+        (0..num_results)
             .map(|i| SearchResult {
                 path: PathBuf::from(format!("test{i}.txt")),
                 line_number: 1,
@@ -1300,7 +1477,11 @@ mod tests {
                 included: true,
                 replace_result: None,
             })
-            .collect();
+            .collect()
+    }
+
+    fn build_test_search_state(num_results: usize) -> SearchState {
+        let results = build_test_results(num_results);
         build_test_search_state_with_results(results)
     }
 
@@ -1308,7 +1489,7 @@ mod tests {
         let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
         SearchState {
             results,
-            selected: 0,
+            selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: Some(5),
             processing_receiver,
@@ -1496,21 +1677,21 @@ mod tests {
     async fn test_search_state_movement_single() {
         let mut state = build_test_search_state(3);
 
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_down();
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected, Selected::Single(1));
         state.move_selected_down();
-        assert_eq!(state.selected(), 2);
+        assert_eq!(state.selected, Selected::Single(2));
         state.move_selected_down();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_down();
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected, Selected::Single(1));
         state.move_selected_up();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_up();
-        assert_eq!(state.selected(), 2);
+        assert_eq!(state.selected, Selected::Single(2));
         state.move_selected_up();
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected, Selected::Single(1));
     }
 
     #[tokio::test]
@@ -1518,72 +1699,188 @@ mod tests {
         let mut state = build_test_search_state(3);
 
         state.move_selected_top();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_bottom();
-        assert_eq!(state.selected(), 2);
+        assert_eq!(state.selected, Selected::Single(2));
         state.move_selected_bottom();
-        assert_eq!(state.selected(), 2);
+        assert_eq!(state.selected, Selected::Single(2));
         state.move_selected_top();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
     }
 
     #[tokio::test]
     async fn test_search_state_movement_half_page_increments() {
         let mut state = build_test_search_state(8);
 
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_down_half_page();
-        assert_eq!(state.selected(), 3);
+        assert_eq!(state.selected, Selected::Single(3));
         state.move_selected_down_half_page();
-        assert_eq!(state.selected(), 6);
+        assert_eq!(state.selected, Selected::Single(6));
         state.move_selected_down_half_page();
-        assert_eq!(state.selected(), 7);
+        assert_eq!(state.selected, Selected::Single(7));
         state.move_selected_up_half_page();
-        assert_eq!(state.selected(), 4);
+        assert_eq!(state.selected, Selected::Single(4));
         state.move_selected_up_half_page();
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected, Selected::Single(1));
         state.move_selected_up_half_page();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_up_half_page();
-        assert_eq!(state.selected(), 7);
+        assert_eq!(state.selected, Selected::Single(7));
         state.move_selected_up_half_page();
-        assert_eq!(state.selected(), 4);
+        assert_eq!(state.selected, Selected::Single(4));
         state.move_selected_down_half_page();
-        assert_eq!(state.selected(), 7);
+        assert_eq!(state.selected, Selected::Single(7));
         state.move_selected_down_half_page();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
     }
 
     #[tokio::test]
     async fn test_search_state_movement_page_increments() {
         let mut state = build_test_search_state(12);
 
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_down_full_page();
-        assert_eq!(state.selected(), 5);
+        assert_eq!(state.selected, Selected::Single(5));
         state.move_selected_down_full_page();
-        assert_eq!(state.selected(), 10);
+        assert_eq!(state.selected, Selected::Single(10));
         state.move_selected_down_full_page();
-        assert_eq!(state.selected(), 11);
+        assert_eq!(state.selected, Selected::Single(11));
         state.move_selected_down_full_page();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 11);
+        assert_eq!(state.selected, Selected::Single(11));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 6);
+        assert_eq!(state.selected, Selected::Single(6));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 1);
+        assert_eq!(state.selected, Selected::Single(1));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 11);
+        assert_eq!(state.selected, Selected::Single(11));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 6);
+        assert_eq!(state.selected, Selected::Single(6));
         state.move_selected_up();
-        assert_eq!(state.selected(), 5);
+        assert_eq!(state.selected, Selected::Single(5));
         state.move_selected_up();
-        assert_eq!(state.selected(), 4);
+        assert_eq!(state.selected, Selected::Single(4));
         state.move_selected_up_full_page();
-        assert_eq!(state.selected(), 0);
+        assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[test]
+    fn test_selected_fields_movement() {
+        let mut results = build_test_results(10);
+        let mut state = build_test_search_state_with_results(results.clone());
+
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 0,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 2,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+    }
+
+    #[test]
+    fn test_selected_fields_toggling() {
+        let mut state = build_test_search_state(6);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 4,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[4..=4]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, true, true, true, true]
+        );
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, false, false, false, true]
+        );
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &state.results[2..=2]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &state.results[0..=0]);
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![false, true, false, false, false, true]
+        );
     }
 }

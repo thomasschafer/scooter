@@ -523,4 +523,79 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 
     shutdown(event_sender, run_handle).await
 }
+
+#[tokio::test]
+async fn test_multi_select_mode() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+
+    // Highlight 3rd to 6th search result with multiselect, and 8th with single selection
+    send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('v'), &event_sender); // Enable multiselect
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender); // Toggle multiple selected
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Esc, &event_sender); // Exit multiselect
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    changed values = Vec::new();",
+            "    changed mut items = data.clone();",
+            "    changed result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    changed mut sum = 0;",
+            "    let multiplier = 2;",
+            "    changed base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
 // TODO: add tests for using fixed strings
