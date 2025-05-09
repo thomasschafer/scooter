@@ -831,7 +831,6 @@ impl App {
         }
     }
 
-    // TODO: add an end-to-end test for ignored results
     pub fn perform_replacement(
         search_state: SearchState,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
