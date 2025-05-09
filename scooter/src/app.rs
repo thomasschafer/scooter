@@ -837,7 +837,8 @@ impl App {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
-            for res in search_state.results.into_iter().filter(|res| res.included) {
+            let (included, num_ignored) = split_results(search_state.results);
+            for res in included {
                 path_groups.entry(res.path.clone()).or_default().push(res);
             }
 
@@ -863,7 +864,7 @@ impl App {
                 .await
                 .into_iter()
                 .flat_map(Result::unwrap);
-            let replace_state = Self::calculate_statistics(replacement_results);
+            let replace_state = Self::calculate_statistics(replacement_results, num_ignored);
 
             // Ignore error: we may have gone back to the previous screen
             let _ = background_processing_sender.send(
@@ -1198,34 +1199,33 @@ impl App {
         false
     }
 
-    fn calculate_statistics<I>(results: I) -> ReplaceState
+    fn calculate_statistics<I>(results: I, num_ignored: usize) -> ReplaceState
     where
         I: IntoIterator<Item = SearchResult>,
     {
         let mut num_successes = 0;
-        let mut num_ignored = 0;
         let mut errors = vec![];
 
-        results
-            .into_iter()
-            .for_each(|res| match (res.included, &res.replace_result) {
-                (false, _) => {
-                    num_ignored += 1;
-                }
-                (_, Some(ReplaceResult::Success)) => {
+        results.into_iter().for_each(|res| {
+            if !res.included {
+                panic!("Expected only included results, found {res:?}");
+            };
+            match &res.replace_result {
+                Some(ReplaceResult::Success) => {
                     num_successes += 1;
                 }
-                (_, None) => {
+                None => {
                     let mut res = res.clone();
                     res.replace_result = Some(ReplaceResult::Error(
                         "Failed to find search result in file".to_owned(),
                     ));
                     errors.push(res);
                 }
-                (_, Some(ReplaceResult::Error(_))) => {
+                Some(ReplaceResult::Error(_)) => {
                     errors.push(res.clone());
                 }
-            });
+            }
+        });
 
         ReplaceState {
             num_successes,
@@ -1445,6 +1445,12 @@ impl App {
     }
 }
 
+fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
+    let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
+    let num_ignored = excluded.len();
+    (included, num_ignored)
+}
+
 #[cfg(test)]
 mod tests {
     use rand::Rng;
@@ -1608,7 +1614,8 @@ mod tests {
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
         let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            App::calculate_statistics(search_state.results)
+            let (results, num_ignored) = split_results(search_state.results);
+            App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1635,7 +1642,8 @@ mod tests {
             ignored_result(),
         ]);
         let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            App::calculate_statistics(search_state.results)
+            let (results, num_ignored) = split_results(search_state.results);
+            App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };

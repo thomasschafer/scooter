@@ -39,6 +39,34 @@ macro_rules! create_test_files {
     };
 }
 
+#[macro_export]
+macro_rules! overwrite_files {
+    ($base_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
+        {
+            use std::path::Path;
+            use tokio::fs::File;
+            use tokio::io::AsyncWriteExt;
+
+            async move {
+                $(
+                    let contents = concat!($($line,"\n",)+);
+                    let path = Path::new($base_dir).join($name);
+
+                    if !path.exists() {
+                        panic!("File does not exist: {}", path.display());
+                    }
+                    let mut file = File::create(&path).await.unwrap();
+                    file.write_all(contents.as_bytes()).await.unwrap();
+                    file.sync_all().await.unwrap();
+                )+
+
+                #[cfg(windows)]
+                let _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }.await
+        }
+    };
+}
+
 pub fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
