@@ -164,7 +164,7 @@ where
                             self.tui.show_cursor()?;
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
-                                    if self.app.config.editor_open.as_ref().map(|c| c.exit).unwrap_or(false) {
+                                    if self.app.config.editor_open.exit {
                                         res = EventHandlingResult::Exit;
                                     }
                                 }
@@ -210,13 +210,7 @@ where
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        match &self
-            .app
-            .config
-            .editor_open
-            .as_ref()
-            .and_then(|c| c.command.clone())
-        {
+        match &self.app.config.editor_open.command {
             Some(command) => {
                 self.open_editor_from_command(command, file_path, line)?;
             }
