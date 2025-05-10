@@ -1,5 +1,3 @@
-// TODO(config): this logic needs a big refactor to merge specified config options with defaults,
-// rather than having defaults specified in multiple places
 use anyhow::anyhow;
 use serde::{de, Deserialize, Deserializer};
 use std::{fs, path::PathBuf, sync::OnceLock};
@@ -34,23 +32,26 @@ fn themes_folder() -> PathBuf {
     config_dir().join("themes/")
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_theme() -> Theme {
-    load_theme("base16-eighties.dark").unwrap()
-}
-
-// TODO(config): refactor this to merge options specified with defaults
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub editor_open: Option<EditorOpenConfig>,
-    pub preview: Option<PreviewConfig>,
+    #[serde(default)]
+    pub editor_open: EditorOpenConfig,
+    #[serde(default)]
+    pub preview: PreviewConfig,
 }
 
-#[derive(Debug, Deserialize)]
+impl Default for Config {
+    fn default() -> Self {
+        toml::from_str("").expect("Empty config should deserialize with defaults")
+    }
+}
+
+fn default_exit() -> bool {
+    false
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EditorOpenConfig {
     /// The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced
@@ -59,17 +60,27 @@ pub struct EditorOpenConfig {
     /// [editor_open]
     /// command = "vi %file +%line"
     /// ```
+    #[serde(default)]
     pub command: Option<String>,
     /// Whether to exit after running the command defined by `editor_open.command`.
-    #[serde(default)]
+    #[serde(default = "default_exit")]
     pub exit: bool,
 }
 
-#[derive(Debug, Deserialize)]
+impl Default for EditorOpenConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            exit: default_exit(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewConfig {
     /// Whether to apply syntax highlighting to the preview.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_syntax_highlighting")]
     pub syntax_highlighting: bool,
     /// The theme to use when syntax highlighting is enabled.
     ///
@@ -82,19 +93,26 @@ pub struct PreviewConfig {
     /// wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
     /// ```
     /// and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
-    #[serde(deserialize_with = "deserialize_theme", default = "default_theme")]
+    #[serde(
+        deserialize_with = "deserialize_syntax_highlighting_theme",
+        default = "default_syntax_highlighting_theme"
+    )]
     pub syntax_highlighting_theme: Theme,
 }
 
-#[allow(clippy::derivable_impls)]
-impl Default for Config {
+fn default_syntax_highlighting() -> bool {
+    true
+}
+
+fn default_syntax_highlighting_theme() -> Theme {
+    load_theme("base16-eighties.dark").unwrap()
+}
+
+impl Default for PreviewConfig {
     fn default() -> Self {
-        Self {
-            editor_open: None,
-            preview: Some(PreviewConfig {
-                syntax_highlighting: true,
-                syntax_highlighting_theme: default_theme(),
-            }),
+        PreviewConfig {
+            syntax_highlighting: default_syntax_highlighting(),
+            syntax_highlighting_theme: default_syntax_highlighting_theme(),
         }
     }
 }
@@ -110,7 +128,7 @@ fn load_theme(theme_name: &str) -> anyhow::Result<Theme> {
     }
 }
 
-fn deserialize_theme<'de, D>(deserializer: D) -> Result<Theme, D::Error>
+fn deserialize_syntax_highlighting_theme<'de, D>(deserializer: D) -> Result<Theme, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -121,15 +139,11 @@ where
 impl Config {
     /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
     /// is the user's selected theme or otherwise the default
-    // TODO(config): make it easier to get default - refactor Config, then simplify this whole method
     pub(crate) fn get_theme(&self) -> Option<&Theme> {
-        match &self.preview {
-            Some(p) if p.syntax_highlighting => Some(&p.syntax_highlighting_theme),
-            Some(_) => None,
-            None => {
-                static DEFAULT: OnceLock<Theme> = OnceLock::new();
-                Some(DEFAULT.get_or_init(default_theme))
-            }
+        if self.preview.syntax_highlighting {
+            Some(&self.preview.syntax_highlighting_theme)
+        } else {
+            None
         }
     }
 }
@@ -150,22 +164,131 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_empty_config_file() -> anyhow::Result<()> {
+        let config: Config = toml::from_str("")?;
+        let default_config = Config::default();
+        assert_eq!(config, default_config);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_config_editor_only() -> anyhow::Result<()> {
+        let config: Config = toml::from_str(
+            r#"
+[editor_open]
+command = "vim %file +%line"
+"#,
+        )?;
+
+        assert_eq!(
+            config.editor_open.command,
+            Some("vim %file +%line".to_string())
+        );
+        assert!(!config.editor_open.exit);
+
+        let default_preview = PreviewConfig::default();
+        assert_eq!(
+            config.preview.syntax_highlighting,
+            default_preview.syntax_highlighting
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_config_preview_only() -> anyhow::Result<()> {
+        let config: Config = toml::from_str(
+            r#"
+[preview]
+syntax_highlighting = false
+"#,
+        )?;
+
+        assert!(!config.preview.syntax_highlighting);
+        assert_eq!(
+            config.preview.syntax_highlighting_theme.name,
+            default_syntax_highlighting_theme().name
+        );
+
+        let default_editor_open = EditorOpenConfig::default();
+        assert_eq!(config.editor_open.command, default_editor_open.command);
+        assert_eq!(config.editor_open.exit, default_editor_open.exit);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_full_config() -> anyhow::Result<()> {
+        let config: Config = toml::from_str(
+            r#"
+[editor_open]
+command = "nvim %file +%line"
+exit = true
+
+[preview]
+syntax_highlighting = false
+syntax_highlighting_theme = "Solarized (light)"
+"#,
+        )?;
+
+        assert_eq!(
+            config.editor_open.command,
+            Some("nvim %file +%line".to_string())
+        );
+        assert!(config.editor_open.exit);
+        assert!(!config.preview.syntax_highlighting);
+        assert_eq!(
+            config.preview.syntax_highlighting_theme.name,
+            Some("Solarized (light)".to_string())
+        );
+        assert_eq!(
+            config,
+            Config {
+                editor_open: EditorOpenConfig {
+                    command: Some("nvim %file +%line".to_owned()),
+                    exit: true,
+                },
+                preview: PreviewConfig {
+                    syntax_highlighting: false,
+                    syntax_highlighting_theme: load_theme("Solarized (light)").unwrap(),
+                }
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_missing_editor_exit_field() -> anyhow::Result<()> {
+        let config: Config = toml::from_str(
+            r#"
+[editor_open]
+command = "vim %file +%line"
+"#,
+        )?;
+
+        assert!(!config.editor_open.exit);
+        Ok(())
+    }
+
+    #[test]
     fn test_get_theme_none() {
-        let config = Config {
-            editor_open: None,
-            preview: None,
-        };
-        assert_eq!(config.get_theme(), Some(&default_theme()),);
+        let config = Config::default();
+        assert_eq!(
+            config.get_theme(),
+            Some(&default_syntax_highlighting_theme())
+        );
     }
 
     #[test]
     fn test_get_theme_disabled() {
         let config = Config {
-            editor_open: None,
-            preview: Some(PreviewConfig {
+            editor_open: EditorOpenConfig::default(),
+            preview: PreviewConfig {
                 syntax_highlighting: false,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
-            }),
+            },
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -173,11 +296,11 @@ mod tests {
     #[test]
     fn test_get_theme_enabled_with_theme() {
         let config = Config {
-            editor_open: None,
-            preview: Some(PreviewConfig {
+            editor_open: EditorOpenConfig::default(),
+            preview: PreviewConfig {
                 syntax_highlighting: true,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
-            }),
+            },
         };
         assert_eq!(
             config.get_theme(),
