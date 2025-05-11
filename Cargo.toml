@@ -1,9 +1,12 @@
 [workspace]
-members = [
-    "scooter",
-    "xtask",
-]
+members = ["scooter", "xtask"]
 resolver = "2"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
 
 [profile.release]
 lto = true

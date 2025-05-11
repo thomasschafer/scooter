@@ -183,7 +183,7 @@ where
 
                         }
                         Event::App(app_event) => {
-                            self.app.handle_app_event(app_event).await
+                            self.app.handle_app_event(app_event)
                         }
                     }
                 }

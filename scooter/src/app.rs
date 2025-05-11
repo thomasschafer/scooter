@@ -756,12 +756,12 @@ impl App {
                         ..
                     },
                 ..
-            }) => processing_receiver.recv().await,
-            Screen::SearchComplete(SearchState {
+            })
+            | Screen::SearchComplete(SearchState {
                 processing_receiver,
                 ..
-            }) => processing_receiver.recv().await,
-            Screen::PerformingReplacement(PerformingReplacementState {
+            })
+            | Screen::PerformingReplacement(PerformingReplacementState {
                 processing_receiver,
                 ..
             }) => processing_receiver.recv().await,
@@ -769,7 +769,7 @@ impl App {
         }
     }
 
-    pub async fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
+    pub fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
