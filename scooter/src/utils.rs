@@ -11,9 +11,9 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
-pub fn replace_start(s: String, from: &str, to: &str) -> String {
+pub fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
-        format!("{}{}", to, stripped)
+        format!("{to}{stripped}")
     } else {
         s.to_string()
     }
@@ -22,7 +22,7 @@ pub fn replace_start(s: String, from: &str, to: &str) -> String {
 pub fn relative_path_from(root_dir: &Path, path: &Path) -> String {
     let root_dir = root_dir.to_str().unwrap();
     let path = path.to_str().unwrap().to_owned();
-    replace_start(path, root_dir, ".")
+    replace_start(&path, root_dir, ".")
 }
 
 pub fn group_by<I, T, F>(iter: I, predicate: F) -> Vec<Vec<T>>
@@ -82,9 +82,10 @@ pub fn read_lines_range(
     start: usize,
     end: usize,
 ) -> io::Result<impl Iterator<Item = (usize, String)>> {
-    if start > end {
-        panic!("Expected start <= end, found start={start}, end={end}");
-    }
+    assert!(
+        start <= end,
+        "Expected start <= end, found start={start}, end={end}"
+    );
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
@@ -122,6 +123,7 @@ impl<'a> HighlightedLinesIterator<'a> {
     ) -> io::Result<Self> {
         let start_idx = start_idx.unwrap_or(0);
         if let Some(end_idx) = end_idx {
+            #[allow(clippy::manual_assert)]
             if start_idx > end_idx {
                 panic!("Expected start <= end, found start={start_idx}, end={end_idx}");
             }
@@ -286,14 +288,11 @@ pub fn largest_range_centered_on(
     upper_bound: usize,
     max_size: usize,
 ) -> (usize, usize) {
-    if centre < lower_bound || centre > upper_bound {
-        panic!(
-            "Expected start<=pos<=end, found start={lower_bound}, pos={centre}, end={upper_bound}"
-        );
-    }
-    if max_size == 0 {
-        panic!("Expected max_size > 0, found {max_size}");
-    }
+    assert!(
+        lower_bound <= centre && centre <= upper_bound,
+        "Expected start<=pos<=end, found start={lower_bound}, pos={centre}, end={upper_bound}"
+    );
+    assert!(max_size > 0, "Expected max_size > 0, found {max_size}");
 
     let mut cur_size = 1;
     let mut cur_start = centre;
@@ -377,35 +376,35 @@ mod tests {
 
     #[test]
     fn test_replace_start_matching_prefix() {
-        assert_eq!(replace_start("abac".to_string(), "a", "z"), "zbac");
+        assert_eq!(replace_start("abac", "a", "z"), "zbac");
     }
 
     #[test]
     fn test_replace_start_no_match() {
-        assert_eq!(replace_start("bac".to_string(), "a", "z"), "bac");
+        assert_eq!(replace_start("bac", "a", "z"), "bac");
     }
 
     #[test]
     fn test_replace_start_empty_string() {
-        assert_eq!(replace_start("".to_string(), "a", "z"), "");
+        assert_eq!(replace_start("", "a", "z"), "");
     }
 
     #[test]
     fn test_replace_start_longer_prefix() {
         assert_eq!(
-            replace_start("hello world hello there".to_string(), "hello", "hi"),
+            replace_start("hello world hello there", "hello", "hi"),
             "hi world hello there"
         );
     }
 
     #[test]
     fn test_replace_start_whole_string() {
-        assert_eq!(replace_start("abc".to_string(), "abc", "xyz"), "xyz");
+        assert_eq!(replace_start("abc", "abc", "xyz"), "xyz");
     }
 
     #[test]
     fn test_replace_start_empty_from() {
-        assert_eq!(replace_start("abc".to_string(), "", "xyz"), "xyzabc");
+        assert_eq!(replace_start("abc", "", "xyz"), "xyzabc");
     }
 
     #[test]

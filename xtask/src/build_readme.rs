@@ -88,11 +88,11 @@ fn generate_contents_table(content: &str) -> String {
         if line.starts_with("## ") && *line != TOC_HEADING {
             let title = &line[3..];
             let anchor = create_anchor(title);
-            toc.push_str(&format!("- [{}](#{})\n", title, anchor));
+            toc.push_str(&format!("- [{title}](#{anchor})\n"));
         } else if let Some(title) = line.strip_prefix("### ") {
             if !in_config_section(content, &lines, i) {
                 let anchor = create_anchor(title);
-                toc.push_str(&format!("  - [{}](#{})\n", title, anchor));
+                toc.push_str(&format!("  - [{title}](#{anchor})\n"));
             }
         }
     }
@@ -216,10 +216,10 @@ fn process_struct(
                     let toml_path = if toml_prefix.is_empty() {
                         field_name.clone()
                     } else {
-                        format!("{}.{}", toml_prefix, field_name)
+                        format!("{toml_prefix}.{field_name}")
                     };
 
-                    docs.push_str(&format!("### `[{}]` section\n\n", toml_path));
+                    docs.push_str(&format!("### `[{toml_path}]` section\n\n",));
 
                     if !field_doc.is_empty() {
                         docs.push_str(&field_doc);
@@ -228,7 +228,7 @@ fn process_struct(
 
                     process_struct(docs, nested_struct, all_structs, &toml_path);
                 } else {
-                    docs.push_str(&format!("#### `{}`\n\n", field_name));
+                    docs.push_str(&format!("#### `{field_name}`\n\n",));
                     docs.push_str(&field_doc);
                     docs.push_str("\n\n");
                 }

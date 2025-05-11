@@ -64,9 +64,9 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             field.read().render(
                 frame,
                 field_area,
-                name.title().to_owned(),
+                name.title(),
                 idx == app.search_fields.highlighted,
-            )
+            );
         });
 
     if !app.show_popup() {
@@ -74,9 +74,9 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             let highlighted_area = areas[app.search_fields.highlighted];
 
             frame.set_cursor(
-                highlighted_area.x + cursor_pos as u16 + 1,
+                highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
                 highlighted_area.y + 1,
-            )
+            );
         }
     }
 }
@@ -103,11 +103,11 @@ fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
         let mut style = Style::new().fg(d.fg_colour);
         if let Some(bg) = d.bg_colour {
-            style = style.bg(bg)
+            style = style.bg(bg);
         };
         Span::styled(strip_control_chars(&d.text), style)
     });
-    Line::from_iter(diff_iter)
+    diff_iter.collect()
 }
 
 pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Diff>) {
@@ -167,7 +167,7 @@ fn render_confirmation_view(
     frame: &mut Frame<'_>,
     is_complete: bool,
     search_state: &mut SearchState,
-    base_path: PathBuf,
+    base_path: &Path,
     area: Rect,
     theme: Option<&Theme>,
     event_sender: UnboundedSender<Event>,
@@ -279,12 +279,12 @@ fn render_confirmation_view(
     }
 }
 
-fn build_search_results(
-    search_state: &mut SearchState,
-    base_path: PathBuf,
+fn build_search_results<'a>(
+    search_state: &'a mut SearchState,
+    base_path: &Path,
     width: u16,
     num_to_render: usize,
-) -> Vec<SearchResultLines<'_>> {
+) -> Vec<SearchResultLines<'a>> {
     search_state
         .results
         .iter()
@@ -297,7 +297,7 @@ fn build_search_results(
                 search_state.is_selected(idx),
                 search_state.is_primary_selected(idx),
                 result,
-                &base_path,
+                base_path,
                 width,
             )
         })
@@ -329,17 +329,19 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
 
 fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
     let prefix = "  ";
-    ListItem::new(Line::from_iter(iter::once(Span::raw(prefix)).chain(
-        line.iter().map(|(style, s)| {
-            Span::styled(
-                strip_control_chars(s),
-                match style {
-                    Some(style) => convert_syntect_to_ratatui_style(style),
-                    None => Style::default(),
-                },
-            )
-        }),
-    )))
+    ListItem::new(
+        iter::once(Span::raw(prefix))
+            .chain(line.iter().map(|(style, s)| {
+                Span::styled(
+                    strip_control_chars(s),
+                    match style {
+                        Some(style) => convert_syntect_to_ratatui_style(style),
+                        None => Style::default(),
+                    },
+                )
+            }))
+            .collect::<Line<'_>>(),
+    )
 }
 
 fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
@@ -611,13 +613,13 @@ fn render_results_view(frame: &mut Frame<'_>, replace_state: &ReplaceState, area
 }
 
 const ERROR_ITEM_HEIGHT: u16 = 3;
-const NUM_TALLIES: usize = 3;
+const NUM_TALLIES: u16 = 3;
 
 fn render_results_success(area: Rect, replace_state: &ReplaceState, frame: &mut Frame<'_>) {
     let [_, success_title_area, results_area, _] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
-        Constraint::Length(ERROR_ITEM_HEIGHT * NUM_TALLIES as u16), // TODO: find a better way of doing this
+        Constraint::Length(ERROR_ITEM_HEIGHT * NUM_TALLIES), // TODO: find a better way of doing this
         Constraint::Fill(1),
     ])
     .flex(Flex::Start)
@@ -628,7 +630,7 @@ fn render_results_success(area: Rect, replace_state: &ReplaceState, frame: &mut 
     let text = "Success!";
     let area = center(
         success_title_area,
-        Constraint::Length(text.len() as u16), // TODO: find a better way of doing this
+        Constraint::Length(u16::try_from(text.len()).unwrap_or(u16::MAX)), // TODO: find a better way of doing this
         Constraint::Length(1),
     );
     frame.render_widget(Text::raw(text), area);
@@ -636,7 +638,7 @@ fn render_results_success(area: Rect, replace_state: &ReplaceState, frame: &mut 
 
 fn render_results_errors(area: Rect, replace_state: &ReplaceState, frame: &mut Frame<'_>) {
     let [results_area, list_title_area, list_area] = Layout::vertical([
-        Constraint::Length(ERROR_ITEM_HEIGHT * NUM_TALLIES as u16), // TODO: find a better way of doing this
+        Constraint::Length(ERROR_ITEM_HEIGHT * NUM_TALLIES), // TODO: find a better way of doing this
         Constraint::Length(1),
         Constraint::Fill(1),
     ])
@@ -653,7 +655,7 @@ fn render_results_errors(area: Rect, replace_state: &ReplaceState, frame: &mut F
                     Some(ReplaceResult::Error(error)) => error,
                     None => panic!("Found error result with no error message"),
                     Some(ReplaceResult::Success) => {
-                        panic!("Found successful result in errors: {:?}", res)
+                        panic!("Found successful result in errors: {res:?}")
                     }
                 },
             )
@@ -675,7 +677,7 @@ fn render_results_tallies(results_area: Rect, frame: &mut Frame<'_>, replace_sta
     ])
     .flex(Flex::Start)
     .areas(results_area);
-    let widgets: [_; NUM_TALLIES] = [
+    let widgets: [_; NUM_TALLIES as usize] = [
         (
             "Successful replacements:",
             replace_state.num_successes,
@@ -761,7 +763,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 
     render_key_hints(app, frame, footer_area);
 
-    let base_path = app.directory.clone();
+    let base_path = &app.directory;
     match &mut app.current_screen {
         Screen::SearchFields => render_search_view(frame, app, content_area),
         Screen::SearchProgressing(ref mut s) => {
@@ -847,12 +849,12 @@ fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: 
         .max()
         .unwrap_or(0);
 
-    let from_column_width = max_from_width as u16 + 2;
+    let from_column_width = u16::try_from(max_from_width + 2).unwrap_or(u16::MAX);
 
     let rows: Vec<Row<'_>> = keymaps
         .into_iter()
         .map(|(from, to)| {
-            let padded_from = format!("  {:>width$} ", from, width = max_from_width);
+            let padded_from = format!("  {from:>max_from_width$} ");
 
             Row::new(vec![
                 Cell::from(Span::styled(padded_from, Style::default().fg(Color::Blue))),
@@ -869,7 +871,7 @@ fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: 
 }
 
 fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame<'_>, area: Rect) {
-    let content_height = content.len() as u16 + 2;
+    let content_height = u16::try_from(content.len()).unwrap() + 2;
     let popup_area = get_popup_area(area, content_height);
 
     let popup = Paragraph::new(content).block(create_popup_block(title));
@@ -884,7 +886,7 @@ fn render_table_popup(
     frame: &mut Frame<'_>,
     area: Rect,
 ) {
-    let content_height = row_count as u16 + 2;
+    let content_height = u16::try_from(row_count + 2).unwrap_or(u16::MAX);
     let popup_area = get_popup_area(area, content_height);
 
     let table = table.block(create_popup_block(title));
@@ -1135,7 +1137,7 @@ mod tests {
     #[test]
     fn test_split_lines_centered() {
         let lines: Vec<(usize, String)> =
-            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+            (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
         let (before, cur, after) = split_indexed_lines(lines, 5, 5);
 
@@ -1153,7 +1155,7 @@ mod tests {
     #[test]
     fn test_split_lines_at_start() {
         let lines: Vec<(usize, String)> =
-            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+            (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
         let (before, cur, after) = split_indexed_lines(lines, 0, 3);
 
@@ -1168,7 +1170,7 @@ mod tests {
     #[test]
     fn test_split_lines_at_end() {
         let lines: Vec<(usize, String)> =
-            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+            (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
         let (before, cur, after) = split_indexed_lines(lines, 10, 3);
 
@@ -1183,7 +1185,7 @@ mod tests {
     #[test]
     fn test_split_lines_with_small_window() {
         let lines: Vec<(usize, String)> =
-            (0..=10).map(|idx| (idx, format!("Line {}", idx))).collect();
+            (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
         let (before, cur, after) = split_indexed_lines(lines, 5, 1);
 
@@ -1194,9 +1196,9 @@ mod tests {
 
     #[test]
     fn test_split_lines_with_custom_data_type() {
-        let lines: Vec<(usize, Vec<u8>)> = (0..=5)
-            .map(|idx| (idx, vec![idx as u8, (idx * 2) as u8]))
-            .collect();
+        let lines = (0..=5)
+            .map(|idx| (idx, vec![idx, (idx * 2)]))
+            .collect::<Vec<_>>();
 
         let (before, cur, after) = split_indexed_lines(lines, 3, 2);
 
@@ -1243,8 +1245,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected start<=pos<=end, found start=0, pos=10, end=5")]
     fn test_split_lines_line_idx_not_found() {
-        let lines: Vec<(usize, String)> =
-            (0..=5).map(|idx| (idx, format!("Line {}", idx))).collect();
+        let lines: Vec<(usize, String)> = (0..=5).map(|idx| (idx, format!("Line {idx}"))).collect();
 
         let _ = split_indexed_lines(lines, 10, 3);
         // Should panic because line 10 is not in the data

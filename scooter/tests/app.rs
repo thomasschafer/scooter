@@ -22,12 +22,12 @@ async fn test_replace_state() {
         num_ignored: 1,
         errors: (1..3)
             .map(|n| SearchResult {
-                path: PathBuf::from(format!("error-{}.txt", n)),
+                path: PathBuf::from(format!("error-{n}.txt")),
                 line_number: 1,
-                line: format!("line {}", n),
-                replacement: format!("error replacement {}", n),
+                line: format!("line {n}"),
+                replacement: format!("error replacement {n}"),
                 included: true,
-                replace_result: Some(ReplaceResult::Error(format!("Test error {}", n))),
+                replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
             })
             .collect::<Vec<_>>(),
         replacement_errors_pos: 0,
@@ -73,14 +73,12 @@ async fn test_back_from_results() {
         exclude_files: "",
     });
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Char('o'),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Char('o'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res != EventHandlingResult::Exit);
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
@@ -90,7 +88,7 @@ async fn test_back_from_results() {
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
+fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     app.current_screen = Screen::SearchFields;
     app.search_fields = SearchFields::with_values(search_fields);
@@ -100,25 +98,21 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
     assert!(matches!(app.current_screen, Screen::SearchFields));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res != EventHandlingResult::Exit);
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert_eq!(res, EventHandlingResult::Exit);
 }
 
@@ -132,8 +126,7 @@ async fn test_error_popup_invalid_search() {
         match_case: true,
         include_files: "",
         exclude_files: "",
-    })
-    .await;
+    });
 }
 
 #[tokio::test]
@@ -146,8 +139,7 @@ async fn test_error_popup_invalid_include_files() {
         match_case: true,
         include_files: "foo{",
         exclude_files: "",
-    })
-    .await;
+    });
 }
 
 #[tokio::test]
@@ -160,11 +152,10 @@ async fn test_error_popup_invalid_exclude_files() {
         match_case: true,
         include_files: "",
         exclude_files: "bar{",
-    })
-    .await;
+    });
 }
 
-async fn test_help_popup_on_screen(initial_screen: Screen) {
+fn test_help_popup_on_screen(initial_screen: Screen) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     let screen_variant = std::mem::discriminant(&initial_screen);
     app.current_screen = initial_screen;
@@ -172,26 +163,22 @@ async fn test_help_popup_on_screen(initial_screen: Screen) {
     assert!(app.popup().is_none());
     assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_open = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Char('h'),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res_open = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Char('h'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res_open == EventHandlingResult::Rerender);
     assert!(matches!(app.popup(), Some(Popup::Help)));
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_close = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res_close = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res_close == EventHandlingResult::Rerender);
     assert!(app.popup().is_none());
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
@@ -199,7 +186,7 @@ async fn test_help_popup_on_screen(initial_screen: Screen) {
 
 #[tokio::test]
 async fn test_help_popup_on_search_fields() {
-    test_help_popup_on_screen(Screen::SearchFields).await;
+    test_help_popup_on_screen(Screen::SearchFields);
 }
 
 #[tokio::test]
@@ -207,7 +194,7 @@ async fn test_help_popup_on_search_in_progress() {
     let (_sender, receiver) = mpsc::unbounded_channel();
     let initial_screen =
         Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
-    test_help_popup_on_screen(initial_screen).await;
+    test_help_popup_on_screen(initial_screen);
 }
 
 #[tokio::test]
@@ -226,7 +213,7 @@ async fn test_help_popup_on_search_complete() {
     let mut search_state = SearchState::new(receiver);
     search_state.results = results;
 
-    test_help_popup_on_screen(Screen::SearchComplete(search_state)).await;
+    test_help_popup_on_screen(Screen::SearchComplete(search_state));
 }
 
 #[tokio::test]
@@ -234,7 +221,7 @@ async fn test_help_popup_on_performing_replacement() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let initial_screen =
         Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
-    test_help_popup_on_screen(initial_screen).await;
+    test_help_popup_on_screen(initial_screen);
 }
 
 #[tokio::test]
@@ -245,7 +232,7 @@ async fn test_help_popup_on_results() {
         errors: vec![],
         replacement_errors_pos: 0,
     };
-    test_help_popup_on_screen(Screen::Results(results_state)).await;
+    test_help_popup_on_screen(Screen::Results(results_state));
 }
 
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
@@ -266,6 +253,7 @@ async fn process_bp_events(app: &mut App) {
 
     while let Some(event) = app.background_processing_recv().await {
         app.handle_background_processing_event(event);
+        #[allow(clippy::manual_assert)]
         if start.elapsed() > timeout {
             panic!("Couldn't process background events in a reasonable time");
         }

@@ -50,8 +50,8 @@ impl Pattern {
         Self::String(s.to_owned())
     }
 
-    fn regex_must_compile(pattern: String) -> Self {
-        Pattern::Regex(Regex::new(&pattern).unwrap())
+    fn regex_must_compile(pattern: &str) -> Self {
+        Pattern::Regex(Regex::new(pattern).unwrap())
     }
 
     fn final_screen(
@@ -65,7 +65,7 @@ impl Pattern {
             if success { "Success!(.|\n)*" } else { "" },
             if success { "" } else { "Errors:" },
         );
-        Pattern::regex_must_compile(s)
+        Pattern::regex_must_compile(&s)
     }
 
     fn is_match(&self, text: &str) -> bool {
@@ -101,7 +101,7 @@ async fn wait_for_text(
                     None => bail!("Channel closed while waiting for pattern: {}", pattern.as_str()),
                 }
             }
-            _ = sleep(timeout - start.elapsed()) => {
+            () = sleep(timeout - start.elapsed()) => {
                 break;
             }
         }

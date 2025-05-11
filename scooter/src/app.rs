@@ -316,6 +316,8 @@ pub struct ReplaceState {
 impl ReplaceState {
     fn handle_key_results(&mut self, key: &KeyEvent) -> bool {
         let mut exit = false;
+
+        #[allow(clippy::match_same_arms)]
         match (key.code, key.modifiers) {
             (KeyCode::Char('j') | KeyCode::Down, _)
             | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -410,12 +412,9 @@ pub enum Screen {
 impl Screen {
     fn search_results_mut(&mut self) -> &mut SearchState {
         match self {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. }) => search_state,
-            Screen::SearchComplete(search_state) => search_state,
-            _ => panic!(
-                "Expected SearchInProgress or SearchComplete, found {:?}",
-                self
-            ),
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(search_state) => search_state,
+            _ => panic!("Expected SearchInProgress or SearchComplete, found {self:?}",),
         }
     }
 
@@ -555,6 +554,7 @@ impl SearchFields {
     define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         Self {
             fields: [
@@ -640,11 +640,11 @@ impl SearchFields {
         let search = self.search();
         let search_text = search.text();
         let result = if self.fixed_strings().checked {
-            SearchType::Fixed(search_text)
+            SearchType::Fixed(search_text.to_string())
         } else if self.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(&search_text)?)
+            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
         } else {
-            SearchType::Pattern(Regex::new(&search_text)?)
+            SearchType::Pattern(Regex::new(search_text)?)
         };
         Ok(result)
     }
@@ -732,7 +732,7 @@ impl App {
             ..
         }) = &mut self.current_screen
         {
-            handle.abort()
+            handle.abort();
         }
     }
 
@@ -769,7 +769,7 @@ impl App {
         }
     }
 
-    pub fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
+    pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
@@ -780,10 +780,7 @@ impl App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
 
-        match self
-            .validate_fields(background_processing_sender.clone())
-            .unwrap()
-        {
+        match self.validate_fields(&background_processing_sender).unwrap() {
             None => {
                 self.current_screen = Screen::SearchFields;
             }
@@ -850,9 +847,9 @@ impl App {
                 let task = tokio::spawn(async move {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
                     if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
-                        results.iter_mut().for_each(|res| {
-                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()))
-                        });
+                        for res in &mut results {
+                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+                        }
                     }
                     drop(permit);
                     results
@@ -981,38 +978,38 @@ impl App {
         }
     }
 
-    pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
+    pub fn handle_key_event(&mut self, key: &KeyEvent) -> EventHandlingResult {
         if key.kind == KeyEventKind::Release {
-            return Ok(EventHandlingResult::Rerender);
+            return EventHandlingResult::Rerender;
         }
 
         if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return Ok(EventHandlingResult::Exit);
+            return EventHandlingResult::Exit;
         };
 
         if self.popup.is_some() {
             self.clear_popup();
-            return Ok(EventHandlingResult::Rerender);
+            return EventHandlingResult::Rerender;
         }
 
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 if self.multiselect_enabled() {
                     self.toggle_multiselect_mode();
-                    return Ok(EventHandlingResult::Rerender);
+                    return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return Ok(EventHandlingResult::Exit);
+                    return EventHandlingResult::Exit;
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
-                return Ok(EventHandlingResult::Rerender);
+                return EventHandlingResult::Rerender;
             }
             (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
                 self.set_popup(Popup::Help);
-                return Ok(EventHandlingResult::Rerender);
+                return EventHandlingResult::Rerender;
             }
             (_, _) => {}
         }
@@ -1024,13 +1021,10 @@ impl App {
                     rerender
                 } else {
                     match &mut self.current_screen {
-                        Screen::SearchProgressing(SearchInProgressState {
-                            search_state, ..
-                        }) => search_state.handle_key(key),
-                        Screen::SearchComplete(search_state) => search_state.handle_key(key),
+                        Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
+                            Screen::SearchComplete(search_state) => search_state.handle_key(key),
                         screen => panic!(
-                            "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
-                            screen
+                            "Expected current_screen to be SearchProgressing or SearchComplete, found {screen:?}",
                         ),
                     }
                 }
@@ -1038,11 +1032,11 @@ impl App {
             Screen::PerformingReplacement(_) => false,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
         };
-        Ok(if exit {
+        if exit {
             EventHandlingResult::Exit
         } else {
             EventHandlingResult::Rerender
-        })
+        }
     }
 
     fn is_regex_error(e: &Error) -> bool {
@@ -1052,7 +1046,7 @@ impl App {
 
     fn validate_fields(
         &mut self,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
     ) -> anyhow::Result<Option<ParsedFields>> {
         let search_pattern = match self.search_fields.search_type() {
             Ok(p) => ValidatedField::Parsed(p),
@@ -1070,36 +1064,34 @@ impl App {
 
         let overrides = self.validate_overrides()?;
 
-        match (search_pattern, overrides) {
-            (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) => {
-                Ok(Some(ParsedFields::new(
-                    search_pattern,
-                    self.search_fields.replace().text(),
-                    self.search_fields.whole_word().checked,
-                    self.search_fields.match_case().checked,
-                    overrides,
-                    self.directory.clone(),
-                    self.include_hidden,
-                    background_processing_sender.clone(),
-                )))
-            }
-            (_, _) => {
-                self.set_popup(Popup::Error);
-                Ok(None)
-            }
+        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
+            (search_pattern, overrides)
+        {
+            Ok(Some(ParsedFields::new(
+                search_pattern,
+                self.search_fields.replace().text().to_string(),
+                self.search_fields.whole_word().checked,
+                self.search_fields.match_case().checked,
+                overrides,
+                self.directory.clone(),
+                self.include_hidden,
+                background_processing_sender.clone(),
+            )))
+        } else {
+            self.set_popup(Popup::Error);
+            Ok(None)
         }
     }
 
     fn add_overrides(
-        &self,
         overrides: &mut OverrideBuilder,
-        files: String,
+        files: &str,
         prefix: &str,
     ) -> anyhow::Result<()> {
-        for file in files.split(",") {
+        for file in files.split(',') {
             let file = file.trim();
             if !file.is_empty() {
-                overrides.add(&format!("{}{}", prefix, file))?;
+                overrides.add(&format!("{prefix}{file}"))?;
             }
         }
         Ok(())
@@ -1109,7 +1101,7 @@ impl App {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
         let mut success = true;
 
-        let include_res = self.add_overrides(
+        let include_res = Self::add_overrides(
             &mut overrides,
             self.search_fields.include_files().text(),
             "",
@@ -1121,7 +1113,7 @@ impl App {
             success = false;
         };
 
-        let exlude_res = self.add_overrides(
+        let exlude_res = Self::add_overrides(
             &mut overrides,
             self.search_fields.exclude_files().text(),
             "!",
@@ -1154,9 +1146,8 @@ impl App {
                 walker.run(|| {
                     let tx = tx.clone();
                     Box::new(move |result| {
-                        let entry = match result {
-                            Ok(entry) => entry,
-                            Err(_) => return WalkState::Continue,
+                        let Ok(entry) = result else {
+                            return WalkState::Continue;
                         };
 
                         let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
@@ -1207,9 +1198,10 @@ impl App {
         let mut errors = vec![];
 
         results.into_iter().for_each(|res| {
-            if !res.included {
-                panic!("Expected only included results, found {res:?}");
-            };
+            assert!(
+                res.included,
+                "Expected only included results, found {res:?}"
+            );
             match &res.replace_result {
                 Some(ReplaceResult::Success) => {
                     num_successes += 1;
@@ -1239,8 +1231,10 @@ impl App {
         file_path: PathBuf,
         results: &mut [SearchResult],
     ) -> anyhow::Result<()> {
-        let mut line_map: HashMap<_, _> =
-            HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
+        let mut line_map: HashMap<_, _> = results
+            .iter_mut()
+            .map(|res| (res.line_number, res))
+            .collect();
 
         let parent_dir = file_path.parent().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1287,8 +1281,8 @@ impl App {
         self.popup.is_some()
     }
 
-    pub fn popup(&self) -> &Option<Popup> {
-        &self.popup
+    pub fn popup(&self) -> Option<&Popup> {
+        self.popup.as_ref()
     }
 
     pub fn errors(&self) -> Vec<AppError> {
@@ -1661,11 +1655,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_state_toggling() {
-        let mut state = build_test_search_state(3);
-
         fn included(state: &SearchState) -> Vec<bool> {
             state.results.iter().map(|r| r.included).collect::<Vec<_>>()
         }
+
+        let mut state = build_test_search_state(3);
 
         assert_eq!(included(&state), [true, true, true]);
         state.toggle_selected_inclusion();
