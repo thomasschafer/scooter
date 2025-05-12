@@ -177,7 +177,7 @@ where
                                     );
                                     error!("Failed to open editor: {e}");
                                 }
-                            };
+                            }
                             self.tui.init()?;
                             res
 

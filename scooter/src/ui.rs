@@ -104,7 +104,7 @@ fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
         let mut style = Style::new().fg(d.fg_colour);
         if let Some(bg) = d.bg_colour {
             style = style.bg(bg);
-        };
+        }
         Span::styled(strip_control_chars(&d.text), style)
     });
     diff_iter.collect()
@@ -157,7 +157,7 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
                     bg_colour: None,
                 });
             }
-        };
+        }
     }
 
     (old_spans, new_spans)
@@ -794,13 +794,13 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
         Screen::Results(ref replace_state) => {
             render_results_view(frame, replace_state, content_area);
         }
-    };
+    }
 
     match app.popup() {
         Some(Popup::Error) => render_error_popup(&app.errors(), frame, content_area),
         Some(Popup::Help) => render_help_popup(app.keymaps_all(), frame, content_area),
         None => {}
-    };
+    }
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {

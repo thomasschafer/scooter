@@ -319,7 +319,7 @@ async fn search_and_replace_test(
             "Expected SearchComplete results, found {:?}",
             app.current_screen
         );
-    };
+    }
 
     app.trigger_replacement();
 

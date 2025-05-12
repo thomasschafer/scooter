@@ -291,7 +291,7 @@ impl Field {
                 format!(" (Error: {})", error.short),
                 Style::new().fg(Color::Red),
             ));
-        };
+        }
         spans
     }
 

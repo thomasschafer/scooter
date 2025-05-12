@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use quote::ToTokens;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 use syn::{parse_file, Attribute, Field, Fields, Item, ItemStruct, Meta};
@@ -19,7 +20,7 @@ pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool)
         readme_path.display()
     ))?;
 
-    let mut updated_content = generate_contents_table(&readme_content);
+    let mut updated_content = generate_contents_table(&readme_content)?;
 
     if config_path.exists() {
         updated_content = generate_config_docs(&updated_content, config_path)?;
@@ -49,7 +50,7 @@ pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool)
     Ok(())
 }
 
-fn generate_contents_table(content: &str) -> String {
+fn generate_contents_table(content: &str) -> anyhow::Result<String> {
     println!("Generating table of contents...");
 
     let mut toc = String::new();
@@ -88,11 +89,11 @@ fn generate_contents_table(content: &str) -> String {
         if line.starts_with("## ") && *line != TOC_HEADING {
             let title = &line[3..];
             let anchor = create_anchor(title);
-            toc.push_str(&format!("- [{title}](#{anchor})\n"));
+            writeln!(toc, "- [{title}](#{anchor})")?;
         } else if let Some(title) = line.strip_prefix("### ") {
             if !in_config_section(content, &lines, i) {
                 let anchor = create_anchor(title);
-                toc.push_str(&format!("  - [{title}](#{anchor})\n"));
+                writeln!(toc, "  - [{title}](#{anchor})")?;
             }
         }
     }
@@ -115,7 +116,7 @@ fn generate_contents_table(content: &str) -> String {
         i += 1;
     }
 
-    result
+    Ok(result)
 }
 
 // Check if a heading is part of the Configuration Options section
@@ -219,6 +220,7 @@ fn process_struct(
                         format!("{toml_prefix}.{field_name}")
                     };
 
+                    #[allow(clippy::format_push_string)]
                     docs.push_str(&format!("### `[{toml_path}]` section\n\n",));
 
                     if !field_doc.is_empty() {
@@ -228,6 +230,7 @@ fn process_struct(
 
                     process_struct(docs, nested_struct, all_structs, &toml_path);
                 } else {
+                    #[allow(clippy::format_push_string)]
                     docs.push_str(&format!("#### `{field_name}`\n\n",));
                     docs.push_str(&field_doc);
                     docs.push_str("\n\n");
@@ -278,7 +281,7 @@ mod tests {
 
         let initial_content = fs::read_to_string(&readme_file).unwrap();
 
-        let content = generate_contents_table(&initial_content);
+        let content = generate_contents_table(&initial_content).unwrap();
         let content = generate_config_docs(&content, &config_file)
             .unwrap()
             .replace("\r\n", "\n");

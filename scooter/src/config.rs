@@ -14,7 +14,7 @@ fn get_theme_set() -> &'static ThemeSet {
         let theme_folder = themes_folder();
         if theme_folder.exists() {
             themes.add_from_folder(theme_folder).unwrap();
-        };
+        }
         themes
     })
 }

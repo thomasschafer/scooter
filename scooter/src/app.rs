@@ -161,7 +161,7 @@ impl SearchState {
                 self.toggle_multiselect_mode();
             }
             _ => {}
-        };
+        }
         false
     }
 
@@ -334,7 +334,7 @@ impl ReplaceState {
                 exit = true;
             }
             _ => {}
-        };
+        }
         exit
     }
 
@@ -794,7 +794,7 @@ impl App {
                     background_processing_receiver,
                 ));
             }
-        };
+        }
 
         EventHandlingResult::Rerender
     }
@@ -926,13 +926,13 @@ impl App {
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
-                };
+                }
                 self.search_fields
                     .highlighted_field()
                     .write()
                     .handle_keys(code, modifiers);
             }
-        };
+        }
         false
     }
 
@@ -986,7 +986,7 @@ impl App {
         if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
             return EventHandlingResult::Exit;
-        };
+        }
 
         if self.popup.is_some() {
             self.clear_popup();
@@ -1111,7 +1111,7 @@ impl App {
                 .include_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
             success = false;
-        };
+        }
 
         let exlude_res = Self::add_overrides(
             &mut overrides,
@@ -1123,7 +1123,7 @@ impl App {
                 .exclude_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
             success = false;
-        };
+        }
 
         if success {
             let overrides = overrides.build()?;
