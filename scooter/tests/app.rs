@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
     test_with_both_regex_modes, App, EventHandlingResult, PerformingReplacementState, Popup,
-    ReplaceResult, ReplaceState, Screen, SearchFieldValues, SearchFields, SearchInProgressState,
-    SearchResult, SearchState,
+    ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues, SearchFields,
+    SearchInProgressState, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -62,7 +62,10 @@ async fn test_app_reset() {
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     let (_sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen = Screen::SearchComplete(SearchState::new(receiver));
+    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+        SearchState::new(receiver),
+        Instant::now(),
+    ));
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: "foo",
         replace: "bar",
@@ -213,7 +216,10 @@ async fn test_help_popup_on_search_complete() {
     let mut search_state = SearchState::new(receiver);
     search_state.results = results;
 
-    test_help_popup_on_screen(Screen::SearchComplete(search_state));
+    test_help_popup_on_screen(Screen::SearchComplete(SearchCompleteState::new(
+        search_state,
+        Instant::now(),
+    )));
 }
 
 #[tokio::test]
@@ -295,9 +301,10 @@ async fn search_and_replace_test(
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
 
-    if let Screen::SearchComplete(search_state) = &mut app.current_screen {
+    if let Screen::SearchComplete(state) = &mut app.current_screen {
         for (file_path, num_expected_matches) in &expected_matches {
-            let num_actual_matches = search_state
+            let num_actual_matches = state
+                .search_state
                 .results
                 .iter()
                 .filter(|result| {
@@ -313,7 +320,7 @@ async fn search_and_replace_test(
             );
         }
 
-        assert_eq!(search_state.results.len(), num_expected_matches);
+        assert_eq!(state.search_state.results.len(), num_expected_matches);
     } else {
         panic!(
             "Expected SearchComplete results, found {:?}",
