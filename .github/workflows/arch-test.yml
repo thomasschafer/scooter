@@ -1,0 +1,55 @@
+name: Test AUR Build on Arch Linux (Dynamic Link Attempt)
+
+on:
+  pull_request:
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build-aur-package:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Update Pacman and Install Dependencies + System Oniguruma
+        run: |
+          echo "Updating pacman database and installing build tools + oniguruma..."
+          # Install system oniguruma package for dynamic linking test
+          pacman -Syu --noconfirm --needed base-devel git sudo oniguruma
+          echo "-------------------------------------"
+          echo "GCC Version:"
+          pacman -Q gcc
+          echo "System Oniguruma Version:"
+          pacman -Q oniguruma # Verify system lib is installed
+          echo "-------------------------------------"
+          echo "Build tools installed."
+
+          # Configure makepkg user (still needed for makepkg)
+          echo "Configuring build user..."
+          useradd --system -m -G wheel builduser
+          echo '%wheel ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/pacman_nopasswd
+          chmod 440 /etc/sudoers.d/pacman_nopasswd
+          echo "Build user configured."
+
+      - name: Switch user, Clone, and Build (Dynamic Link)
+        run: |
+          sudo -iu builduser bash << 'EOF'
+          set -euo pipefail
+
+          echo "Running as user: $(whoami)"
+          cd "$HOME"
+
+          echo "Cloning AUR package scooter..."
+          git clone https://aur.archlinux.org/scooter.git
+          cd scooter
+
+          # No CFLAGS workaround / sed modification needed for PKGBUILD when linking dynamically
+
+          echo "Setting env var to force dynamic linking against system oniguruma..."
+          export RUSTONIG_SYSTEM_LIBONIG=1
+
+          echo "Running makepkg to build the package (linking dynamically)..."
+          # Use -sfc to handle other deps and ensure clean build
+          makepkg --noconfirm -sfc
+
+          echo "AUR Package build successful!"
+          EOF
