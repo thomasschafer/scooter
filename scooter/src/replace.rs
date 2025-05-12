@@ -55,7 +55,7 @@ impl SearchType {
     }
 }
 
-fn convert_regex(search: SearchType, whole_word: bool, match_case: bool) -> SearchType {
+fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> SearchType {
     let mut search_regex_str = match search {
         SearchType::Fixed(ref fixed_str) => regex::escape(fixed_str),
 
@@ -104,7 +104,7 @@ impl ParsedFields {
         {
             search
         } else {
-            convert_regex(search, whole_word, match_case)
+            convert_regex(&search, whole_word, match_case)
         };
         Self {
             search,
@@ -184,7 +184,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "hello world",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 Some("hello earth".to_string())
@@ -196,7 +196,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "world hello world",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 Some("earth hello earth".to_string())
@@ -208,7 +208,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "worldwide",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -216,7 +216,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "_world_",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -228,7 +228,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     ",world-",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 Some(",earth-".to_string())
@@ -236,7 +236,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "world-word",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 Some("earth-word".to_string())
@@ -244,7 +244,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "Hello-world!",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 Some("Hello-earth!".to_string())
@@ -256,7 +256,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "Hello WORLD",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, true),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, true),
                     "earth"
                 ),
                 None
@@ -264,7 +264,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "Hello world",
-                    &convert_regex(SearchType::Fixed("wOrld".to_string()), true, true),
+                    &convert_regex(&SearchType::Fixed("wOrld".to_string()), true, true),
                     "earth"
                 ),
                 None
@@ -276,7 +276,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -284,7 +284,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "hello world",
-                    &convert_regex(SearchType::Fixed("".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -296,7 +296,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "worldwide web",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -304,7 +304,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "underworld",
-                    &convert_regex(SearchType::Fixed("world".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -316,7 +316,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "hello (world)",
-                    &convert_regex(SearchType::Fixed("(world)".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("(world)".to_string()), true, false),
                     "earth"
                 ),
                 Some("hello earth".to_string())
@@ -324,7 +324,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "hello world.*",
-                    &convert_regex(SearchType::Fixed("world.*".to_string()), true, false),
+                    &convert_regex(&SearchType::Fixed("world.*".to_string()), true, false),
                     "ea+rth"
                 ),
                 Some("hello ea+rth".to_string())
@@ -337,7 +337,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "foo axxxxb bar",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("foo NEW bar".to_string())
@@ -345,7 +345,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "fooaxxxxb bar",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -358,7 +358,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "say hello world!",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "hi earth"
                 ),
                 Some("say hi earth!".to_string())
@@ -366,7 +366,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "helloworld",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "hi earth"
                 ),
                 None
@@ -379,7 +379,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "foo aab abb",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("foo X X".to_string())
@@ -387,7 +387,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "ab abaab abb",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("X abaab X".to_string())
@@ -395,7 +395,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "ababaababb",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 None
@@ -403,7 +403,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "ab ab aab abb",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("X X X X".to_string())
@@ -417,7 +417,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "foo bar baz",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("TEST baz".to_string())
@@ -426,7 +426,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "baz foo bar",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("baz TEST".to_string())
@@ -435,7 +435,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "(foo bar)",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "TEST"
                 ),
                 Some("(TEST)".to_string())
@@ -448,7 +448,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "(a123b)",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("(X)".to_string())
@@ -456,7 +456,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "foo.a123b!bar",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("foo.X!bar".to_string())
@@ -469,7 +469,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "test9 abc123def 8xyz",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test9 NEW 8xyz".to_string())
@@ -477,7 +477,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "test9abc123def8xyz",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -490,7 +490,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "my color and colour",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("my X and X".to_string())
@@ -503,7 +503,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -516,7 +516,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "search",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -529,7 +529,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "b a c",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("b X c".to_string())
@@ -537,7 +537,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "bac",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -550,7 +550,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "test (123) foo",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("test X foo".to_string())
@@ -563,7 +563,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "calc λ123 β",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("calc X β".to_string())
@@ -571,7 +571,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "calcλ123",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -584,7 +584,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "test foo\nbar end",
-                    &convert_regex(SearchType::Pattern(re.clone()), true, false),
+                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())
@@ -592,7 +592,7 @@ mod tests {
             assert_eq!(
                 replacement_if_match(
                     "test foo\n  bar end",
-                    &convert_regex(SearchType::Pattern(re), true, false),
+                    &convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())

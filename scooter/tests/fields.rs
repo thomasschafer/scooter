@@ -119,7 +119,7 @@ fn test_search_fields() {
     let search_type = search_fields.search_type().unwrap();
     match search_type {
         SearchType::Fixed(s) => assert_eq!(s, "test search"),
-        _ => panic!("Expected Fixed, got {:?}", search_type),
+        _ => panic!("Expected Fixed, got {search_type:?}"),
     }
 
     search_fields
@@ -129,6 +129,6 @@ fn test_search_fields() {
     let search_type = search_fields.search_type().unwrap();
     match search_type {
         SearchType::Pattern(_) => {}
-        _ => panic!("Expected Pattern, got {:?}", search_type),
+        _ => panic!("Expected Pattern, got {search_type:?}"),
     }
 }

@@ -151,7 +151,7 @@ where
                 Some(Ok(event)) = self.event_stream.next() => {
                     match event {
                         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                            self.app.handle_key_event(&key)?
+                            self.app.handle_key_event(&key)
                         },
                         CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
                         _ => EventHandlingResult::None,
@@ -177,13 +177,13 @@ where
                                     );
                                     error!("Failed to open editor: {e}");
                                 }
-                            };
+                            }
                             self.tui.init()?;
                             res
 
                         }
                         Event::App(app_event) => {
-                            self.app.handle_app_event(app_event).await
+                            self.app.handle_app_event(&app_event)
                         }
                     }
                 }
@@ -212,19 +212,18 @@ where
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
         match &self.app.config.editor_open.command {
             Some(command) => {
-                self.open_editor_from_command(command, file_path, line)?;
+                Self::open_editor_from_command(command, &file_path, line)?;
             }
             None => {
-                self.open_default_editor(file_path, line)?;
+                Self::open_default_editor(file_path, line)?;
             }
         }
         Ok(())
     }
 
     fn open_editor_from_command(
-        &self,
         editor_command: &str,
-        file_path: PathBuf,
+        file_path: &Path,
         line: usize,
     ) -> anyhow::Result<()> {
         let editor_command = editor_command
@@ -255,7 +254,7 @@ where
         }
     }
 
-    fn open_default_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
+    fn open_default_editor(file_path: PathBuf, line: usize) -> anyhow::Result<()> {
         let editor = match env::var("EDITOR") {
             Ok(val) if !val.trim().is_empty() => val,
             _ => match env::var("VISUAL") {
@@ -271,9 +270,8 @@ where
         };
 
         let parts: Vec<&str> = editor.split_whitespace().collect();
-        let program = match parts.first() {
-            Some(p) => p,
-            None => return Err(anyhow::anyhow!("Found empty editor command")),
+        let Some(program) = parts.first() else {
+            return Err(anyhow::anyhow!("Found empty editor command"));
         };
         let mut cmd = Command::new(program);
         if parts.len() > 1 {
@@ -287,7 +285,7 @@ where
             .to_lowercase();
         match editor_name.as_str() {
             e if ["vi", "vim", "nvim", "kak", "nano"].contains(&e) => {
-                cmd.arg(format!("+{}", line)).arg(file_path);
+                cmd.arg(format!("+{line}")).arg(file_path);
             }
             e if ["hx", "helix", "subl", "sublime_text", "zed"].contains(&e) => {
                 cmd.arg(format!("{}:{}", file_path.to_string_lossy(), line));
@@ -297,10 +295,10 @@ where
                     .arg(format!("{}:{}", file_path.to_string_lossy(), line));
             }
             e if ["emacs", "emacsclient"].contains(&e) => {
-                cmd.arg(format!("+{}:0", line)).arg(file_path);
+                cmd.arg(format!("+{line}:0")).arg(file_path);
             }
             "notepad++" => {
-                cmd.arg(file_path).arg(format!("-n{}", line));
+                cmd.arg(file_path).arg(format!("-n{line}"));
             }
             _ => {
                 cmd.arg(file_path);
