@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Flex, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table},
@@ -73,10 +73,10 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         if let Some(cursor_pos) = app.search_fields.highlighted_field().read().cursor_pos() {
             let highlighted_area = areas[app.search_fields.highlighted];
 
-            frame.set_cursor(
-                highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
-                highlighted_area.y + 1,
-            );
+            frame.set_cursor_position(Position {
+                x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
+                y: highlighted_area.y + 1,
+            });
         }
     }
 }
@@ -750,7 +750,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             Constraint::Min(1),
             Constraint::Length(1),
         ])
-        .split(frame.size());
+        .split(frame.area());
     let [header_area, content_area, footer_area] = chunks[..] else {
         panic!("Unexpected chunks length {}", chunks.len())
     };
