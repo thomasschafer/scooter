@@ -633,7 +633,7 @@ fn render_results_success(area: Rect, replace_state: &ReplaceState, frame: &mut 
         Constraint::Length(u16::try_from(text.len()).unwrap_or(u16::MAX)), // TODO: find a better way of doing this
         Constraint::Length(1),
     );
-    frame.render_widget(Text::raw(text), area);
+    frame.render_widget(Text::styled(text, Color::Green), area);
 }
 
 fn render_results_errors(area: Rect, replace_state: &ReplaceState, frame: &mut Frame<'_>) {
@@ -756,7 +756,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     };
 
     let title_block = Block::default().style(Style::default());
-    let title = Paragraph::new(Text::styled("Scooter", Style::default()))
+    let title = Paragraph::new(Text::styled("Scooter", Style::new().fg(Color::Blue)))
         .block(title_block)
         .alignment(Alignment::Center);
     frame.render_widget(title, header_area);
@@ -809,7 +809,7 @@ fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
             .iter()
             .map(|(from, to)| format!("{from} {to}"))
             .join(" / "),
-        Color::default(),
+        Color::Blue,
     );
 
     let footer = Paragraph::new(Line::from(keys_hint))
