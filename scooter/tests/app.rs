@@ -1,11 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use scooter::{
     test_with_both_regex_modes, App, EventHandlingResult, PerformingReplacementState, Popup,
-    ReplaceResult, ReplaceState, Screen, SearchFieldValues, SearchFields, SearchInProgressState,
-    SearchResult, SearchState,
+    ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues, SearchFields,
+    SearchInProgressState, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
+use std::fs;
+use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
@@ -62,7 +64,10 @@ async fn test_app_reset() {
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
     let (_sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen = Screen::SearchComplete(SearchState::new(receiver));
+    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+        SearchState::new(receiver),
+        Instant::now(),
+    ));
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: "foo",
         replace: "bar",
@@ -213,7 +218,10 @@ async fn test_help_popup_on_search_complete() {
     let mut search_state = SearchState::new(receiver);
     search_state.results = results;
 
-    test_help_popup_on_screen(Screen::SearchComplete(search_state));
+    test_help_popup_on_screen(Screen::SearchComplete(SearchCompleteState::new(
+        search_state,
+        Instant::now(),
+    )));
 }
 
 #[tokio::test]
@@ -283,7 +291,7 @@ async fn search_and_replace_test(
     include_hidden: bool,
     expected_matches: Vec<(&Path, usize)>,
 ) {
-    let num_expected_matches = expected_matches
+    let total_num_expected_matches = expected_matches
         .iter()
         .map(|(_, count)| count)
         .sum::<usize>();
@@ -295,9 +303,10 @@ async fn search_and_replace_test(
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
 
-    if let Screen::SearchComplete(search_state) = &mut app.current_screen {
+    if let Screen::SearchComplete(state) = &mut app.current_screen {
         for (file_path, num_expected_matches) in &expected_matches {
-            let num_actual_matches = search_state
+            let num_actual_matches = state
+                .search_state
                 .results
                 .iter()
                 .filter(|result| {
@@ -313,7 +322,7 @@ async fn search_and_replace_test(
             );
         }
 
-        assert_eq!(search_state.results.len(), num_expected_matches);
+        assert_eq!(state.search_state.results.len(), total_num_expected_matches);
     } else {
         panic!(
             "Expected SearchComplete results, found {:?}",
@@ -327,7 +336,7 @@ async fn search_and_replace_test(
     assert!(wait_for_screen!(&app, Screen::Results));
 
     if let Screen::Results(search_state) = &app.current_screen {
-        assert_eq!(search_state.num_successes, num_expected_matches);
+        assert_eq!(search_state.num_successes, total_num_expected_matches);
         assert_eq!(search_state.num_ignored, 0);
         assert_eq!(search_state.errors.len(), 0);
     } else {
@@ -1405,6 +1414,102 @@ test_with_both_regex_modes!(
                 "This REPLACED a hidden text file",
             }
         );
+        Ok(())
+    }
+);
+
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn read_file<P>(p: P) -> String
+where
+    P: AsRef<Path>,
+{
+    fs::read_to_string(p).unwrap().replace("\r\n", "\n")
+}
+
+test_with_both_regex_modes!(
+    test_binary_file_filtering,
+    |advanced_regex: bool| async move {
+        let temp_dir = TempDir::new().unwrap();
+        let fixtures_dir = "tests/fixtures/binary_test";
+        copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "sample",
+            replace: "REPLACED",
+            fixed_strings: false,
+            whole_word: false,
+            match_case: true,
+            include_files: "",
+            exclude_files: "",
+        })
+        .with_advanced_regex(advanced_regex);
+
+        search_and_replace_test(
+            &temp_dir,
+            search_fields,
+            false,
+            vec![
+                (&Path::new("textfiles").join("code.rs"), 1),
+                (&Path::new("textfiles").join("config.json"), 1),
+                (&Path::new("textfiles").join("document.txt"), 2),
+                (&Path::new("textfiles").join("noextension"), 1),
+                (&Path::new("binaries").join("image.wrongext"), 0),
+                (&Path::new("binaries").join("document.pdf"), 0),
+                (&Path::new("binaries").join("document_pdf_wrong_ext.rs"), 0),
+                (&Path::new("binaries").join("archive.zip"), 0),
+                (&Path::new("binaries").join("rust_binary"), 0),
+            ],
+        )
+        .await;
+
+        let text_files = vec![
+            "textfiles/code.rs",
+            "textfiles/config.json",
+            "textfiles/document.txt",
+            "textfiles/noextension",
+        ];
+
+        let binary_files = vec![
+            "binaries/image.wrongext",
+            "binaries/document.pdf",
+            "binaries/document_pdf_wrong_ext.rs",
+            "binaries/archive.zip",
+            "binaries/rust_binary",
+        ];
+
+        for file in &text_files {
+            let actual = read_file(temp_dir.path().join(file));
+            let expected = read_file(format!("{fixtures_dir}/updated/{file}"));
+
+            assert_eq!(
+                actual, expected,
+                "Text file {file} was not correctly updated",
+            );
+        }
+
+        for file in &binary_files {
+            let actual = fs::read(temp_dir.path().join(file))?;
+            let original = fs::read(format!("{fixtures_dir}/initial/{file}"))?;
+
+            assert_eq!(
+                actual, original,
+                "Binary file {file} was unexpectedly modified",
+            );
+        }
+
         Ok(())
     }
 );

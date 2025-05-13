@@ -4,7 +4,9 @@ use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkParallel};
 use log::warn;
 use regex::Regex;
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
+use std::thread;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
@@ -127,7 +129,7 @@ impl ParsedFields {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
                             if let ContentType::BINARY = inspect(line.as_bytes()) {
-                                continue;
+                                break;
                             }
                             if let Some(replacement) =
                                 replacement_if_match(&line, &self.search, &self.replace)
@@ -151,7 +153,7 @@ impl ParsedFields {
                         }
                         Ok(None) => break,
                         Err(err) => {
-                            warn!("Error retrieving line {} of {:?}: {err}", line_number, path);
+                            warn!("Error retrieving line {line_number} of {path:?}: {err}");
                         }
                     }
                     line_number += 1;
@@ -164,10 +166,15 @@ impl ParsedFields {
     }
 
     pub(crate) fn build_walker(&self) -> WalkParallel {
+        // Default threads copied from ripgrep
+        let threads = thread::available_parallelism()
+            .map_or(1, NonZero::get)
+            .min(12);
         WalkBuilder::new(&self.root_dir)
             .hidden(!self.include_hidden)
             .overrides(self.overrides.clone())
             .filter_entry(|entry| entry.file_name() != ".git")
+            .threads(threads)
             .build_parallel()
     }
 }

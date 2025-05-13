@@ -14,6 +14,7 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
+    time::Duration,
 };
 use syntect::{
     highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
@@ -163,10 +164,18 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
     (old_spans, new_spans)
 }
 
+fn display_duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let milliseconds = duration.subsec_millis();
+    format!("{seconds}.{milliseconds:03}s")
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_confirmation_view(
     frame: &mut Frame<'_>,
     is_complete: bool,
     search_state: &mut SearchState,
+    time_taken: Duration,
     base_path: &Path,
     area: Rect,
     theme: Option<&Theme>,
@@ -194,17 +203,12 @@ fn render_confirmation_view(
     let list_area_height = results_area.height as usize;
     let num_results = search_state.results.len();
 
-    frame.render_widget(
-        Span::raw(format!(
-            "Results: {} {}",
-            num_results,
-            if is_complete {
-                "[Search complete]"
-            } else {
-                "[Still searching...]"
-            }
-        )),
+    render_num_results(
+        frame,
         num_results_area,
+        num_results,
+        is_complete,
+        time_taken,
     );
 
     let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
@@ -277,6 +281,42 @@ fn render_confirmation_view(
         );
         frame.render_widget(search_results, results_area);
     }
+}
+
+fn render_num_results(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    num_results: usize,
+    is_complete: bool,
+    time_taken: Duration,
+) {
+    let left_content_1 = format!("Results: {num_results}");
+    let left_content_2 = if is_complete {
+        " [Search complete]"
+    } else {
+        " [Still searching...]"
+    };
+    let right_content = format!(" [Time taken: {}]", display_duration(time_taken));
+    let spacers = " ".repeat(
+        (area.width as usize)
+            .saturating_sub(left_content_1.len() + left_content_2.len() + right_content.len()),
+    );
+
+    let accessory_colour = if is_complete {
+        Color::Green
+    } else {
+        Color::Blue
+    };
+
+    frame.render_widget(
+        Line::from(vec![
+            Span::raw(left_content_1),
+            Span::raw(left_content_2).fg(accessory_colour),
+            Span::raw(spacers),
+            Span::raw(right_content).fg(accessory_colour),
+        ]),
+        area,
+    );
 }
 
 fn build_search_results<'a>(
@@ -771,17 +811,19 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 frame,
                 false,
                 &mut s.search_state,
+                s.search_started.elapsed(),
                 base_path,
                 content_area,
                 app.config.get_theme(),
                 app.event_sender.clone(),
             );
         }
-        Screen::SearchComplete(ref mut s) => {
+        Screen::SearchComplete(ref mut state) => {
             render_confirmation_view(
                 frame,
                 true,
-                s,
+                &mut state.search_state,
+                state.search_time_taken,
                 base_path,
                 content_area,
                 app.config.get_theme(),
@@ -897,7 +939,7 @@ fn render_table_popup(
 fn get_popup_area(area: Rect, content_height: u16) -> Rect {
     center(
         area,
-        Constraint::Percentage(80),
+        Constraint::Percentage(75),
         Constraint::Length(content_height),
     )
 }

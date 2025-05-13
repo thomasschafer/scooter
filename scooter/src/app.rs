@@ -357,7 +357,8 @@ impl ReplaceState {
 #[derive(Debug)]
 pub struct SearchInProgressState {
     pub search_state: SearchState,
-    pub last_render: Instant,
+    pub(crate) last_render: Instant,
+    pub(crate) search_started: Instant,
     handle: JoinHandle<()>,
 }
 
@@ -369,7 +370,23 @@ impl SearchInProgressState {
         Self {
             search_state: SearchState::new(processing_receiver),
             last_render: Instant::now(),
+            search_started: Instant::now(),
             handle,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SearchCompleteState {
+    pub search_state: SearchState,
+    pub(crate) search_time_taken: Duration,
+}
+
+impl SearchCompleteState {
+    pub fn new(search_state: SearchState, search_started: Instant) -> Self {
+        Self {
+            search_state,
+            search_time_taken: search_started.elapsed(),
         }
     }
 }
@@ -404,7 +421,7 @@ impl PerformingReplacementState {
 pub enum Screen {
     SearchFields,
     SearchProgressing(SearchInProgressState),
-    SearchComplete(SearchState),
+    SearchComplete(SearchCompleteState),
     PerformingReplacement(PerformingReplacementState),
     Results(ReplaceState),
 }
@@ -413,7 +430,7 @@ impl Screen {
     fn search_results_mut(&mut self) -> &mut SearchState {
         match self {
             Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(search_state) => search_state,
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state,
             _ => panic!("Expected SearchInProgress or SearchComplete, found {self:?}",),
         }
     }
@@ -757,8 +774,12 @@ impl App {
                     },
                 ..
             })
-            | Screen::SearchComplete(SearchState {
-                processing_receiver,
+            | Screen::SearchComplete(SearchCompleteState {
+                search_state:
+                    SearchState {
+                        processing_receiver,
+                        ..
+                    },
                 ..
             })
             | Screen::PerformingReplacement(PerformingReplacementState {
@@ -788,6 +809,7 @@ impl App {
                 let handle = Self::update_search_results(
                     parsed_fields,
                     background_processing_sender.clone(),
+                    self.event_sender.clone(),
                 );
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
@@ -811,7 +833,7 @@ impl App {
                 background_processing_receiver,
             )),
         ) {
-            Screen::SearchComplete(search_state) => {
+            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
                 let handle = Self::perform_replacement(search_state, background_processing_sender);
                 if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
                     state.set_handle(handle);
@@ -895,10 +917,16 @@ impl App {
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
-                if let Screen::SearchProgressing(SearchInProgressState { search_state, .. }) =
-                    mem::replace(&mut self.current_screen, Screen::SearchFields)
+                if let Screen::SearchProgressing(SearchInProgressState {
+                    search_state,
+                    search_started,
+                    ..
+                }) = mem::replace(&mut self.current_screen, Screen::SearchFields)
                 {
-                    self.current_screen = Screen::SearchComplete(search_state);
+                    self.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+                        search_state,
+                        search_started,
+                    ));
                 }
                 EventHandlingResult::Rerender
             }
@@ -1022,7 +1050,7 @@ impl App {
                 } else {
                     match &mut self.current_screen {
                         Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
-                            Screen::SearchComplete(search_state) => search_state.handle_key(key),
+                            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state.handle_key(key),
                         screen => panic!(
                             "Expected current_screen to be SearchProgressing or SearchComplete, found {screen:?}",
                         ),
@@ -1136,24 +1164,23 @@ impl App {
     pub fn update_search_results(
         parsed_fields: ParsedFields,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        event_sender: UnboundedSender<Event>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let walker = parsed_fields.build_walker();
 
             tokio::spawn(async move {
-                let tx = tx;
                 walker.run(|| {
-                    let tx = tx.clone();
-                    Box::new(move |result| {
+                    Box::new(|result| {
                         let Ok(entry) = result else {
                             return WalkState::Continue;
                         };
 
                         let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
+                        #[allow(clippy::collapsible_if)]
                         if is_file && !Self::ignore_file(entry.path()) {
-                            let send_res = tx.send(entry.path().to_owned());
-                            if send_res.is_err() {
+                            if tx.send(entry.path().to_owned()).is_err() {
                                 return WalkState::Quit;
                             }
                         }
@@ -1163,8 +1190,21 @@ impl App {
                 });
             });
 
-            while let Some(path) = rx.recv().await {
-                parsed_fields.handle_path(&path).await;
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(393)); // Slightly random duration so that time taken isn't a round number
+            rerender_interval.tick().await;
+
+            loop {
+                tokio::select! {
+                    maybe_path = rx.recv() => {
+                        match maybe_path {
+                            Some(path) => parsed_fields.handle_path(&path).await,
+                            None => break,
+                        }
+                    },
+                    _ = rerender_interval.tick() => {
+                        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                    }
+                }
             }
 
             if let Err(err) =
@@ -1182,7 +1222,7 @@ impl App {
     fn ignore_file(path: &Path) -> bool {
         if let Some(ext) = path.extension() {
             if let Some(ext_str) = ext.to_str() {
-                if BINARY_EXTENSIONS.contains(&ext_str.to_lowercase().as_str()) {
+                if BINARY_EXTENSIONS.contains(&ext_str) {
                     return true;
                 }
             }
@@ -1421,16 +1461,20 @@ impl App {
 
     fn multiselect_enabled(&self) -> bool {
         match &self.current_screen {
-            Screen::SearchProgressing(s) => s.search_state.multiselect_enabled(),
-            Screen::SearchComplete(s) => s.multiselect_enabled(),
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+                search_state.multiselect_enabled()
+            }
             _ => false,
         }
     }
 
     fn toggle_multiselect_mode(&mut self) {
         match &mut self.current_screen {
-            Screen::SearchProgressing(s) => s.search_state.toggle_multiselect_mode(),
-            Screen::SearchComplete(s) => s.toggle_multiselect_mode(),
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+                search_state.toggle_multiselect_mode();
+            }
             _ => panic!(
                 "Tried to disable multiselect on {:?}",
                 self.current_screen.name()
@@ -1600,15 +1644,18 @@ mod tests {
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(None, false, false, event_sender);
-        app.current_screen = Screen::SearchComplete(build_test_search_state_with_results(results));
+        app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+            build_test_search_state_with_results(results),
+            Instant::now(),
+        ));
         app
     }
 
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            let (results, num_ignored) = split_results(search_state.results);
+        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
+            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
             App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
@@ -1635,8 +1682,8 @@ mod tests {
             error_result.clone(),
             ignored_result(),
         ]);
-        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            let (results, num_ignored) = split_results(search_state.results);
+        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
+            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
             App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
