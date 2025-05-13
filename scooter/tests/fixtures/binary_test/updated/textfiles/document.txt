@@ -1,0 +1,3 @@
+This is a REPLACED text document.
+It contains REPLACED content that should be replaced.
+The rest of this file should remain unchanged.
