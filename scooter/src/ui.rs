@@ -65,7 +65,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 frame,
                 field_area,
                 name.title(),
-                idx == app.search_fields.highlighted,
+                idx == app.search_fields.highlighted && !app.show_popup(),
             );
         });
 
@@ -904,6 +904,7 @@ fn get_popup_area(area: Rect, content_height: u16) -> Rect {
 
 fn create_popup_block(title: &str) -> Block<'_> {
     Block::bordered()
+        .border_style(Color::Green)
         .title(title)
         .title_alignment(Alignment::Center)
 }
