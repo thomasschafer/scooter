@@ -1496,8 +1496,8 @@ mod tests {
     use super::*;
 
     fn random_num() -> usize {
-        let mut rng = rand::thread_rng();
-        rng.gen_range(1..10000)
+        let mut rng = rand::rng();
+        rng.random_range(1..10000)
     }
 
     fn search_result(included: bool) -> SearchResult {
