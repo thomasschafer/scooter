@@ -1211,10 +1211,7 @@ impl App {
                 background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
             {
                 // Log and ignore error: likely have gone back to previous screen
-                warn!(
-                    "Found error when attempting to send SearchCompleted event: {}",
-                    err
-                );
+                warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
         })
     }

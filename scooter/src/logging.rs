@@ -32,6 +32,6 @@ pub fn setup_logging(level: LevelFilter) -> anyhow::Result<()> {
 
     let _ = simple_log::file(log_path.to_str().unwrap(), level.as_str(), 100, 10);
 
-    info!("Logging initialized at {:?}", log_path);
+    info!("Logging initialized at {log_path:?}");
     Ok(())
 }
