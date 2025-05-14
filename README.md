@@ -200,18 +200,34 @@ and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
 ## Editor configuration
 
-Below are a couple of ways to configure Scooter to run in a floating window, without leaving your editor.
+Below are a couple of ways to run Scooter without leaving your editor.
 
 ### Helix
 
-If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter with `<enter> s`:
+As explained [here](https://github.com/helix-editor/helix/wiki/Recipes#project-wide-search-and-replace-with-scooter), you can add a keybinding like the following to open Scooter directly in Helix with `<enter> s`:
+
+```toml
+[keys.select.ret]
+s = [
+    ":write-all",
+    ":insert-output scooter >/dev/tty",
+    ":redraw",
+    ":reload-all"
+]
+```
+
+Note that this saves all files before opening Scooter.
+
+#### Floating window
+
+If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter in a popup with `<enter> s`:
 
 ```toml
 [keys.select.ret]
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-You can also add the following to your [Scooter config file](#configuration-options) to open files from the search results page with `o`:
+You can also add the following to your [Scooter config file](#configuration-options) to open files back in Helix from the search results page with `o`:
 
 ```toml
 [editor_open]
