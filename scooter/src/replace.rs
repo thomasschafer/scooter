@@ -154,6 +154,7 @@ impl ParsedFields {
                         Ok(None) => break,
                         Err(err) => {
                             warn!("Error retrieving line {line_number} of {path:?}: {err}");
+                            break;
                         }
                     }
                     line_number += 1;
