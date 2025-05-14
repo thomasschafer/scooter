@@ -1212,8 +1212,7 @@ impl App {
             {
                 // Log and ignore error: likely have gone back to previous screen
                 warn!(
-                    "Found error when attempting to send SearchCompleted event: {}",
-                    err
+                    "Found error when attempting to send SearchCompleted event: {err}"
                 );
             }
         })

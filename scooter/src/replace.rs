@@ -160,7 +160,7 @@ impl ParsedFields {
                 }
             }
             Err(err) => {
-                warn!("Error opening file {:?}: {err}", path);
+                warn!("Error opening file {path:?}: {err}");
             }
         }
     }
