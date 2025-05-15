@@ -62,11 +62,17 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .zip(areas)
         .enumerate()
         .for_each(|(idx, (SearchField { name, field }, field_area))| {
+            let highlight = idx == app.search_fields.highlighted && !app.show_popup();
+            let is_regex =
+                matches!(name, FieldName::Search) && !app.search_fields.fixed_strings().checked;
             field.read().render(
                 frame,
                 field_area,
                 name.title(),
-                idx == app.search_fields.highlighted && !app.show_popup(),
+                highlight,
+                &app.config.preview.syntax_highlighting_theme,
+                is_regex,
+                app.event_sender.clone(),
             );
         });
 
@@ -344,9 +350,9 @@ fn build_search_results<'a>(
         .collect()
 }
 
-static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+pub static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
-fn to_ratatui_colour(colour: SyntectColour) -> Color {
+pub fn to_ratatui_colour(colour: SyntectColour) -> Color {
     Color::Rgb(colour.r, colour.g, colour.b)
 }
 
@@ -367,8 +373,23 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
     ratatui_style
 }
 
-fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
+pub fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> Line<'a> {
+    line.iter()
+        .map(|(style, s)| {
+            Span::styled(
+                strip_control_chars(s),
+                match style {
+                    Some(style) => convert_syntect_to_ratatui_style(style),
+                    None => Style::default(),
+                },
+            )
+        })
+        .collect::<Line<'_>>()
+}
+
+fn regions_to_listitem<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
     let prefix = "  ";
+
     ListItem::new(
         iter::once(Span::raw(prefix))
             .chain(line.iter().map(|(style, s)| {
@@ -496,12 +517,12 @@ fn build_preview_list<'a>(
         let list = List::new(
             before
                 .iter()
-                .map(|(_, l)| regions_to_line(l))
+                .map(|(_, l)| regions_to_listitem(l))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|(_, l)| regions_to_line(l))),
+                .chain(after.iter().map(|(_, l)| regions_to_listitem(l))),
         );
         if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
             Ok(list.bg(bg))

@@ -1,3 +1,4 @@
+use lru::LruCache;
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers},
     layout::{Constraint, Direction, Layout, Rect},
@@ -5,6 +6,18 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Paragraph},
     Frame,
+};
+use std::{
+    num::NonZeroUsize,
+    sync::{Mutex, OnceLock},
+};
+use syntect::{easy::HighlightLines, highlighting::Theme, parsing::SyntaxSet};
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::{
+    app::{AppEvent, Event},
+    ui::{regions_to_line, SYNTAX_SET},
+    utils::HighlightedLine,
 };
 
 #[derive(Clone, Debug)]
@@ -295,7 +308,17 @@ impl Field {
         spans
     }
 
-    pub fn render(&self, frame: &mut Frame<'_>, area: Rect, title: &str, highlighted: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        title: &str,
+        highlighted: bool,
+        theme: &Theme,
+        is_regex: bool,
+        event_sender: UnboundedSender<Event>,
+    ) {
         let mut block = Block::bordered();
         if highlighted {
             block = block.border_style(Style::new().green());
@@ -305,8 +328,13 @@ impl Field {
 
         match self {
             Field::Text(f) => {
+                let text = if is_regex {
+                    regions_to_line(&highlight_regex_with_cache(f.text(), theme, event_sender))
+                } else {
+                    Line::from(f.text())
+                };
                 block = block.title(Line::from(title_spans));
-                frame.render_widget(Paragraph::new(f.text()).block(block), area);
+                frame.render_widget(Paragraph::new(text).block(block), area);
             }
             Field::Checkbox(f) => {
                 let inner_chunks = Layout::default()
@@ -328,4 +356,76 @@ impl Field {
             }
         }
     }
+}
+
+type HighlightedRegexCache = Mutex<LruCache<String, HighlightedLine>>;
+
+static HIGHLIGHTED_REGEX_CACHE: OnceLock<HighlightedRegexCache> = OnceLock::new();
+
+pub(crate) fn highlighted_regex_cache() -> &'static HighlightedRegexCache {
+    HIGHLIGHTED_REGEX_CACHE.get_or_init(|| {
+        let cache_capacity = NonZeroUsize::new(200).unwrap();
+        Mutex::new(LruCache::new(cache_capacity))
+    })
+}
+
+fn spawn_highlight_regex(pattern: String, theme: Theme, event_sender: UnboundedSender<Event>) {
+    // TODO: cancel thread if app closes
+    tokio::spawn(async move {
+        let full = match highlight_regex(&pattern, &theme) {
+            Ok(line) => line,
+            Err(e) => {
+                log::error!("Error highlighting pattern {pattern:?}: {e}");
+                vec![(None, pattern.to_string())]
+            }
+        };
+
+        let cache = highlighted_regex_cache();
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.put(pattern.to_string(), full);
+
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+    });
+}
+
+// TODO: cache
+// TODO: only highlight in search field when regex enabled
+fn highlight_regex_with_cache(
+    pattern: &str,
+    theme: &Theme,
+    event_sender: UnboundedSender<Event>,
+) -> HighlightedLine {
+    let cache = highlighted_regex_cache();
+    let mut cache_guard = cache.lock().unwrap();
+
+    if let Some(cached_lines) = cache_guard.get(pattern) {
+        return cached_lines.clone();
+    } else if let Some(last_char) = pattern.chars().last() {
+        if let Some(cached_lines) = cache_guard.get(&pattern[..pattern.len() - 1]) {
+            let mut line = cached_lines.clone();
+            line.push((None, last_char.to_string()));
+            return line;
+        }
+    }
+
+    spawn_highlight_regex(pattern.to_string(), theme.clone(), event_sender);
+
+    vec![(None, pattern.to_string())]
+}
+
+fn highlight_regex(pattern: &str, theme: &Theme) -> anyhow::Result<HighlightedLine> {
+    let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+    let syntax = syntax_set
+        .find_syntax_by_name("Regular Expression")
+        .unwrap();
+
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let p = highlighter.highlight_line(pattern, syntax_set)?;
+
+    let line = p
+        .iter()
+        .map(|(style, p)| (Some(*style), (*p).to_string()))
+        .collect();
+    Ok(line)
 }
