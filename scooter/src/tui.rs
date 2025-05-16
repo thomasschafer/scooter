@@ -39,7 +39,7 @@ impl<B: Backend + 'static> Tui<B> {
     }
 
     pub fn draw(&mut self, app: &mut App) -> anyhow::Result<()> {
-        self.terminal.draw(|frame| ui::render(app, frame))?;
+        self.terminal.draw(|frame| ui::view::render(app, frame))?;
         Ok(())
     }
 

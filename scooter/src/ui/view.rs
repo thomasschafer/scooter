@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 use syntect::{
-    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
+    highlighting::{FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -27,11 +27,14 @@ use crate::{
         App, AppError, AppEvent, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen,
         SearchField, SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
+    fields::Field,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
     },
 };
+
+use super::colour::to_ratatui_colour;
 
 impl FieldName {
     pub(crate) fn title(&self) -> &str {
@@ -43,6 +46,59 @@ impl FieldName {
             FieldName::MatchCase => "Match case",
             FieldName::IncludeFiles => "Files to include",
             FieldName::ExcludeFiles => "Files to exclude",
+        }
+    }
+}
+
+impl Field {
+    fn create_title_spans<'a>(&self, title: &'a str, highlighted: bool) -> Vec<Span<'a>> {
+        let title_style = Style::new().fg(if highlighted {
+            Color::Green
+        } else {
+            Color::Reset
+        });
+
+        let mut spans = vec![Span::styled(title, title_style)];
+        if let Some(error) = self.error() {
+            spans.push(Span::styled(
+                format!(" (Error: {})", error.short),
+                Style::new().fg(Color::Red),
+            ));
+        }
+        spans
+    }
+
+    fn render(&self, frame: &mut Frame<'_>, area: Rect, title: &str, highlighted: bool) {
+        let mut block = Block::bordered();
+        if highlighted {
+            block = block.border_style(Style::new().green());
+        }
+
+        let title_spans = self.create_title_spans(title, highlighted);
+
+        match self {
+            Field::Text(f) => {
+                block = block.title(Line::from(title_spans));
+                frame.render_widget(Paragraph::new(f.text()).block(block), area);
+            }
+            Field::Checkbox(f) => {
+                let inner_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(5), Constraint::Min(0)])
+                    .split(area);
+
+                frame.render_widget(
+                    Paragraph::new(if f.checked { " X " } else { "" }).block(block),
+                    inner_chunks[0],
+                );
+
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(title_spans);
+
+                let checkbox_text = vec![Line::from(Span::raw("")), Line::from(spans)];
+
+                frame.render_widget(Paragraph::new(checkbox_text), inner_chunks[1]);
+            }
         }
     }
 }
@@ -346,56 +402,6 @@ fn build_search_results<'a>(
 }
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-
-// Helper to find the index (0-5) for an R, G, or B component
-// corresponding to the closest xterm cube level: 0, 95, 135, 175, 215, 255.
-#[allow(clippy::inline_always)]
-#[inline(always)]
-fn cube_idx(value: u8) -> u8 {
-    if value < 48 {
-        0
-    } else if value < 115 {
-        1
-    } else if value < 155 {
-        2
-    } else if value < 195 {
-        3
-    } else if value < 235 {
-        4
-    } else {
-        5
-    }
-}
-
-/// Converts an RGB color to the closest xterm 256-color palette index.
-/// This function prioritizes speed while maintaining reasonable accuracy.
-///
-/// The 256-color palette consists of:
-/// - 0-15: Standard and high-intensity ANSI colors (not directly targeted here,
-///   but black and white are handled via cube/grayscale equivalents).
-/// - 16-231: A 6x6x6 color cube.
-/// - 232-255: A 24-step grayscale ramp.
-fn to_256_colour(r: u8, g: u8, b: u8) -> u8 {
-    if r == g && g == b {
-        if r < 8 {
-            return 16;
-        }
-        if r > 247 {
-            return 231;
-        }
-        return 232 + ((r - 8) / 10);
-    }
-
-    16 + (cube_idx(r) * 36) + (cube_idx(g) * 6) + cube_idx(b)
-}
-
-fn to_ratatui_colour(colour: SyntectColour, true_colour: bool) -> Color {
-    if true_colour {
-        Color::Rgb(colour.r, colour.g, colour.b)
-    } else {
-        Color::Indexed(to_256_colour(colour.r, colour.g, colour.b))
-    }
-}
 
 fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: bool) -> Style {
     let mut ratatui_style = Style::default()

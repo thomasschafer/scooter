@@ -85,9 +85,10 @@ pub struct EditorOpenConfig {
     /// [editor_open]
     /// command = "vi %file +%line"
     /// ```
+    /// If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
     #[serde(default)]
     pub command: Option<String>,
-    /// Whether to exit after running the command defined by `editor_open.command`.
+    /// Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
     #[serde(default = "default_exit")]
     pub exit: bool,
 }
@@ -104,7 +105,7 @@ impl Default for EditorOpenConfig {
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewConfig {
-    /// Whether to apply syntax highlighting to the preview.
+    /// Whether to apply syntax highlighting to the preview. Defaults to `true`.
     #[serde(default = "default_syntax_highlighting")]
     pub syntax_highlighting: bool,
     /// The theme to use when syntax highlighting is enabled.
@@ -164,8 +165,8 @@ where
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct StyleConfig {
-    /// Force enable or disable true colour. `true` forces true colour (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colours (supported almost all terminals including Apple Terminal).
-    /// If ommitted, Scooter will attempt to determine whether the terminal being used supports true colour.
+    /// Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
+    /// If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
     #[serde(default = "detect_true_colour")]
     pub true_color: bool,
 }
@@ -297,7 +298,9 @@ syntax_highlighting_theme = "Solarized (light)"
                     syntax_highlighting: false,
                     syntax_highlighting_theme: load_theme("Solarized (light)").unwrap(),
                 },
-                style: StyleConfig { true_color: true },
+                style: StyleConfig {
+                    true_color: detect_true_colour()
+                },
             }
         );
 
@@ -334,7 +337,9 @@ command = "vim %file +%line"
                 syntax_highlighting: false,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
             },
-            style: StyleConfig { true_color: true },
+            style: StyleConfig {
+                true_color: detect_true_colour(),
+            },
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -347,7 +352,9 @@ command = "vim %file +%line"
                 syntax_highlighting: true,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
             },
-            style: StyleConfig { true_color: true },
+            style: StyleConfig {
+                true_color: detect_true_colour(),
+            },
         };
         assert_eq!(
             config.get_theme(),

@@ -170,16 +170,17 @@ with the file path of the seach result, and `%line`, which will be replaced with
 [editor_open]
 command = "vi %file +%line"
 ```
+If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
 
 #### `exit`
 
-Whether to exit after running the command defined by `editor_open.command`.
+Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
 
 ### `[preview]` section
 
 #### `syntax_highlighting`
 
-Whether to apply syntax highlighting to the preview.
+Whether to apply syntax highlighting to the preview. Defaults to `true`.
 
 #### `syntax_highlighting_theme`
 
@@ -199,8 +200,8 @@ and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
 #### `true_color`
 
-Force enable or disable true colour. `true` forces true colour (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colours (supported almost all terminals including Apple Terminal).
-If ommitted, Scooter will attempt to determine whether the terminal being used supports true colour.
+Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
+If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
 
 <!-- CONFIG END -->
 
