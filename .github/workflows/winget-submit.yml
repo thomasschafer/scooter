@@ -11,7 +11,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version from tag
+      - name: Get version from Cargo.toml
         id: get-version
         shell: pwsh
         run: |
@@ -24,5 +24,6 @@ jobs:
         with:
           identifier: thomasschafer.scooter
           version: ${{ steps.get-version.outputs.version }}
-          installers-regex: "-x86_64-pc-windows-msvc\\.zip$"
+          installers-regex: "scooter-v.*-x86_64-pc-windows-msvc\\.zip$"
           token: ${{ secrets.WINGET_TOKEN }}
+          release-tag: v${{ steps.get-version.outputs.version }}
