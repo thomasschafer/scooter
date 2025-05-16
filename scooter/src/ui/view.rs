@@ -1,3 +1,4 @@
+use anyhow::{bail, Context};
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
@@ -318,7 +319,7 @@ fn render_confirmation_view(
             }
             Err(e) => {
                 frame.render_widget(
-                    Span::raw(format!("Error generating preview:\n{e}")).fg(Color::Red),
+                    Span::raw(format!("Error generating preview: \n{e}")).fg(Color::Red),
                     preview_area,
                 );
             }
@@ -527,11 +528,10 @@ fn build_preview_list<'a>(
             theme,
             event_sender,
         )?;
-        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
-        assert_eq!(
-            *cur.1.iter().map(|(_, s)| s).join(""),
-            selected.search_result.line
-        );
+        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
+        if *cur.1.iter().map(|(_, s)| s).join("") != selected.search_result.line {
+            bail!("File has changed since search");
+        }
 
         let list = List::new(
             before
@@ -553,10 +553,9 @@ fn build_preview_list<'a>(
             Ok(list)
         }
     } else {
-        let lines = read_lines_range(&selected.search_result.path, start, end)
-            .expect("Failed to read file");
+        let lines = read_lines_range(&selected.search_result.path, start, end)?;
         let (before, cur, after) =
-            split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1); // -1 because diff takes up 2 lines
+            split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
         assert_eq!(*cur.1, selected.search_result.line);
 
         Ok(List::new(
@@ -577,11 +576,15 @@ fn split_indexed_lines<T>(
     indexed_lines: Vec<(usize, T)>,
     line_idx: usize,
     num_lines_to_show: usize,
-) -> (Vec<(usize, T)>, (usize, T), Vec<(usize, T)>) {
-    let file_start = indexed_lines.first().unwrap().0;
-    let file_end = indexed_lines.last().unwrap().0;
-    let (new_start, new_end) =
-        largest_range_centered_on(line_idx, file_start, file_end, num_lines_to_show);
+) -> anyhow::Result<(Vec<(usize, T)>, (usize, T), Vec<(usize, T)>)> {
+    let file_start = indexed_lines.first().context("No lines found")?.0;
+    let file_end = indexed_lines.last().context("No lines found")?.0;
+    let (new_start, new_end) = largest_range_centered_on(
+        line_idx,
+        file_start,
+        file_end,
+        NonZeroUsize::new(num_lines_to_show).context("preview will have height 0")?,
+    )?;
 
     let mut filtered_lines = indexed_lines
         .into_iter()
@@ -592,11 +595,11 @@ fn split_indexed_lines<T>(
     let position = filtered_lines
         .iter()
         .position(|(idx, _)| *idx == line_idx)
-        .unwrap();
+        .context("Couldn't find line in file")?;
     let after = filtered_lines.split_off(position + 1);
     let current = filtered_lines.pop().unwrap();
 
-    (filtered_lines, current, after)
+    Ok((filtered_lines, current, after))
 }
 
 struct SearchResultLines<'a> {
@@ -1228,7 +1231,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 5, 5);
+        let (before, cur, after) = split_indexed_lines(lines, 5, 5).unwrap();
 
         assert_eq!(cur, (5, "Line 5".to_string()));
         assert_eq!(
@@ -1246,7 +1249,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 0, 3);
+        let (before, cur, after) = split_indexed_lines(lines, 0, 3).unwrap();
 
         assert_eq!(cur, (0, "Line 0".to_string()));
         assert_eq!(before, vec![]); // No lines before 0
@@ -1261,7 +1264,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 10, 3);
+        let (before, cur, after) = split_indexed_lines(lines, 10, 3).unwrap();
 
         assert_eq!(cur, (10, "Line 10".to_string()));
         assert_eq!(
@@ -1276,7 +1279,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 5, 1);
+        let (before, cur, after) = split_indexed_lines(lines, 5, 1).unwrap();
 
         assert_eq!(cur, (5, "Line 5".to_string()));
         assert_eq!(before, vec![]);
@@ -1289,7 +1292,7 @@ mod tests {
             .map(|idx| (idx, vec![idx, (idx * 2)]))
             .collect::<Vec<_>>();
 
-        let (before, cur, after) = split_indexed_lines(lines, 3, 2);
+        let (before, cur, after) = split_indexed_lines(lines, 3, 2).unwrap();
 
         assert_eq!(cur, (3, vec![3, 6]));
         assert_eq!(before, vec![]);
@@ -1306,7 +1309,7 @@ mod tests {
             (50, "Line 50"),
         ];
 
-        let (before, cur, after) = split_indexed_lines(lines, 30, 3);
+        let (before, cur, after) = split_indexed_lines(lines, 30, 3).unwrap();
 
         assert_eq!(cur, (30, "Line 30"));
         // Both before and after should be empty - `num_lines_to_show` should be just sequential lines
@@ -1324,7 +1327,7 @@ mod tests {
             (50, "Line 50"),
         ];
 
-        let (before, cur, after) = split_indexed_lines(lines, 30, 30);
+        let (before, cur, after) = split_indexed_lines(lines, 30, 30).unwrap();
 
         assert_eq!(cur, (30, "Line 30"));
         assert_eq!(before, vec![(20, "Line 20")]);
@@ -1336,7 +1339,7 @@ mod tests {
     fn test_split_lines_line_idx_not_found() {
         let lines: Vec<(usize, String)> = (0..=5).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let _ = split_indexed_lines(lines, 10, 3);
+        let _ = split_indexed_lines(lines, 10, 3).unwrap();
         // Should panic because line 10 is not in the data
     }
 }

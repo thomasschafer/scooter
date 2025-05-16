@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use std::{
     fs::File,
     io::{self, BufRead, BufReader, Lines},
+    num::NonZeroUsize,
     ops::{Add, Div, Mul, Rem},
     path::{Path, PathBuf},
 };
@@ -264,35 +265,37 @@ pub fn last_n_chars(s: &str, n: usize) -> &str {
 ///
 /// # Example
 /// ```
+/// use std::num::NonZeroUsize;
 /// use scooter::utils::largest_range_centered_on;
 ///
 /// // Simple case - centered range with room on both sides
-/// let (start, end) = largest_range_centered_on(5, 0, 10, 5);
+/// let (start, end) = largest_range_centered_on(5, 0, 10, NonZeroUsize::new(5).unwrap()).unwrap();
 /// assert_eq!((3, 7), (start, end));
 ///
 /// // Range limited by lower bound
-/// let (start, end) = largest_range_centered_on(0, 0, 10, 5);
+/// let (start, end) = largest_range_centered_on(0, 0, 10, NonZeroUsize::new(5).unwrap()).unwrap();
 /// assert_eq!((0, 4), (start, end));
 ///
 /// // Range limited by upper bound
-/// let (start, end) = largest_range_centered_on(8, 0, 10, 5);
+/// let (start, end) = largest_range_centered_on(8, 0, 10, NonZeroUsize::new(5).unwrap()).unwrap();
 /// assert_eq!((6, 10), (start, end));
 ///
 /// // Range limited by max_size
-/// let (start, end) = largest_range_centered_on(5, 0, 20, 3);
+/// let (start, end) = largest_range_centered_on(5, 0, 20, NonZeroUsize::new(3).unwrap()).unwrap();
 /// assert_eq!((4, 6), (start, end));
 /// ```
 pub fn largest_range_centered_on(
     centre: usize,
     lower_bound: usize,
     upper_bound: usize,
-    max_size: usize,
-) -> (usize, usize) {
-    assert!(
-        lower_bound <= centre && centre <= upper_bound,
-        "Expected start<=pos<=end, found start={lower_bound}, pos={centre}, end={upper_bound}"
-    );
-    assert!(max_size > 0, "Expected max_size > 0, found {max_size}");
+    max_size: NonZeroUsize,
+) -> anyhow::Result<(usize, usize)> {
+    if !(lower_bound <= centre && centre <= upper_bound) {
+        bail!(
+            "Expected start<=pos<=end, found start={lower_bound}, pos={centre}, end={upper_bound}",
+        );
+    }
+    let max_size = max_size.get();
 
     let mut cur_size = 1;
     let mut cur_start = centre;
@@ -308,7 +311,7 @@ pub fn largest_range_centered_on(
         }
     }
 
-    (cur_start, cur_end)
+    Ok((cur_start, cur_end))
 }
 
 #[macro_export]
@@ -1109,26 +1112,82 @@ mod tests {
 
     #[test]
     fn test_largest_window_around() {
-        assert_eq!(largest_range_centered_on(5, 0, 9, 1), (5, 5));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 2), (5, 6));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 3), (4, 6));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 4), (4, 7));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 5), (3, 7));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 6), (3, 8));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 7), (2, 8));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 8), (2, 9));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 9), (1, 9));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 10), (0, 9));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 11), (0, 9));
-        assert_eq!(largest_range_centered_on(5, 0, 9, 999), (0, 9));
+        assert!(largest_range_centered_on(5, 0, 0, NonZeroUsize::new(1).unwrap()).is_err());
 
-        assert_eq!(largest_range_centered_on(0, 0, 9, 1), (0, 0));
-        assert_eq!(largest_range_centered_on(0, 0, 9, 2), (0, 1));
-        assert_eq!(largest_range_centered_on(0, 0, 9, 100), (0, 9));
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(1).unwrap()).unwrap(),
+            (5, 5)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(2).unwrap()).unwrap(),
+            (5, 6)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(3).unwrap()).unwrap(),
+            (4, 6)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(4).unwrap()).unwrap(),
+            (4, 7)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(5).unwrap()).unwrap(),
+            (3, 7)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(6).unwrap()).unwrap(),
+            (3, 8)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(7).unwrap()).unwrap(),
+            (2, 8)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(8).unwrap()).unwrap(),
+            (2, 9)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(9).unwrap()).unwrap(),
+            (1, 9)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(10).unwrap()).unwrap(),
+            (0, 9)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(11).unwrap()).unwrap(),
+            (0, 9)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 0, 9, NonZeroUsize::new(999).unwrap()).unwrap(),
+            (0, 9)
+        );
 
-        assert_eq!(largest_range_centered_on(5, 3, 5, 1), (5, 5));
-        assert_eq!(largest_range_centered_on(5, 3, 5, 2), (4, 5));
-        assert_eq!(largest_range_centered_on(5, 3, 5, 100), (3, 5));
+        assert_eq!(
+            largest_range_centered_on(0, 0, 9, NonZeroUsize::new(1).unwrap()).unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            largest_range_centered_on(0, 0, 9, NonZeroUsize::new(2).unwrap()).unwrap(),
+            (0, 1)
+        );
+        assert_eq!(
+            largest_range_centered_on(0, 0, 9, NonZeroUsize::new(100).unwrap()).unwrap(),
+            (0, 9)
+        );
+
+        assert_eq!(
+            largest_range_centered_on(5, 3, 5, NonZeroUsize::new(1).unwrap()).unwrap(),
+            (5, 5)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 3, 5, NonZeroUsize::new(2).unwrap()).unwrap(),
+            (4, 5)
+        );
+        assert_eq!(
+            largest_range_centered_on(5, 3, 5, NonZeroUsize::new(100).unwrap()).unwrap(),
+            (3, 5)
+        );
     }
 
     #[test]
