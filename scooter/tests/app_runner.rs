@@ -92,13 +92,26 @@ async fn wait_for_text(
     let start = Instant::now();
     let mut last_snapshot = None;
 
+    let err_with_snapshot =
+        |error_msg: &str, last_snapshot: Option<String>| -> anyhow::Result<String> {
+            let formatted_snapshot = match last_snapshot {
+                Some(snapshot) => &format!("Current buffer snapshot:\n{snapshot}"),
+                None => "No buffer snapshots received",
+            };
+
+            bail!(
+                "{error_msg}: {patt}\n{formatted_snapshot}",
+                patt = pattern.as_str().escape_debug(),
+            )
+        };
+
     while start.elapsed() <= timeout {
         tokio::select! {
             snapshot = snapshot_rx.recv() => {
                 match snapshot {
                     Some(s) if pattern.is_match(&s) => return Ok(s),
                     Some(s) => { last_snapshot = Some(s); },
-                    None => bail!("Channel closed while waiting for pattern: {}", pattern.as_str()),
+                    None =>  return err_with_snapshot("Channel closed while for pattern", last_snapshot) ,
                 }
             }
             () = sleep(timeout - start.elapsed()) => {
@@ -107,16 +120,7 @@ async fn wait_for_text(
         }
     }
 
-    let formatted_snapshot = match last_snapshot {
-        Some(snapshot) => &format!("Current buffer snapshot:\n{snapshot}"),
-        None => "No buffer snapshots received",
-    };
-
-    bail!(
-        "Timeout waiting for pattern: {}\n{}",
-        pattern.as_str().escape_debug(),
-        formatted_snapshot
-    )
+    err_with_snapshot("Timeout waiting for pattern", last_snapshot)
 }
 
 type TestRunner = (
@@ -835,6 +839,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
     shutdown(event_sender, run_handle).await
 }
 
+// TODO: add more failure test cases - files changed, deleted etc.
 #[tokio::test]
 async fn test_results_calculation_with_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
