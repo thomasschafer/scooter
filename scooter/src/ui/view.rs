@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 use syntect::{
-    highlighting::{Color as SyntectColour, FontStyle, Style as SyntectStyle, Theme},
+    highlighting::{FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -27,11 +27,14 @@ use crate::{
         App, AppError, AppEvent, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen,
         SearchField, SearchResult, SearchState, NUM_SEARCH_FIELDS,
     },
+    fields::Field,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
     },
 };
+
+use super::colour::to_ratatui_colour;
 
 impl FieldName {
     pub(crate) fn title(&self) -> &str {
@@ -43,6 +46,59 @@ impl FieldName {
             FieldName::MatchCase => "Match case",
             FieldName::IncludeFiles => "Files to include",
             FieldName::ExcludeFiles => "Files to exclude",
+        }
+    }
+}
+
+impl Field {
+    fn create_title_spans<'a>(&self, title: &'a str, highlighted: bool) -> Vec<Span<'a>> {
+        let title_style = Style::new().fg(if highlighted {
+            Color::Green
+        } else {
+            Color::Reset
+        });
+
+        let mut spans = vec![Span::styled(title, title_style)];
+        if let Some(error) = self.error() {
+            spans.push(Span::styled(
+                format!(" (Error: {})", error.short),
+                Style::new().fg(Color::Red),
+            ));
+        }
+        spans
+    }
+
+    fn render(&self, frame: &mut Frame<'_>, area: Rect, title: &str, highlighted: bool) {
+        let mut block = Block::bordered();
+        if highlighted {
+            block = block.border_style(Style::new().green());
+        }
+
+        let title_spans = self.create_title_spans(title, highlighted);
+
+        match self {
+            Field::Text(f) => {
+                block = block.title(Line::from(title_spans));
+                frame.render_widget(Paragraph::new(f.text()).block(block), area);
+            }
+            Field::Checkbox(f) => {
+                let inner_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(5), Constraint::Min(0)])
+                    .split(area);
+
+                frame.render_widget(
+                    Paragraph::new(if f.checked { " X " } else { "" }).block(block),
+                    inner_chunks[0],
+                );
+
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(title_spans);
+
+                let checkbox_text = vec![Line::from(Span::raw("")), Line::from(spans)];
+
+                frame.render_widget(Paragraph::new(checkbox_text), inner_chunks[1]);
+            }
         }
     }
 }
@@ -179,6 +235,7 @@ fn render_confirmation_view(
     base_path: &Path,
     area: Rect,
     theme: Option<&Theme>,
+    true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 110;
@@ -247,7 +304,7 @@ fn render_confirmation_view(
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
 
-            match build_preview_list(lines_to_show, selected, theme, event_sender) {
+            match build_preview_list(lines_to_show, selected, theme, true_colour, event_sender) {
                 Ok(preview) => {
                     frame.render_widget(preview, preview_area);
                 }
@@ -346,14 +403,10 @@ fn build_search_results<'a>(
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
-fn to_ratatui_colour(colour: SyntectColour) -> Color {
-    Color::Rgb(colour.r, colour.g, colour.b)
-}
-
-fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
+fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: bool) -> Style {
     let mut ratatui_style = Style::default()
-        .fg(to_ratatui_colour(syntect_style.foreground))
-        .bg(to_ratatui_colour(syntect_style.background));
+        .fg(to_ratatui_colour(syntect_style.foreground, true_colour))
+        .bg(to_ratatui_colour(syntect_style.background, true_colour));
 
     if syntect_style.font_style.contains(FontStyle::BOLD) {
         ratatui_style = ratatui_style.bold();
@@ -367,7 +420,7 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
     ratatui_style
 }
 
-fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
+fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> ListItem<'a> {
     let prefix = "  ";
     ListItem::new(
         iter::once(Span::raw(prefix))
@@ -375,7 +428,7 @@ fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> 
                 Span::styled(
                     strip_control_chars(s),
                     match style {
-                        Some(style) => convert_syntect_to_ratatui_style(style),
+                        Some(style) => convert_syntect_to_ratatui_style(style, true_colour),
                         None => Style::default(),
                     },
                 )
@@ -473,6 +526,7 @@ fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
+    true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
     let line_idx = selected.search_result.line_number - 1;
@@ -496,14 +550,18 @@ fn build_preview_list<'a>(
         let list = List::new(
             before
                 .iter()
-                .map(|(_, l)| regions_to_line(l))
+                .map(|(_, l)| regions_to_line(l, true_colour))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|(_, l)| regions_to_line(l))),
+                .chain(after.iter().map(|(_, l)| regions_to_line(l, true_colour))),
         );
-        if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
+        if let Some(bg) = theme
+            .settings
+            .background
+            .map(|c| to_ratatui_colour(c, true_colour))
+        {
             Ok(list.bg(bg))
         } else {
             Ok(list)
@@ -815,6 +873,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.config.style.true_color,
                 app.event_sender.clone(),
             );
         }
@@ -827,6 +886,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.config.style.true_color,
                 app.event_sender.clone(),
             );
         }

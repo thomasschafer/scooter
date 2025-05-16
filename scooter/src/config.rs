@@ -39,6 +39,31 @@ pub struct Config {
     pub editor_open: EditorOpenConfig,
     #[serde(default)]
     pub preview: PreviewConfig,
+    #[serde(default)]
+    pub style: StyleConfig,
+}
+
+impl Config {
+    /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
+    /// is the user's selected theme or otherwise the default
+    pub(crate) fn get_theme(&self) -> Option<&Theme> {
+        if self.preview.syntax_highlighting {
+            Some(&self.preview.syntax_highlighting_theme)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn load_config() -> anyhow::Result<Config> {
+    let config_file = &config_file();
+    if fs::exists(config_file)? {
+        let contents = fs::read_to_string(config_file)?;
+        let config = toml::from_str(&contents)?;
+        Ok(config)
+    } else {
+        Ok(Config::default())
+    }
 }
 
 impl Default for Config {
@@ -60,9 +85,10 @@ pub struct EditorOpenConfig {
     /// [editor_open]
     /// command = "vi %file +%line"
     /// ```
+    /// If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
     #[serde(default)]
     pub command: Option<String>,
-    /// Whether to exit after running the command defined by `editor_open.command`.
+    /// Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
     #[serde(default = "default_exit")]
     pub exit: bool,
 }
@@ -79,7 +105,7 @@ impl Default for EditorOpenConfig {
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewConfig {
-    /// Whether to apply syntax highlighting to the preview.
+    /// Whether to apply syntax highlighting to the preview. Defaults to `true`.
     #[serde(default = "default_syntax_highlighting")]
     pub syntax_highlighting: bool,
     /// The theme to use when syntax highlighting is enabled.
@@ -110,7 +136,7 @@ fn default_syntax_highlighting_theme() -> Theme {
 
 impl Default for PreviewConfig {
     fn default() -> Self {
-        PreviewConfig {
+        Self {
             syntax_highlighting: default_syntax_highlighting(),
             syntax_highlighting_theme: default_syntax_highlighting_theme(),
         }
@@ -136,26 +162,45 @@ where
     load_theme(&theme_name).map_err(de::Error::custom)
 }
 
-impl Config {
-    /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
-    /// is the user's selected theme or otherwise the default
-    pub(crate) fn get_theme(&self) -> Option<&Theme> {
-        if self.preview.syntax_highlighting {
-            Some(&self.preview.syntax_highlighting_theme)
-        } else {
-            None
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StyleConfig {
+    /// Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
+    /// If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
+    #[serde(default = "detect_true_colour")]
+    pub true_color: bool,
+}
+
+impl Default for StyleConfig {
+    fn default() -> Self {
+        Self {
+            true_color: detect_true_colour(),
         }
     }
 }
 
-pub fn load_config() -> anyhow::Result<Config> {
-    let config_file = &config_file();
-    if fs::exists(config_file)? {
-        let contents = fs::read_to_string(config_file)?;
-        let config = toml::from_str(&contents)?;
-        Ok(config)
-    } else {
-        Ok(Config::default())
+#[cfg(windows)]
+fn detect_true_colour() -> bool {
+    true
+}
+
+// Copied from Helix
+#[cfg(not(windows))]
+fn detect_true_colour() -> bool {
+    if matches!(
+        std::env::var("COLORTERM").map(|v| matches!(v.as_str(), "truecolor" | "24bit")),
+        Ok(true)
+    ) {
+        return true;
+    }
+
+    match termini::TermInfo::from_env() {
+        Ok(t) => {
+            t.extended_cap("RGB").is_some()
+                || t.extended_cap("Tc").is_some()
+                || (t.extended_cap("setrgbf").is_some() && t.extended_cap("setrgbb").is_some())
+        }
+        Err(_) => false,
     }
 }
 
@@ -252,7 +297,10 @@ syntax_highlighting_theme = "Solarized (light)"
                 preview: PreviewConfig {
                     syntax_highlighting: false,
                     syntax_highlighting_theme: load_theme("Solarized (light)").unwrap(),
-                }
+                },
+                style: StyleConfig {
+                    true_color: detect_true_colour()
+                },
             }
         );
 
@@ -289,6 +337,9 @@ command = "vim %file +%line"
                 syntax_highlighting: false,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
             },
+            style: StyleConfig {
+                true_color: detect_true_colour(),
+            },
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -300,6 +351,9 @@ command = "vim %file +%line"
             preview: PreviewConfig {
                 syntax_highlighting: true,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
+            },
+            style: StyleConfig {
+                true_color: detect_true_colour(),
             },
         };
         assert_eq!(
