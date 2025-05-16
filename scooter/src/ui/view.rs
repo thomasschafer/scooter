@@ -239,25 +239,16 @@ fn render_confirmation_view(
     event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 110;
-    let area = if !split_view {
-        default_width(area)
-    } else {
-        width(area, 90)
-    };
-    let [num_results_area, results_area] =
-        Layout::vertical([Constraint::Length(2), Constraint::Fill(1)])
-            .flex(Flex::Start)
-            .areas(area);
-    let results_area = if split_view {
-        // TODO: can we apply this padding to all views without losing space on other screens?
-        let [results_area, _] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(results_area);
-        results_area
-    } else {
-        results_area
-    };
+    let area = width(area, 90);
 
-    let list_area_height = results_area.height as usize;
+    let [num_results_area, results_area, _] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .flex(Flex::Start)
+    .areas(area);
+
     let num_results = search_state.results.len();
 
     render_num_results(
@@ -268,9 +259,14 @@ fn render_confirmation_view(
         time_taken,
     );
 
-    let item_height = if split_view { 1 } else { 4 }; // TODO: find a better way of doing this
-    let num_to_render = list_area_height / item_height;
+    let num_to_render = if split_view {
+        results_area.height as usize
+    } else {
+        5
+    };
+
     search_state.num_displayed = Some(num_to_render);
+
     if search_state.primary_selected_pos() < search_state.view_offset + 1 {
         search_state.view_offset = search_state.primary_selected_pos().saturating_sub(1);
     } else if search_state.primary_selected_pos()
@@ -283,60 +279,50 @@ fn render_confirmation_view(
         );
     }
 
-    if split_view {
+    let (list_area, preview_area) = if split_view {
         let [list_area, _, preview_area] = Layout::horizontal([
             Constraint::Fill(2),
             Constraint::Length(1),
             Constraint::Fill(3),
         ])
         .areas(results_area);
-
-        let search_results =
-            build_search_results(search_state, base_path, list_area.width, num_to_render);
-        let search_results_list = search_results
-            .iter()
-            .flat_map(|SearchResultLines { file_path, .. }| vec![ListItem::new(file_path.clone())]);
-        frame.render_widget(List::new(search_results_list), list_area);
-        if !search_results.is_empty() {
-            let selected = search_results
-                .iter()
-                .find(|s| s.is_primary_selected)
-                .expect("Selected item should be in view");
-            let lines_to_show = preview_area.height as usize;
-
-            match build_preview_list(lines_to_show, selected, theme, true_colour, event_sender) {
-                Ok(preview) => {
-                    frame.render_widget(preview, preview_area);
-                }
-                Err(e) => {
-                    frame.render_widget(
-                        Span::raw(format!("Error generating preview:\n{e}")).fg(Color::Red),
-                        preview_area,
-                    );
-                }
-            };
-        }
+        (list_area, preview_area)
     } else {
-        let search_results = List::new(
-            build_search_results(search_state, base_path, results_area.width, num_to_render)
-                .into_iter()
-                .flat_map(
-                    |SearchResultLines {
-                         file_path,
-                         old_line_diff,
-                         new_line_diff,
-                         ..
-                     }| {
-                        vec![
-                            ListItem::new(file_path),
-                            ListItem::new(old_line_diff),
-                            ListItem::new(new_line_diff),
-                            ListItem::new(""),
-                        ]
-                    },
-                ),
-        );
-        frame.render_widget(search_results, results_area);
+        let [list_area, _, preview_area] = Layout::vertical([
+            #[allow(clippy::cast_possible_truncation)]
+            Constraint::Length(num_to_render as u16),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(results_area);
+        (list_area, preview_area)
+    };
+
+    let search_results =
+        build_search_results(search_state, base_path, list_area.width, num_to_render);
+    let search_results_list = search_results
+        .iter()
+        .map(|SearchResultLines { file_path, .. }| ListItem::new(file_path.clone()));
+    frame.render_widget(List::new(search_results_list), list_area);
+
+    if !search_results.is_empty() {
+        let selected = search_results
+            .iter()
+            .find(|s| s.is_primary_selected)
+            .expect("Selected item should be in view");
+        let lines_to_show = preview_area.height as usize;
+
+        match build_preview_list(lines_to_show, selected, theme, true_colour, event_sender) {
+            Ok(preview) => {
+                frame.render_widget(preview, preview_area);
+            }
+            Err(e) => {
+                frame.render_widget(
+                    Span::raw(format!("Error generating preview:\n{e}")).fg(Color::Red),
+                    preview_area,
+                );
+            }
+        };
     }
 }
 
