@@ -195,6 +195,13 @@ wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/them
 ```
 and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
+### `[style]` section
+
+#### `true_color`
+
+Force enable or disable true colour. `true` forces true colour (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colours (supported almost all terminals including Apple Terminal).
+If ommitted, Scooter will attempt to determine whether the terminal being used supports true colour.
+
 <!-- CONFIG END -->
 
 

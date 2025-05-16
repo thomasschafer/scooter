@@ -179,6 +179,7 @@ fn render_confirmation_view(
     base_path: &Path,
     area: Rect,
     theme: Option<&Theme>,
+    true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) {
     let split_view = area.width >= 110;
@@ -247,7 +248,7 @@ fn render_confirmation_view(
                 .expect("Selected item should be in view");
             let lines_to_show = preview_area.height as usize;
 
-            match build_preview_list(lines_to_show, selected, theme, event_sender) {
+            match build_preview_list(lines_to_show, selected, theme, true_colour, event_sender) {
                 Ok(preview) => {
                     frame.render_widget(preview, preview_area);
                 }
@@ -346,14 +347,60 @@ fn build_search_results<'a>(
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
-fn to_ratatui_colour(colour: SyntectColour) -> Color {
-    Color::Rgb(colour.r, colour.g, colour.b)
+// Helper to find the index (0-5) for an R, G, or B component
+// corresponding to the closest xterm cube level: 0, 95, 135, 175, 215, 255.
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn cube_idx(value: u8) -> u8 {
+    if value < 48 {
+        0
+    } else if value < 115 {
+        1
+    } else if value < 155 {
+        2
+    } else if value < 195 {
+        3
+    } else if value < 235 {
+        4
+    } else {
+        5
+    }
 }
 
-fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
+/// Converts an RGB color to the closest xterm 256-color palette index.
+/// This function prioritizes speed while maintaining reasonable accuracy.
+///
+/// The 256-color palette consists of:
+/// - 0-15: Standard and high-intensity ANSI colors (not directly targeted here,
+///   but black and white are handled via cube/grayscale equivalents).
+/// - 16-231: A 6x6x6 color cube.
+/// - 232-255: A 24-step grayscale ramp.
+fn to_256_colour(r: u8, g: u8, b: u8) -> u8 {
+    if r == g && g == b {
+        if r < 8 {
+            return 16;
+        }
+        if r > 247 {
+            return 231;
+        }
+        return 232 + ((r - 8) / 10);
+    }
+
+    16 + (cube_idx(r) * 36) + (cube_idx(g) * 6) + cube_idx(b)
+}
+
+fn to_ratatui_colour(colour: SyntectColour, true_colour: bool) -> Color {
+    if true_colour {
+        Color::Rgb(colour.r, colour.g, colour.b)
+    } else {
+        Color::Indexed(to_256_colour(colour.r, colour.g, colour.b))
+    }
+}
+
+fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: bool) -> Style {
     let mut ratatui_style = Style::default()
-        .fg(to_ratatui_colour(syntect_style.foreground))
-        .bg(to_ratatui_colour(syntect_style.background));
+        .fg(to_ratatui_colour(syntect_style.foreground, true_colour))
+        .bg(to_ratatui_colour(syntect_style.background, true_colour));
 
     if syntect_style.font_style.contains(FontStyle::BOLD) {
         ratatui_style = ratatui_style.bold();
@@ -367,7 +414,7 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle) -> Style {
     ratatui_style
 }
 
-fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> {
+fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> ListItem<'a> {
     let prefix = "  ";
     ListItem::new(
         iter::once(Span::raw(prefix))
@@ -375,7 +422,7 @@ fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)]) -> ListItem<'a> 
                 Span::styled(
                     strip_control_chars(s),
                     match style {
-                        Some(style) => convert_syntect_to_ratatui_style(style),
+                        Some(style) => convert_syntect_to_ratatui_style(style, true_colour),
                         None => Style::default(),
                     },
                 )
@@ -473,6 +520,7 @@ fn build_preview_list<'a>(
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
+    true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
     let line_idx = selected.search_result.line_number - 1;
@@ -496,14 +544,18 @@ fn build_preview_list<'a>(
         let list = List::new(
             before
                 .iter()
-                .map(|(_, l)| regions_to_line(l))
+                .map(|(_, l)| regions_to_line(l, true_colour))
                 .chain([
                     ListItem::new(selected.old_line_diff.clone()),
                     ListItem::new(selected.new_line_diff.clone()),
                 ])
-                .chain(after.iter().map(|(_, l)| regions_to_line(l))),
+                .chain(after.iter().map(|(_, l)| regions_to_line(l, true_colour))),
         );
-        if let Some(bg) = theme.settings.background.map(to_ratatui_colour) {
+        if let Some(bg) = theme
+            .settings
+            .background
+            .map(|c| to_ratatui_colour(c, true_colour))
+        {
             Ok(list.bg(bg))
         } else {
             Ok(list)
@@ -815,6 +867,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.config.style.true_color,
                 app.event_sender.clone(),
             );
         }
@@ -827,6 +880,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 base_path,
                 content_area,
                 app.config.get_theme(),
+                app.config.style.true_color,
                 app.event_sender.clone(),
             );
         }

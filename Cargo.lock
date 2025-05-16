@@ -1294,6 +1294,7 @@ dependencies = [
  "simple-log",
  "syntect",
  "tempfile",
+ "termini",
  "tokio",
  "toml",
 ]
@@ -1568,6 +1569,15 @@ dependencies = [
  "once_cell",
  "rustix 1.0.2",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "termini"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ad441d87dd98bc5eeb31cf2fb7e4839968763006b478efb38668a3bf9da0d59"
+dependencies = [
+ "home",
 ]
 
 [[package]]
