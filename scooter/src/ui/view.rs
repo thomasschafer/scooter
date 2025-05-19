@@ -528,9 +528,13 @@ fn build_preview_list<'a>(
             theme,
             event_sender,
         )?;
-        let (before, cur, after) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
+        // `num_lines_to_show - 1` because diff takes up 2 lines
+        let Ok((before, cur, after)) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1)
+        else {
+            bail!("File has changed since search (lines have changed)");
+        };
         if *cur.1.iter().map(|(_, s)| s).join("") != selected.search_result.line {
-            bail!("File has changed since search");
+            bail!("File has changed since search (lines don't match)");
         }
 
         let list = List::new(
