@@ -67,6 +67,28 @@ macro_rules! overwrite_files {
     };
 }
 
+#[macro_export]
+macro_rules! delete_files {
+    ($base_dir:expr, $($path:expr),*) => {
+        {
+            use std::fs;
+            use std::path::Path;
+            $(
+                let full_path = Path::new($base_dir).join($path);
+                if !full_path.exists() {
+                    panic!("Path does not exist: {}", full_path.display());
+                }
+
+                if full_path.is_dir() {
+                    fs::remove_dir_all(&full_path).unwrap();
+                } else {
+                    fs::remove_file(&full_path).unwrap();
+                }
+            )*
+        }
+    };
+}
+
 pub fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
