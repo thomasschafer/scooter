@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.97"
-clap = { version = "4.5.32", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive"] }
 content_inspector = "0.2.4"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
