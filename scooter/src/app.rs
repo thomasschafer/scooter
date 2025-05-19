@@ -12,7 +12,10 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
-use std::{cmp::max, iter::Iterator};
+use std::{
+    cmp::{max, min},
+    iter::Iterator,
+};
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -176,21 +179,18 @@ impl SearchState {
         let primary_selected_pos = self.primary_selected_pos();
         if primary_selected_pos == 0 {
             self.selected = Selected::Single(self.results.len().saturating_sub(1));
-        } else if primary_selected_pos <= n {
-            self.selected = Selected::Single(0);
         } else {
-            self.move_primary_sel(primary_selected_pos - n);
+            self.move_primary_sel(primary_selected_pos.saturating_sub(n));
         }
     }
 
     fn move_selected_down_by(&mut self, n: usize) {
         let primary_selected_pos = self.primary_selected_pos();
-        if primary_selected_pos >= self.results.len().saturating_sub(1) {
+        let end = self.results.len().saturating_sub(1);
+        if primary_selected_pos >= end {
             self.selected = Selected::Single(0);
-        } else if primary_selected_pos >= self.results.len().saturating_sub(n + 1) {
-            self.selected = Selected::Single(self.results.len().saturating_sub(1));
         } else {
-            self.move_primary_sel(primary_selected_pos + n);
+            self.move_primary_sel(min(primary_selected_pos + n, end));
         }
     }
 
@@ -1989,5 +1989,15 @@ mod tests {
                 primary: 3,
             })
         );
+        state.move_selected_bottom();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 9,
+            })
+        );
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(0));
     }
 }
