@@ -95,6 +95,10 @@ impl MultiSelected {
             (self.primary, self.anchor)
         }
     }
+
+    fn flip_direction(&mut self) {
+        (self.anchor, self.primary) = (self.primary, self.anchor);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -159,6 +163,9 @@ impl SearchState {
             }
             (KeyCode::Char('v'), _) => {
                 self.toggle_multiselect_mode();
+            }
+            (KeyCode::Char(';'), KeyModifiers::ALT) => {
+                self.flip_multiselect_direction();
             }
             _ => {}
         }
@@ -302,6 +309,15 @@ impl SearchState {
 
     pub(crate) fn is_primary_selected(&self, idx: usize) -> bool {
         idx == self.primary_selected_pos()
+    }
+
+    fn flip_multiselect_direction(&mut self) {
+        match &mut self.selected {
+            Selected::Single(_) => {}
+            Selected::Multi(ms) => {
+                ms.flip_direction();
+            }
+        }
     }
 }
 
@@ -1386,6 +1402,7 @@ impl App {
                     ("<C-f>", "down a full page", Show::FullOnly),
                     ("g", "jump to top", Show::FullOnly),
                     ("G", "jump to bottom", Show::FullOnly),
+                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
                 ]);
                 keys
             }
@@ -1927,6 +1944,50 @@ mod tests {
                 .map(|res| res.included)
                 .collect::<Vec<_>>(),
             vec![false, true, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn test_flip_multi_select_direction() {
+        let mut state = build_test_search_state(10);
+        assert_eq!(state.selected, Selected::Single(0));
+        state.flip_multiselect_direction();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.toggle_multiselect_mode();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 1,
+                primary: 3,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 1,
+            })
+        );
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 0,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 3,
+            })
         );
     }
 }
