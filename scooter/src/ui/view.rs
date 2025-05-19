@@ -633,7 +633,14 @@ fn search_result<'a>(
         .collect::<Vec<_>>();
 
     SearchResultLines {
-        file_path: file_path_line(idx, result, base_path, is_selected, list_area_width),
+        file_path: file_path_line(
+            idx,
+            result,
+            base_path,
+            is_selected,
+            is_primary_selected,
+            list_area_width,
+        ),
         old_line_diff: diff_to_line(old_line),
         new_line_diff: diff_to_line(new_line),
         is_primary_selected,
@@ -648,17 +655,20 @@ fn file_path_line<'a>(
     result: &SearchResult,
     base_path: &Path,
     is_selected: bool,
+    is_primary_selected: bool,
     list_area_width: u16,
 ) -> Line<'a> {
-    let file_path_style = if is_selected {
-        Style::new().bg(if result.included {
-            Color::Blue
-        } else {
-            Color::Red
-        })
-    } else {
-        Style::new()
-    };
+    let mut file_path_style = Style::new();
+    if is_selected {
+        file_path_style = file_path_style
+            .bg(match (result.included, is_primary_selected) {
+                (true, true) => Color::Blue,
+                (true, false) => Color::Indexed(26),
+                (false, true) => Color::Red,
+                (false, false) => Color::Indexed(167),
+            })
+            .fg(Color::Indexed(255));
+    }
 
     let right_content = format!(" ({})", idx + 1);
     let right_content_len = right_content.len();
@@ -685,11 +695,16 @@ fn file_path_line<'a>(
             .saturating_sub(left_content_len + centre_content.len() + right_content_len),
     );
 
+    let accessory_colour = if is_selected {
+        Color::Indexed(255)
+    } else {
+        Color::Blue
+    };
     Line::from(vec![
-        Span::raw(left_content).style(Color::Blue),
+        Span::raw(left_content).style(accessory_colour),
         Span::raw(centre_content),
         Span::raw(spacers),
-        Span::raw(right_content).style(Color::Blue),
+        Span::raw(right_content).style(accessory_colour),
     ])
     .style(file_path_style)
 }
