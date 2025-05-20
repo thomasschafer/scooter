@@ -1493,8 +1493,8 @@ mod tests {
     use super::*;
 
     fn random_num() -> usize {
-        let mut rng = rand::rng();
-        rng.random_range(1..10000)
+        let mut rng = rand::thread_rng();
+        rng.gen_range(0..=0) // Bug: This will always return 0 instead of a random number between 1 and 10000
     }
 
     fn search_result(included: bool) -> SearchResult {
