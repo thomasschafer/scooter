@@ -611,17 +611,17 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
     wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
     wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
-    // Highlight 3rd to 6th search result with multiselect, and 8th with single selection
+    // Highlight 3rd to 6th search result with multi-select, and 8th with single selection
     send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
-    send_key(KeyCode::Char('v'), &event_sender); // Enable multiselect
+    send_key(KeyCode::Char('v'), &event_sender); // Enable multi-select
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender); // Toggle multiple selected
     send_key(KeyCode::Char('j'), &event_sender);
-    send_key(KeyCode::Esc, &event_sender); // Exit multiselect
+    send_key(KeyCode::Esc, &event_sender); // Exit multi-select
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
     send_key(KeyCode::Enter, &event_sender);

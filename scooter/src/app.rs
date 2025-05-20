@@ -1373,7 +1373,7 @@ impl App {
             CompactOnly,
         }
 
-        let current_keys = match self.current_screen {
+        let current_screen_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
                     ("<enter>", "search", Show::Both),
@@ -1391,7 +1391,8 @@ impl App {
                 keys.append(&mut vec![
                     ("<space>", "toggle", Show::Both),
                     ("a", "toggle all", Show::FullOnly),
-                    ("v", "toggle multiselect mode", Show::FullOnly),
+                    ("v", "toggle multi-select mode", Show::FullOnly),
+                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
                     ("o", "open in editor", Show::FullOnly),
                     ("<C-o>", "back", Show::Both),
                     ("j", "up", Show::FullOnly),
@@ -1402,7 +1403,6 @@ impl App {
                     ("<C-f>", "down a full page", Show::FullOnly),
                     ("g", "jump to top", Show::FullOnly),
                     ("G", "jump to bottom", Show::FullOnly),
-                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
                 ]);
                 keys
             }
@@ -1423,7 +1423,7 @@ impl App {
         let esc_help = format!(
             "quit / close popup{}",
             if is_search_screen {
-                " / exit multiselect"
+                " / exit multi-select"
             } else {
                 ""
             }
@@ -1445,7 +1445,7 @@ impl App {
                 if self.popup.is_some() {
                     "close popup"
                 } else if self.multiselect_enabled() {
-                    "exit multiselect"
+                    "exit multi-select"
                 } else {
                     "quit"
                 },
@@ -1455,9 +1455,9 @@ impl App {
             ("<C-c>", "quit", Show::FullOnly),
         ];
 
-        current_keys
-            .into_iter()
-            .chain(additional_keys)
+        let all_keys = current_screen_keys.into_iter().chain(additional_keys);
+
+        all_keys
             .filter_map(move |(from, to, show)| {
                 let include = match show {
                     Show::Both => true,
@@ -1490,7 +1490,7 @@ impl App {
                 search_state.toggle_multiselect_mode();
             }
             _ => panic!(
-                "Tried to disable multiselect on {:?}",
+                "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
             ),
         }
