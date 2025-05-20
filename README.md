@@ -41,7 +41,7 @@ Scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
-When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by your `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
+When viewing search results, you can open the selected file at the relevant line by pressing `e`. This will use the editor defined by your `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
 
 
 ## Usage
@@ -164,7 +164,7 @@ The following options can be set in your configuration file:
 
 #### `command`
 
-The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced
+The command used when pressing `e` on the search results page. Two variables are available: `%file`, which will be replaced
 with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
 ```toml
 [editor_open]
@@ -235,7 +235,7 @@ If you are using Helix in Tmux, you can add a keymap like the following to your 
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-You can also add the following to your [Scooter config file](#configuration-options) to open files back in Helix from the search results page with `o`:
+You can also add the following to your [Scooter config file](#configuration-options) to open files back in Helix from the search results page with `e`:
 
 ```toml
 [editor_open]

@@ -131,7 +131,7 @@ impl SearchState {
         }
     }
 
-    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> bool {
+    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Char('j') | KeyCode::Down, _)
             | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -172,7 +172,7 @@ impl SearchState {
             }
             _ => {}
         }
-        false
+        EventHandlingResult::Rerender
     }
 
     fn move_selected_up_by(&mut self, n: usize) {
@@ -330,7 +330,7 @@ pub struct ReplaceState {
 }
 
 impl ReplaceState {
-    fn handle_key_results(&mut self, key: &KeyEvent) -> bool {
+    fn handle_key_results(&mut self, key: &KeyEvent) -> EventHandlingResult {
         let mut exit = false;
 
         #[allow(clippy::match_same_arms)]
@@ -351,7 +351,11 @@ impl ReplaceState {
             }
             _ => {}
         }
-        exit
+        if exit {
+            EventHandlingResult::Exit
+        } else {
+            EventHandlingResult::Rerender
+        }
     }
 
     pub fn scroll_replacement_errors_up(&mut self) {
@@ -698,6 +702,7 @@ pub struct AppError {
 pub enum Popup {
     Error,
     Help,
+    Text { title: String, body: String },
 }
 
 pub struct App {
@@ -953,7 +958,7 @@ impl App {
         }
     }
 
-    fn handle_key_searching(&mut self, key: &KeyEvent) -> bool {
+    fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
                 self.event_sender
@@ -977,11 +982,11 @@ impl App {
                     .handle_keys(code, modifiers);
             }
         }
-        false
+        EventHandlingResult::Rerender
     }
 
     /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
-    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<bool> {
+    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
         if !matches!(
             self.current_screen,
             Screen::SearchProgressing(_) | Screen::SearchComplete(_)
@@ -995,7 +1000,7 @@ impl App {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
                 self.trigger_replacement();
-                Some(false)
+                Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
@@ -1003,9 +1008,16 @@ impl App {
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
-                Some(false)
+                Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
+                self.set_popup(Popup::Text{
+                    title: "Command deprecated".to_string(),
+                    body: "Pressing `o` to open the selected file in your editor is deprecated.\nPlease use `e` instead.".to_string(),
+                });
+                Some(EventHandlingResult::Rerender)
+            }
+            (KeyCode::Char('e'), KeyModifiers::NONE) => {
                 let selected = self
                     .current_screen
                     .search_results_mut()
@@ -1016,7 +1028,7 @@ impl App {
                         selected.line_number,
                     )))
                     .unwrap();
-                Some(false)
+                Some(EventHandlingResult::Rerender)
             }
             _ => None,
         }
@@ -1058,11 +1070,11 @@ impl App {
             (_, _) => {}
         }
 
-        let exit = match &mut self.current_screen {
+        match &mut self.current_screen {
             Screen::SearchFields => self.handle_key_searching(key),
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                if let Some(rerender) = self.try_handle_key_search(key) {
-                    rerender
+                if let Some(res) = self.try_handle_key_search(key) {
+                    res
                 } else {
                     match &mut self.current_screen {
                         Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
@@ -1073,13 +1085,8 @@ impl App {
                     }
                 }
             }
-            Screen::PerformingReplacement(_) => false,
+            Screen::PerformingReplacement(_) => EventHandlingResult::Rerender,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
-        };
-        if exit {
-            EventHandlingResult::Exit
-        } else {
-            EventHandlingResult::Rerender
         }
     }
 
@@ -1393,7 +1400,7 @@ impl App {
                     ("a", "toggle all", Show::FullOnly),
                     ("v", "toggle multi-select mode", Show::FullOnly),
                     ("<A-;>", "flip multi-select direction", Show::FullOnly),
-                    ("o", "open in editor", Show::FullOnly),
+                    ("e", "open in editor", Show::FullOnly),
                     ("<C-o>", "back", Show::Both),
                     ("j", "up", Show::FullOnly),
                     ("k", "down", Show::FullOnly),

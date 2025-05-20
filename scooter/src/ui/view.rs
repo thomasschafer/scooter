@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Clear, List, ListItem, Paragraph, Row, Table},
+    widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
     Frame,
 };
 use similar::{Change, ChangeTag, TextDiff};
@@ -909,8 +909,17 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     match app.popup() {
         Some(Popup::Error) => render_error_popup(&app.errors(), frame, content_area),
         Some(Popup::Help) => render_help_popup(app.keymaps_all(), frame, content_area),
+        Some(Popup::Text { title, body }) => {
+            render_text_popup(title, body, frame, content_area);
+        }
+
         None => {}
     }
+}
+
+fn render_text_popup(title: &str, body: &str, frame: &mut Frame<'_>, area: Rect) {
+    let lines = body.lines().map(Line::from).collect();
+    render_paragraph_popup(title, lines, frame, area);
 }
 
 fn render_key_hints(app: &App, frame: &mut Frame<'_>, chunk: Rect) {
@@ -964,7 +973,7 @@ fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: 
     let rows: Vec<Row<'_>> = keymaps
         .into_iter()
         .map(|(from, to)| {
-            let padded_from = format!("  {from:>max_from_width$} ");
+            let padded_from = format!(" {from:>max_from_width$} ");
 
             Row::new(vec![
                 Cell::from(Span::styled(padded_from, Style::default().fg(Color::Blue))),
@@ -1017,6 +1026,7 @@ fn create_popup_block(title: &str) -> Block<'_> {
         .border_style(Color::Green)
         .title(title)
         .title_alignment(Alignment::Center)
+        .padding(Padding::horizontal(1))
 }
 
 #[cfg(test)]
