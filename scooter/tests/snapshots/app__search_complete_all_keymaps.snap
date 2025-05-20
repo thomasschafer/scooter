@@ -1,0 +1,83 @@
+---
+source: scooter/tests/app.rs
+assertion_line: 1544
+expression: app.keymaps_all()
+---
+[
+    (
+        "<enter>",
+        "replace selected",
+    ),
+    (
+        "<space>",
+        "toggle",
+    ),
+    (
+        "a",
+        "toggle all",
+    ),
+    (
+        "v",
+        "toggle multi-select mode",
+    ),
+    (
+        "<A-;>",
+        "flip multi-select direction",
+    ),
+    (
+        "o",
+        "open in editor",
+    ),
+    (
+        "<C-o>",
+        "back",
+    ),
+    (
+        "j",
+        "up",
+    ),
+    (
+        "k",
+        "down",
+    ),
+    (
+        "<C-u>",
+        "up half a page",
+    ),
+    (
+        "<C-d>",
+        "down half a page",
+    ),
+    (
+        "<C-b>",
+        "up a full page",
+    ),
+    (
+        "<C-f>",
+        "down a full page",
+    ),
+    (
+        "g",
+        "jump to top",
+    ),
+    (
+        "G",
+        "jump to bottom",
+    ),
+    (
+        "<C-r>",
+        "reset",
+    ),
+    (
+        "<C-h>",
+        "help",
+    ),
+    (
+        "<esc>",
+        "quit / close popup / exit multi-select",
+    ),
+    (
+        "<C-c>",
+        "quit",
+    ),
+]

@@ -1,0 +1,23 @@
+---
+source: scooter/tests/app.rs
+assertion_line: 1557
+expression: app.keymaps_compact()
+---
+[
+    (
+        "<space>",
+        "toggle",
+    ),
+    (
+        "<C-o>",
+        "back",
+    ),
+    (
+        "<C-h>",
+        "help",
+    ),
+    (
+        "<esc>",
+        "quit",
+    ),
+]

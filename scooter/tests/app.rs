@@ -1,8 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use insta::assert_debug_snapshot;
 use scooter::{
-    test_with_both_regex_modes, App, EventHandlingResult, PerformingReplacementState, Popup,
-    ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues, SearchFields,
-    SearchInProgressState, SearchResult, SearchState,
+    test_with_both_regex_modes, App, AppError, EventHandlingResult, PerformingReplacementState,
+    Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues,
+    SearchFields, SearchInProgressState, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
@@ -1514,4 +1515,102 @@ test_with_both_regex_modes!(
     }
 );
 
-// TODO: tests for passing in directory via CLI arg
+#[tokio::test]
+async fn test_keymaps_search_fields() {
+    let (app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    assert!(matches!(app.current_screen, Screen::SearchFields));
+
+    assert_debug_snapshot!("search_fields_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_fields_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_search_complete() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+        SearchState::new(receiver),
+        std::time::Instant::now(),
+    ));
+
+    assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_complete_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_search_progressing() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen =
+        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
+
+    assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_progressing_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_performing_replacement() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen =
+        Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
+
+    assert_debug_snapshot!(
+        "performing_replacement_compact_keymaps",
+        app.keymaps_compact()
+    );
+    assert_debug_snapshot!("performing_replacement_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_results() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let replace_state_with_errors = ReplaceState {
+        num_successes: 5,
+        num_ignored: 2,
+        errors: vec![SearchResult {
+            path: PathBuf::from("error.txt"),
+            line_number: 1,
+            line: "test line".to_string(),
+            replacement: "replacement".to_string(),
+            included: true,
+            replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+        }],
+        replacement_errors_pos: 0,
+    };
+    app.current_screen = Screen::Results(replace_state_with_errors);
+
+    assert_debug_snapshot!("results_with_errors_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("results_with_errors_all_keymaps", app.keymaps_all());
+
+    let replace_state_without_errors = ReplaceState {
+        num_successes: 5,
+        num_ignored: 2,
+        errors: vec![],
+        replacement_errors_pos: 0,
+    };
+    app.current_screen = Screen::Results(replace_state_without_errors);
+
+    assert_debug_snapshot!(
+        "results_without_errors_compact_keymaps",
+        app.keymaps_compact()
+    );
+    assert_debug_snapshot!("results_without_errors_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_popup() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    app.add_error(AppError {
+        name: "Test".to_string(),
+        long: "Test error".to_string(),
+    });
+
+    assert_debug_snapshot!("popup_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("popup_all_keymaps", app.keymaps_all());
+}

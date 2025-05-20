@@ -12,7 +12,10 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
-use std::{cmp::max, iter::Iterator};
+use std::{
+    cmp::{max, min},
+    iter::Iterator,
+};
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -95,6 +98,10 @@ impl MultiSelected {
             (self.primary, self.anchor)
         }
     }
+
+    fn flip_direction(&mut self) {
+        (self.anchor, self.primary) = (self.primary, self.anchor);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -160,6 +167,9 @@ impl SearchState {
             (KeyCode::Char('v'), _) => {
                 self.toggle_multiselect_mode();
             }
+            (KeyCode::Char(';'), KeyModifiers::ALT) => {
+                self.flip_multiselect_direction();
+            }
             _ => {}
         }
         false
@@ -169,21 +179,18 @@ impl SearchState {
         let primary_selected_pos = self.primary_selected_pos();
         if primary_selected_pos == 0 {
             self.selected = Selected::Single(self.results.len().saturating_sub(1));
-        } else if primary_selected_pos <= n {
-            self.selected = Selected::Single(0);
         } else {
-            self.move_primary_sel(primary_selected_pos - n);
+            self.move_primary_sel(primary_selected_pos.saturating_sub(n));
         }
     }
 
     fn move_selected_down_by(&mut self, n: usize) {
         let primary_selected_pos = self.primary_selected_pos();
-        if primary_selected_pos >= self.results.len().saturating_sub(1) {
+        let end = self.results.len().saturating_sub(1);
+        if primary_selected_pos >= end {
             self.selected = Selected::Single(0);
-        } else if primary_selected_pos >= self.results.len().saturating_sub(n + 1) {
-            self.selected = Selected::Single(self.results.len().saturating_sub(1));
         } else {
-            self.move_primary_sel(primary_selected_pos + n);
+            self.move_primary_sel(min(primary_selected_pos + n, end));
         }
     }
 
@@ -302,6 +309,15 @@ impl SearchState {
 
     pub(crate) fn is_primary_selected(&self, idx: usize) -> bool {
         idx == self.primary_selected_pos()
+    }
+
+    fn flip_multiselect_direction(&mut self) {
+        match &mut self.selected {
+            Selected::Single(_) => {}
+            Selected::Multi(ms) => {
+                ms.flip_direction();
+            }
+        }
     }
 }
 
@@ -1342,11 +1358,11 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps_all(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_all(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(false)
     }
 
-    pub(crate) fn keymaps_compact(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_compact(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(true)
     }
 
@@ -1357,7 +1373,7 @@ impl App {
             CompactOnly,
         }
 
-        let current_keys = match self.current_screen {
+        let current_screen_keys = match self.current_screen {
             Screen::SearchFields => {
                 vec![
                     ("<enter>", "search", Show::Both),
@@ -1375,7 +1391,8 @@ impl App {
                 keys.append(&mut vec![
                     ("<space>", "toggle", Show::Both),
                     ("a", "toggle all", Show::FullOnly),
-                    ("v", "toggle multiselect mode", Show::FullOnly),
+                    ("v", "toggle multi-select mode", Show::FullOnly),
+                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
                     ("o", "open in editor", Show::FullOnly),
                     ("<C-o>", "back", Show::Both),
                     ("j", "up", Show::FullOnly),
@@ -1406,7 +1423,7 @@ impl App {
         let esc_help = format!(
             "quit / close popup{}",
             if is_search_screen {
-                " / exit multiselect"
+                " / exit multi-select"
             } else {
                 ""
             }
@@ -1428,7 +1445,7 @@ impl App {
                 if self.popup.is_some() {
                     "close popup"
                 } else if self.multiselect_enabled() {
-                    "exit multiselect"
+                    "exit multi-select"
                 } else {
                     "quit"
                 },
@@ -1438,9 +1455,9 @@ impl App {
             ("<C-c>", "quit", Show::FullOnly),
         ];
 
-        current_keys
-            .into_iter()
-            .chain(additional_keys)
+        let all_keys = current_screen_keys.into_iter().chain(additional_keys);
+
+        all_keys
             .filter_map(move |(from, to, show)| {
                 let include = match show {
                     Show::Both => true,
@@ -1473,7 +1490,7 @@ impl App {
                 search_state.toggle_multiselect_mode();
             }
             _ => panic!(
-                "Tried to disable multiselect on {:?}",
+                "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
             ),
         }
@@ -1928,5 +1945,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![false, true, false, false, false, true]
         );
+    }
+
+    #[test]
+    fn test_flip_multi_select_direction() {
+        let mut state = build_test_search_state(10);
+        assert_eq!(state.selected, Selected::Single(0));
+        state.flip_multiselect_direction();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.toggle_multiselect_mode();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 1,
+                primary: 3,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 1,
+            })
+        );
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 0,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 3,
+            })
+        );
+        state.move_selected_bottom();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 9,
+            })
+        );
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(0));
     }
 }

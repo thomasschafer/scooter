@@ -1,6 +1,7 @@
 use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
+use insta::assert_snapshot;
 use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use regex::Regex;
@@ -123,6 +124,34 @@ async fn wait_for_text(
     err_with_snapshot("Timeout waiting for pattern", last_snapshot)
 }
 
+async fn get_snapshot_after_wait(
+    snapshot_rx: &mut UnboundedReceiver<String>,
+    timeout_ms: u64,
+) -> anyhow::Result<String> {
+    let timeout = Duration::from_millis(timeout_ms);
+    let start = Instant::now();
+    let mut last_snapshot = None;
+
+    while start.elapsed() <= timeout {
+        tokio::select! {
+            snapshot = snapshot_rx.recv() => {
+                match snapshot {
+                    Some(s) => { last_snapshot = Some(s); },
+                    None => break, // Channel closed, return latest snapshot
+                }
+            }
+            () = sleep(timeout - start.elapsed()) => {
+                // Wait for more snapshots
+            }
+        }
+    }
+
+    match last_snapshot {
+        Some(s) => Ok(s),
+        None => bail!("No snapshots received within wait period"),
+    }
+}
+
 type TestRunner = (
     JoinHandle<()>,
     UnboundedSender<CrosstermEvent>,
@@ -166,13 +195,18 @@ async fn shutdown(
     Ok(())
 }
 
-fn send_key(key: KeyCode, event_sender: &UnboundedSender<CrosstermEvent>) {
+fn send_key_with_modifiers(
+    key: KeyCode,
+    modifiers: KeyModifiers,
+    event_sender: &UnboundedSender<CrosstermEvent>,
+) {
     event_sender
-        .send(CrosstermEvent::Key(KeyEvent::new(
-            key,
-            KeyModifiers::empty(),
-        )))
+        .send(CrosstermEvent::Key(KeyEvent::new(key, modifiers)))
         .unwrap();
+}
+
+fn send_key(key: KeyCode, event_sender: &UnboundedSender<CrosstermEvent>) {
+    send_key_with_modifiers(key, KeyModifiers::empty(), event_sender);
 }
 
 fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
@@ -611,17 +645,17 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
     wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
     wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
-    // Highlight 3rd to 6th search result with multiselect, and 8th with single selection
+    // Highlight 3rd to 6th search result with multi-select, and 8th with single selection
     send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
-    send_key(KeyCode::Char('v'), &event_sender); // Enable multiselect
+    send_key(KeyCode::Char('v'), &event_sender); // Enable multi-select
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender); // Toggle multiple selected
     send_key(KeyCode::Char('j'), &event_sender);
-    send_key(KeyCode::Esc, &event_sender); // Exit multiselect
+    send_key(KeyCode::Esc, &event_sender); // Exit multi-select
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
     send_key(KeyCode::Enter, &event_sender);
@@ -1052,6 +1086,25 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
     .await?;
 
     assert_test_files!(&temp_dir);
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_help_screen_keymaps() -> anyhow::Result<()> {
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_key_with_modifiers(KeyCode::Char('h'), KeyModifiers::CONTROL, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_help_screen_open", snapshot);
+
+    send_key(KeyCode::Esc, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_help_screen_closed", snapshot);
 
     shutdown(event_sender, run_handle).await
 }
