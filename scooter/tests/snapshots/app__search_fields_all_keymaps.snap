@@ -1,0 +1,39 @@
+---
+source: scooter/tests/app.rs
+assertion_line: 1528
+expression: app.keymaps_all()
+---
+[
+    (
+        "<enter>",
+        "search",
+    ),
+    (
+        "<tab>",
+        "focus next",
+    ),
+    (
+        "<S-tab>",
+        "focus previous",
+    ),
+    (
+        "<space>",
+        "toggle checkbox",
+    ),
+    (
+        "<C-r>",
+        "reset",
+    ),
+    (
+        "<C-h>",
+        "help",
+    ),
+    (
+        "<esc>",
+        "quit / close popup",
+    ),
+    (
+        "<C-c>",
+        "quit",
+    ),
+]

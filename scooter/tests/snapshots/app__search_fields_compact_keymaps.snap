@@ -1,0 +1,27 @@
+---
+source: scooter/tests/app.rs
+assertion_line: 1527
+expression: app.keymaps_compact()
+---
+[
+    (
+        "<enter>",
+        "search",
+    ),
+    (
+        "<tab>",
+        "focus next",
+    ),
+    (
+        "<C-r>",
+        "reset",
+    ),
+    (
+        "<C-h>",
+        "help",
+    ),
+    (
+        "<esc>",
+        "quit",
+    ),
+]

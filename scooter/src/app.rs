@@ -1358,11 +1358,11 @@ impl App {
         self.popup = Some(popup);
     }
 
-    pub(crate) fn keymaps_all(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_all(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(false)
     }
 
-    pub(crate) fn keymaps_compact(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_compact(&self) -> Vec<(&str, String)> {
         self.keymaps_impl(true)
     }
 
