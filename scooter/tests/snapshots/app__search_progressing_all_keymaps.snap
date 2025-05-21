@@ -1,6 +1,5 @@
 ---
 source: scooter/tests/app.rs
-assertion_line: 1558
 expression: app.keymaps_all()
 ---
 [
@@ -21,7 +20,7 @@ expression: app.keymaps_all()
         "flip multi-select direction",
     ),
     (
-        "o",
+        "e",
         "open in editor",
     ),
     (
