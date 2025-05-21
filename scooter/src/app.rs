@@ -170,8 +170,9 @@ impl SearchState {
             (KeyCode::Char(';'), KeyModifiers::ALT) => {
                 self.flip_multiselect_direction();
             }
-            _ => {}
+            _ => return EventHandlingResult::None,
         }
+
         EventHandlingResult::Rerender
     }
 
@@ -331,8 +332,6 @@ pub struct ReplaceState {
 
 impl ReplaceState {
     fn handle_key_results(&mut self, key: &KeyEvent) -> EventHandlingResult {
-        let mut exit = false;
-
         #[allow(clippy::match_same_arms)]
         match (key.code, key.modifiers) {
             (KeyCode::Char('j') | KeyCode::Down, _)
@@ -346,16 +345,10 @@ impl ReplaceState {
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => {
-                exit = true;
-            }
-            _ => {}
+            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit,
+            _ => return EventHandlingResult::None,
         }
-        if exit {
-            EventHandlingResult::Exit
-        } else {
-            EventHandlingResult::Rerender
-        }
+        EventHandlingResult::Rerender
     }
 
     pub fn scroll_replacement_errors_up(&mut self) {
@@ -1013,7 +1006,7 @@ impl App {
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
                 self.set_popup(Popup::Text{
                     title: "Command deprecated".to_string(),
-                    body: "Pressing `o` to open the selected file in your editor is deprecated.\nPlease use `e` instead.".to_string(),
+                    body: "Pressing `o` to open the selected file in your editor is deprecated.\n\nPlease use `e` instead.".to_string(),
                 });
                 Some(EventHandlingResult::Rerender)
             }
