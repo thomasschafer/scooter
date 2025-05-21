@@ -1,22 +1,20 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
-use scooter::{
-    test_with_both_regex_modes, App, EventHandlingResult, FieldValue, ReplaceResult, ReplaceState,
-    Screen, SearchFieldValues, SearchFields, SearchResult, SearchState,
-    test_with_both_regex_modes, App, AppError, EventHandlingResult, PerformingReplacementState,
-    Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues,
-    SearchFields, SearchInProgressState, SearchResult, SearchState,
-};
 use serial_test::serial;
 use std::cmp::max;
 use std::fs;
 use std::io;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
+
+use scooter::{
+    test_with_both_regex_modes, App, AppError, EventHandlingResult, FieldValue,
+    PerformingReplacementState, Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState,
+    SearchFieldValues, SearchFields, SearchInProgressState, SearchResult, SearchState,
+};
 
 mod utils;
 
@@ -51,7 +49,7 @@ async fn test_replace_state() {
 #[tokio::test]
 async fn test_app_reset() {
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, SearchFieldValues::default());
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -67,7 +65,7 @@ async fn test_app_reset() {
 #[tokio::test]
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, SearchFieldValues::default());
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     let (_sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
         SearchState::new(receiver),
@@ -98,9 +96,9 @@ async fn test_back_from_results() {
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
+fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, SearchFieldValues::default());
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     app.current_screen = Screen::SearchFields;
     app.search_fields = SearchFields::with_values(search_fields);
 
@@ -137,8 +135,7 @@ async fn test_error_popup_invalid_search() {
         match_case: FieldValue::new(true, false),
         include_files: FieldValue::new("", false),
         exclude_files: FieldValue::new("", false),
-    })
-    .await;
+    });
 }
 
 #[tokio::test]
@@ -151,8 +148,7 @@ async fn test_error_popup_invalid_include_files() {
         match_case: FieldValue::new(true, false),
         include_files: FieldValue::new("foo{", false),
         exclude_files: FieldValue::new("", false),
-    })
-    .await;
+    });
 }
 
 #[tokio::test]
@@ -165,8 +161,7 @@ async fn test_error_popup_invalid_exclude_files() {
         match_case: FieldValue::new(true, false),
         include_files: FieldValue::new("", false),
         exclude_files: FieldValue::new("bar{", false),
-    })
-    .await;
+    });
 }
 
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
@@ -181,7 +176,7 @@ where
     condition()
 }
 
-async fn process_bp_events<'a>(app: &mut App<'a>) {
+async fn process_bp_events(app: &mut App) {
     let timeout = Duration::from_secs(5);
     let start = Instant::now();
 
@@ -203,12 +198,12 @@ macro_rules! wait_for_screen {
     };
 }
 
-fn setup_app<'a>(temp_dir: &TempDir, search_fields: SearchFields, include_hidden: bool) -> App<'a> {
+fn setup_app(temp_dir: &TempDir, search_fields: SearchFields, include_hidden: bool) -> App {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
         Some(temp_dir.path().to_path_buf()),
         include_hidden,
         false,
-        SearchFieldValues::default(),
+        &SearchFieldValues::default(),
     );
     app.search_fields = search_fields;
     app
@@ -1377,13 +1372,13 @@ test_with_both_regex_modes!(
         copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
 
         let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: "sample",
-            replace: "REPLACED",
-            fixed_strings: false,
-            whole_word: false,
-            match_case: true,
-            include_files: "",
-            exclude_files: "",
+            search: FieldValue::new("sample", false),
+            replace: FieldValue::new("REPLACED", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
         })
         .with_advanced_regex(advanced_regex);
 
@@ -1446,7 +1441,8 @@ test_with_both_regex_modes!(
 
 #[tokio::test]
 async fn test_keymaps_search_fields() {
-    let (app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     assert!(matches!(app.current_screen, Screen::SearchFields));
 
@@ -1456,7 +1452,8 @@ async fn test_keymaps_search_fields() {
 
 #[tokio::test]
 async fn test_keymaps_search_complete() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
@@ -1470,7 +1467,8 @@ async fn test_keymaps_search_complete() {
 
 #[tokio::test]
 async fn test_keymaps_search_progressing() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     app.current_screen =
@@ -1482,7 +1480,8 @@ async fn test_keymaps_search_progressing() {
 
 #[tokio::test]
 async fn test_keymaps_performing_replacement() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let (sender, receiver) = mpsc::unbounded_channel();
     app.current_screen =
@@ -1497,7 +1496,8 @@ async fn test_keymaps_performing_replacement() {
 
 #[tokio::test]
 async fn test_keymaps_results() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let replace_state_with_errors = ReplaceState {
         num_successes: 5,
@@ -1534,7 +1534,8 @@ async fn test_keymaps_results() {
 
 #[tokio::test]
 async fn test_keymaps_popup() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     app.add_error(AppError {
         name: "Test".to_string(),
         long: "Test error".to_string(),

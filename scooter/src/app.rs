@@ -502,6 +502,7 @@ pub struct SearchFieldValues<'a> {
     pub include_files: FieldValue<&'a str>,
     pub exclude_files: FieldValue<&'a str>,
 }
+
 impl<'a> Default for SearchFieldValues<'a> {
     fn default() -> SearchFieldValues<'a> {
         Self {
@@ -589,6 +590,12 @@ macro_rules! define_field_accessor_mut {
     };
 }
 
+impl Default for SearchFields {
+    fn default() -> Self {
+        Self::with_values(SearchFieldValues::default())
+    }
+}
+
 impl SearchFields {
     // TODO: generate these automatically?
     define_field_accessor!(search, FieldName::Search, Text, TextField);
@@ -661,7 +668,6 @@ impl SearchFields {
         Self {
             highlighted: Self::initial_highlight_position(&fields),
             fields,
-            show_error_popup: false,
             advanced_regex: false,
             disable_populated_fields: false,
         }
@@ -805,7 +811,7 @@ impl<'a> App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-        search_field_values: SearchFieldValues<'a>,
+        search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
@@ -815,18 +821,8 @@ impl<'a> App {
             None => current_dir().unwrap(),
         };
 
-        let mut disable_populated_fields = false;
-        if config
-            .search
-            .as_ref()
-            .map(|c| c.disable_populated_fields)
-            .unwrap_or(false)
-        {
-            disable_populated_fields = true
-        }
-
         let search_fields = SearchFields::with_values(search_field_values.clone())
-            .with_disable_populated_fields(disable_populated_fields)
+            .with_disable_populated_fields(config.search.disable_populated_fields)
             .with_advanced_regex(advanced_regex);
 
         Self {
@@ -845,7 +841,7 @@ impl<'a> App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
-        search_field_values: SearchFieldValues<'a>,
+        search_field_values: &SearchFieldValues<'a>,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
@@ -883,7 +879,7 @@ impl<'a> App {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
-            SearchFieldValues::default(),
+            &SearchFieldValues::default(),
             self.event_sender.clone(),
         );
     }
@@ -1771,7 +1767,7 @@ mod tests {
             None,
             false,
             false,
-            SearchFieldValues::default(),
+            &SearchFieldValues::default(),
             event_sender,
         );
         app.current_screen = Screen::SearchComplete(SearchCompleteState::new(

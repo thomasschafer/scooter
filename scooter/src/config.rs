@@ -42,7 +42,7 @@ pub struct Config {
     #[serde(default)]
     pub style: StyleConfig,
     #[serde(default)]
-    pub search: Option<SearchConfig>,
+    pub search: SearchConfig,
 }
 
 impl Config {
@@ -218,6 +218,14 @@ pub struct SearchConfig {
     pub disable_populated_fields: bool,
 }
 
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            disable_populated_fields: default_disable_populated_fields(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +323,9 @@ syntax_highlighting_theme = "Solarized (light)"
                 style: StyleConfig {
                     true_color: detect_true_colour()
                 },
+                search: SearchConfig {
+                    disable_populated_fields: default_disable_populated_fields(),
+                },
             }
         );
 
@@ -354,6 +365,9 @@ command = "vim %file +%line"
             style: StyleConfig {
                 true_color: detect_true_colour(),
             },
+            search: SearchConfig {
+                disable_populated_fields: default_disable_populated_fields(),
+            },
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -368,6 +382,9 @@ command = "vim %file +%line"
             },
             style: StyleConfig {
                 true_color: detect_true_colour(),
+            },
+            search: SearchConfig {
+                disable_populated_fields: default_disable_populated_fields(),
             },
         };
         assert_eq!(

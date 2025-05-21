@@ -88,7 +88,7 @@ where
             directory,
             config.hidden,
             config.advanced_regex,
-            config.search_field_values,
+            &config.search_field_values,
         );
 
         let terminal = Terminal::new(backend)?;

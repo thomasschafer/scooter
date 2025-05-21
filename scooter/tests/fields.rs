@@ -67,7 +67,7 @@ fn test_checkbox_field() {
 
 #[test]
 fn test_search_fields() {
-    let mut search_fields = SearchFields::with_default_values();
+    let mut search_fields = SearchFields::default();
 
     // Test focus navigation
     assert_eq!(search_fields.highlighted, 0);

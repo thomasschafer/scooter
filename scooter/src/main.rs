@@ -19,6 +19,7 @@ mod utils;
 #[derive(Parser, Debug)]
 #[command(about = "Interactive find and replace TUI.")]
 #[command(version)]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Directory in which to search
     #[arg(index = 1)]
@@ -78,10 +79,10 @@ impl<'a> From<&'a Args> for AppConfig<'a> {
         let mut search_field_values = SearchFieldValues::default();
         if let Some(ref search_text) = args.search_text {
             search_field_values.search = FieldValue::new(search_text, true);
-        };
+        }
         if let Some(ref replace_text) = args.replace_text {
             search_field_values.replace = FieldValue::new(replace_text, true);
-        };
+        }
         if args.fixed_strings {
             search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
         }
@@ -93,10 +94,10 @@ impl<'a> From<&'a Args> for AppConfig<'a> {
         }
         if let Some(ref files_to_include) = args.files_to_include {
             search_field_values.include_files = FieldValue::new(files_to_include, true);
-        };
+        }
         if let Some(ref files_to_exclude) = args.files_to_exclude {
             search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
-        };
+        }
 
         Self {
             directory: args.directory.clone(),
