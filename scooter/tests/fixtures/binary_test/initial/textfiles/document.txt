@@ -1,0 +1,3 @@
+This is a sample text document.
+It contains sample content that should be replaced.
+The rest of this file should remain unchanged.

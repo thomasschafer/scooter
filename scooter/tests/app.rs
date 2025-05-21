@@ -1,92 +1,24 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use insta::assert_debug_snapshot;
 use scooter::{
     test_with_both_regex_modes, App, EventHandlingResult, FieldValue, ReplaceResult, ReplaceState,
     Screen, SearchFieldValues, SearchFields, SearchResult, SearchState,
+    test_with_both_regex_modes, App, AppError, EventHandlingResult, PerformingReplacementState,
+    Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState, SearchFieldValues,
+    SearchFields, SearchInProgressState, SearchResult, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
+use std::fs;
+use std::io;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use tokio::sync::mpsc;
 
 mod utils;
-
-fn build_test_search_state() -> SearchState {
-    SearchState::with_results(vec![
-        SearchResult {
-            path: PathBuf::from("test1.txt"),
-            line_number: 1,
-            line: "test line 1".to_string(),
-            replacement: "replacement 1".to_string(),
-            included: true,
-            replace_result: None,
-        },
-        SearchResult {
-            path: PathBuf::from("test2.txt"),
-            line_number: 2,
-            line: "test line 2".to_string(),
-            replacement: "replacement 2".to_string(),
-            included: true,
-            replace_result: None,
-        },
-        SearchResult {
-            path: PathBuf::from("test3.txt"),
-            line_number: 3,
-            line: "test line 3".to_string(),
-            replacement: "replacement 3".to_string(),
-            included: true,
-            replace_result: None,
-        },
-    ])
-}
-
-#[tokio::test]
-async fn test_search_state_toggling() {
-    let mut state = build_test_search_state();
-
-    fn included(state: &SearchState) -> Vec<bool> {
-        state.results.iter().map(|r| r.included).collect::<Vec<_>>()
-    }
-
-    assert_eq!(included(&state), [true, true, true]);
-    state.toggle_selected_inclusion();
-    assert_eq!(included(&state), [false, true, true]);
-    state.toggle_selected_inclusion();
-    assert_eq!(included(&state), [true, true, true]);
-    state.toggle_selected_inclusion();
-    assert_eq!(included(&state), [false, true, true]);
-    state.move_selected_down();
-    state.toggle_selected_inclusion();
-    assert_eq!(included(&state), [false, false, true]);
-    state.toggle_selected_inclusion();
-    assert_eq!(included(&state), [false, true, true]);
-}
-
-#[tokio::test]
-async fn test_search_state_movement() {
-    let mut state = build_test_search_state();
-
-    state.move_selected_down();
-    assert_eq!(state.selected(), 1);
-    state.move_selected_down();
-    assert_eq!(state.selected(), 2);
-    state.move_selected_down();
-    assert_eq!(state.selected(), 0);
-    state.move_selected_down();
-    assert_eq!(state.selected(), 1);
-    state.move_selected_up();
-    assert_eq!(state.selected(), 0);
-    state.move_selected_up();
-    assert_eq!(state.selected(), 2);
-    state.move_selected_up();
-    assert_eq!(state.selected(), 1);
-
-    state.move_selected_top();
-    assert_eq!(state.selected(), 0);
-    state.move_selected_bottom();
-    assert_eq!(state.selected(), 2);
-}
 
 #[tokio::test]
 async fn test_replace_state() {
@@ -95,12 +27,12 @@ async fn test_replace_state() {
         num_ignored: 1,
         errors: (1..3)
             .map(|n| SearchResult {
-                path: PathBuf::from(format!("error-{}.txt", n)),
+                path: PathBuf::from(format!("error-{n}.txt")),
                 line_number: 1,
-                line: format!("line {}", n),
-                replacement: format!("error replacement {}", n),
+                line: format!("line {n}"),
+                replacement: format!("error replacement {n}"),
                 included: true,
-                replace_result: Some(ReplaceResult::Error(format!("Test error {}", n))),
+                replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
             })
             .collect::<Vec<_>>(),
         replacement_errors_pos: 0,
@@ -136,7 +68,11 @@ async fn test_app_reset() {
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) =
         App::new_with_receiver(None, false, false, SearchFieldValues::default());
-    app.current_screen = Screen::SearchComplete(SearchState::default());
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+        SearchState::new(receiver),
+        Instant::now(),
+    ));
     app.search_fields = SearchFields::with_values(SearchFieldValues {
         search: FieldValue::new("foo", false),
         replace: FieldValue::new("bar", false),
@@ -147,14 +83,12 @@ async fn test_back_from_results() {
         exclude_files: FieldValue::new("", false),
     });
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Char('o'),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Char('o'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res != EventHandlingResult::Exit);
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
@@ -173,27 +107,23 @@ async fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
     assert!(matches!(app.current_screen, Screen::SearchFields));
-    assert!(app.show_error_popup());
+    assert!(matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res != EventHandlingResult::Exit);
-    assert!(!app.show_error_popup());
+    assert!(!matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app
-        .handle_key_event(&KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })
-        .unwrap();
+    let res = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert_eq!(res, EventHandlingResult::Exit);
 }
 
@@ -257,6 +187,7 @@ async fn process_bp_events<'a>(app: &mut App<'a>) {
 
     while let Some(event) = app.background_processing_recv().await {
         app.handle_background_processing_event(event);
+        #[allow(clippy::manual_assert)]
         if start.elapsed() > timeout {
             panic!("Couldn't process background events in a reasonable time");
         }
@@ -290,7 +221,7 @@ async fn search_and_replace_test(
     include_hidden: bool,
     expected_matches: Vec<(&Path, usize)>,
 ) {
-    let num_expected_matches = expected_matches
+    let total_num_expected_matches = expected_matches
         .iter()
         .map(|(_, count)| count)
         .sum::<usize>();
@@ -302,9 +233,10 @@ async fn search_and_replace_test(
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
 
-    if let Screen::SearchComplete(search_state) = &mut app.current_screen {
+    if let Screen::SearchComplete(state) = &mut app.current_screen {
         for (file_path, num_expected_matches) in &expected_matches {
-            let num_actual_matches = search_state
+            let num_actual_matches = state
+                .search_state
                 .results
                 .iter()
                 .filter(|result| {
@@ -320,13 +252,13 @@ async fn search_and_replace_test(
             );
         }
 
-        assert_eq!(search_state.results.len(), num_expected_matches);
+        assert_eq!(state.search_state.results.len(), total_num_expected_matches);
     } else {
         panic!(
             "Expected SearchComplete results, found {:?}",
             app.current_screen
         );
-    };
+    }
 
     app.trigger_replacement();
 
@@ -334,7 +266,7 @@ async fn search_and_replace_test(
     assert!(wait_for_screen!(&app, Screen::Results));
 
     if let Screen::Results(search_state) = &app.current_screen {
-        assert_eq!(search_state.num_successes, num_expected_matches);
+        assert_eq!(search_state.num_successes, total_num_expected_matches);
         assert_eq!(search_state.num_ignored, 0);
         assert_eq!(search_state.errors.len(), 0);
     } else {
@@ -1416,4 +1348,198 @@ test_with_both_regex_modes!(
     }
 );
 
-// TODO: tests for passing in directory via CLI arg
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+fn read_file<P>(p: P) -> String
+where
+    P: AsRef<Path>,
+{
+    fs::read_to_string(p).unwrap().replace("\r\n", "\n")
+}
+
+test_with_both_regex_modes!(
+    test_binary_file_filtering,
+    |advanced_regex: bool| async move {
+        let temp_dir = TempDir::new().unwrap();
+        let fixtures_dir = "tests/fixtures/binary_test";
+        copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
+
+        let search_fields = SearchFields::with_values(SearchFieldValues {
+            search: "sample",
+            replace: "REPLACED",
+            fixed_strings: false,
+            whole_word: false,
+            match_case: true,
+            include_files: "",
+            exclude_files: "",
+        })
+        .with_advanced_regex(advanced_regex);
+
+        search_and_replace_test(
+            &temp_dir,
+            search_fields,
+            false,
+            vec![
+                (&Path::new("textfiles").join("code.rs"), 1),
+                (&Path::new("textfiles").join("config.json"), 1),
+                (&Path::new("textfiles").join("document.txt"), 2),
+                (&Path::new("textfiles").join("noextension"), 1),
+                (&Path::new("binaries").join("image.wrongext"), 0),
+                (&Path::new("binaries").join("document.pdf"), 0),
+                (&Path::new("binaries").join("document_pdf_wrong_ext.rs"), 0),
+                (&Path::new("binaries").join("archive.zip"), 0),
+                (&Path::new("binaries").join("rust_binary"), 0),
+            ],
+        )
+        .await;
+
+        let text_files = vec![
+            "textfiles/code.rs",
+            "textfiles/config.json",
+            "textfiles/document.txt",
+            "textfiles/noextension",
+        ];
+
+        let binary_files = vec![
+            "binaries/image.wrongext",
+            "binaries/document.pdf",
+            "binaries/document_pdf_wrong_ext.rs",
+            "binaries/archive.zip",
+            "binaries/rust_binary",
+        ];
+
+        for file in &text_files {
+            let actual = read_file(temp_dir.path().join(file));
+            let expected = read_file(format!("{fixtures_dir}/updated/{file}"));
+
+            assert_eq!(
+                actual, expected,
+                "Text file {file} was not correctly updated",
+            );
+        }
+
+        for file in &binary_files {
+            let actual = fs::read(temp_dir.path().join(file))?;
+            let original = fs::read(format!("{fixtures_dir}/initial/{file}"))?;
+
+            assert_eq!(
+                actual, original,
+                "Binary file {file} was unexpectedly modified",
+            );
+        }
+
+        Ok(())
+    }
+);
+
+#[tokio::test]
+async fn test_keymaps_search_fields() {
+    let (app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    assert!(matches!(app.current_screen, Screen::SearchFields));
+
+    assert_debug_snapshot!("search_fields_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_fields_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_search_complete() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+        SearchState::new(receiver),
+        std::time::Instant::now(),
+    ));
+
+    assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_complete_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_search_progressing() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen =
+        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
+
+    assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("search_progressing_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_performing_replacement() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let (sender, receiver) = mpsc::unbounded_channel();
+    app.current_screen =
+        Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
+
+    assert_debug_snapshot!(
+        "performing_replacement_compact_keymaps",
+        app.keymaps_compact()
+    );
+    assert_debug_snapshot!("performing_replacement_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_results() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+
+    let replace_state_with_errors = ReplaceState {
+        num_successes: 5,
+        num_ignored: 2,
+        errors: vec![SearchResult {
+            path: PathBuf::from("error.txt"),
+            line_number: 1,
+            line: "test line".to_string(),
+            replacement: "replacement".to_string(),
+            included: true,
+            replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+        }],
+        replacement_errors_pos: 0,
+    };
+    app.current_screen = Screen::Results(replace_state_with_errors);
+
+    assert_debug_snapshot!("results_with_errors_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("results_with_errors_all_keymaps", app.keymaps_all());
+
+    let replace_state_without_errors = ReplaceState {
+        num_successes: 5,
+        num_ignored: 2,
+        errors: vec![],
+        replacement_errors_pos: 0,
+    };
+    app.current_screen = Screen::Results(replace_state_without_errors);
+
+    assert_debug_snapshot!(
+        "results_without_errors_compact_keymaps",
+        app.keymaps_compact()
+    );
+    assert_debug_snapshot!("results_without_errors_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_keymaps_popup() {
+    let (mut app, _app_event_receiver) = App::new_with_receiver(None, false, false);
+    app.add_error(AppError {
+        name: "Test".to_string(),
+        long: "Test error".to_string(),
+    });
+
+    assert_debug_snapshot!("popup_compact_keymaps", app.keymaps_compact());
+    assert_debug_snapshot!("popup_all_keymaps", app.keymaps_all());
+}

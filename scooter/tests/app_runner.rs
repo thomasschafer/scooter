@@ -1,9 +1,11 @@
 use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
+use insta::assert_snapshot;
 use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use scooter::app::SearchFieldValues;
+use regex::Regex;
 use scooter::{
     app_runner::{AppConfig, AppRunner},
     test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
@@ -40,9 +42,91 @@ impl Stream for TestEventStream {
     }
 }
 
+pub enum Pattern {
+    String(String),
+    Regex(Regex),
+}
+
+impl Pattern {
+    fn string(s: &str) -> Self {
+        Self::String(s.to_owned())
+    }
+
+    fn regex_must_compile(pattern: &str) -> Self {
+        Pattern::Regex(Regex::new(pattern).unwrap())
+    }
+
+    fn final_screen(
+        success: bool,
+        num_success: usize,
+        num_ignored: usize,
+        num_errors: usize,
+    ) -> Pattern {
+        let s = format!(
+            "{}Successful replacements:.*\n.*{num_success} (.|\n)*Ignored:.*\n.*{num_ignored} (.|\n)*Errors:.*\n.*{num_errors} (.|\n)*{}",
+            if success { "Success!(.|\n)*" } else { "" },
+            if success { "" } else { "Errors:" },
+        );
+        Pattern::regex_must_compile(&s)
+    }
+
+    fn is_match(&self, text: &str) -> bool {
+        match self {
+            Pattern::String(s) => text.contains(s),
+            Pattern::Regex(r) => r.is_match(text),
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            Pattern::String(s) => s,
+            Pattern::Regex(r) => r.as_str(),
+        }
+    }
+}
+
 async fn wait_for_text(
     snapshot_rx: &mut UnboundedReceiver<String>,
-    text: &str,
+    pattern: Pattern,
+    timeout_ms: u64,
+) -> anyhow::Result<String> {
+    let timeout = Duration::from_millis(timeout_ms);
+    let start = Instant::now();
+    let mut last_snapshot = None;
+
+    let err_with_snapshot =
+        |error_msg: &str, last_snapshot: Option<String>| -> anyhow::Result<String> {
+            let formatted_snapshot = match last_snapshot {
+                Some(snapshot) => &format!("Current buffer snapshot:\n{snapshot}"),
+                None => "No buffer snapshots received",
+            };
+
+            bail!(
+                "{error_msg}: {patt}\n{formatted_snapshot}",
+                patt = pattern.as_str().escape_debug(),
+            )
+        };
+
+    while start.elapsed() <= timeout {
+        tokio::select! {
+            snapshot = snapshot_rx.recv() => {
+                match snapshot {
+                    Some(s) if pattern.is_match(&s) => return Ok(s),
+                    Some(s) => { last_snapshot = Some(s); },
+                    None => return err_with_snapshot("Channel closed while waiting for pattern", last_snapshot),
+                }
+            }
+            () = sleep(timeout - start.elapsed()) => {
+                break;
+            }
+        }
+    }
+
+    err_with_snapshot("Timeout waiting for pattern", last_snapshot)
+}
+
+async fn get_snapshot_after_wait(
+    snapshot_rx: &mut UnboundedReceiver<String>,
     timeout_ms: u64,
 ) -> anyhow::Result<String> {
     let timeout = Duration::from_millis(timeout_ms);
@@ -53,22 +137,20 @@ async fn wait_for_text(
         tokio::select! {
             snapshot = snapshot_rx.recv() => {
                 match snapshot {
-                    Some(s) if s.contains(text) => return Ok(s),
                     Some(s) => { last_snapshot = Some(s); },
-                    None => bail!("Channel closed while waiting for text: {text}"),
+                    None => break, // Channel closed, return latest snapshot
                 }
             }
-            _ = sleep(timeout - start.elapsed()) => {
-                break;
+            () = sleep(timeout - start.elapsed()) => {
+                // Wait for more snapshots
             }
         }
     }
 
-    let formatted_snapshot = match last_snapshot {
-        Some(snapshot) => &format!("Current buffer snapshot:\n{snapshot}"),
-        None => "No buffer snapshots recieved",
-    };
-    bail!("Timeout waiting for text: {text}\n{formatted_snapshot}")
+    match last_snapshot {
+        Some(s) => Ok(s),
+        None => bail!("No snapshots received within wait period"),
+    }
 }
 
 type TestRunner = (
@@ -115,13 +197,18 @@ async fn shutdown(
     Ok(())
 }
 
-fn send_key(key: KeyCode, event_sender: &UnboundedSender<CrosstermEvent>) {
+fn send_key_with_modifiers(
+    key: KeyCode,
+    modifiers: KeyModifiers,
+    event_sender: &UnboundedSender<CrosstermEvent>,
+) {
     event_sender
-        .send(CrosstermEvent::Key(KeyEvent::new(
-            key,
-            KeyModifiers::empty(),
-        )))
+        .send(CrosstermEvent::Key(KeyEvent::new(key, modifiers)))
         .unwrap();
+}
+
+fn send_key(key: KeyCode, event_sender: &UnboundedSender<CrosstermEvent>) {
+    send_key_with_modifiers(key, KeyModifiers::empty(), event_sender);
 }
 
 fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
@@ -133,13 +220,13 @@ fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
 async fn test_search_current_dir() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
-    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     shutdown(event_sender, run_handle).await
 }
@@ -167,16 +254,16 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("after", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -199,7 +286,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -236,16 +323,16 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("after", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -257,7 +344,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that nothing has changed
         assert_test_files!(
@@ -279,7 +366,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -290,15 +377,15 @@ test_with_both_regex_modes_and_fixed_strings!(
         }
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         assert_test_files!(&temp_dir);
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(&temp_dir);
 
@@ -327,7 +414,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("some", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -340,9 +427,9 @@ test_with_both_regex_modes_and_fixed_strings!(
         send_chars(" ", &event_sender); // Toggle on whole word matching
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -363,7 +450,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -401,15 +488,15 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(r"\((\d{3,4})\)\s(\d{4})-(\d{4})", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("+44 $2 $1-$3", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
-        wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -424,7 +511,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify only matching phone numbers are reformatted
         assert_test_files!(
@@ -465,7 +552,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, "Search text", 10).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     // Match 'let' declarations that aren't mutable
     // Use negative lookbehind for function parameters and negative lookahead for mut
@@ -474,8 +561,8 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     send_chars("let /* immutable */ $1", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, "Still searching", 500).await?;
-    wait_for_text(&mut snapshot_rx, "Search complete", 1000).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     // Nothing should have changed yet
     assert_test_files!(
@@ -500,7 +587,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, "Success!", 1000).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     // Verify only non-mutable declarations are modified
     assert_test_files!(
@@ -525,4 +612,503 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 
     shutdown(event_sender, run_handle).await
 }
+
+#[tokio::test]
+async fn test_multi_select_mode() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    // Highlight 3rd to 6th search result with multi-select, and 8th with single selection
+    send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('v'), &event_sender); // Enable multi-select
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender); // Toggle multiple selected
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Esc, &event_sender); // Exit multi-select
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    changed values = Vec::new();",
+            "    changed mut items = data.clone();",
+            "    changed result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    changed mut sum = 0;",
+            "    let multiplier = 2;",
+            "    changed base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_mixed() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 6, 2, 0), 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    changed mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    changed mut items = data.clone();",
+            "    changed result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    changed mut sum = 0;",
+            "    changed multiplier = 2;",
+            "    changed base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_all_success() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 8, 0, 0), 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    changed mut count = 0;",
+            "    changed total = 0;",
+            "    changed values = Vec::new();",
+            "    changed mut items = data.clone();",
+            "    changed result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    changed mut sum = 0;",
+            "    changed multiplier = 2;",
+            "    changed base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 0, 8, 0), 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+            "",
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+        },
+        "src/foo.rs" => {
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+            "",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    overwrite_files!(
+        &temp_dir.path(),
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "}",
+        },
+    );
+
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Char('G'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(
+        &mut snapshot_rx,
+        Pattern::final_screen(false, 3, 2, 3),
+        1000,
+    )
+    .await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    changed mut count = 0;",
+            "}",
+        },
+        "src/foo.rs" => {
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    changed mut sum = 0;",
+            "    changed multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+            "",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+        },
+        "src/foo.rs" => {
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+            "",
+        },
+        "src/bar.rs" => {
+            "fn something() {",
+            "    let greeting = \"Hello, world!\";",
+            "    println!(\"{greeting}\");",
+            "}",
+            "",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    delete_files!(&temp_dir.path(), "src/lib.rs", "src/foo.rs");
+
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Char('G'), &event_sender);
+    send_key(KeyCode::Char('k'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(
+        &mut snapshot_rx,
+        Pattern::final_screen(false, 1, 2, 6),
+        1000,
+    )
+    .await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/bar.rs" => {
+            "fn something() {",
+            "    changed greeting = \"Hello, world!\";",
+            "    println!(\"{greeting}\");",
+            "}",
+            "",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut count = 0;",
+            "    let total = 0;",
+            "    let values = Vec::new();",
+            "    let mut items = data.clone();",
+            "    let result = compute(data);",
+            "}",
+        },
+        "src/foo.rs" => {
+            "fn compute(input: Vec<u32>) -> u32 {",
+            "    let mut sum = 0;",
+            "    let multiplier = 2;",
+            "    let base = 10;",
+            "    sum",
+            "}",
+            "",
+        },
+        "src/bar.rs" => {
+            "fn something() {",
+            "    let greeting = \"Hello, world!\";",
+            "    println!(\"{greeting}\");",
+            "}",
+            "",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), true)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("let", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("changed", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    delete_files!(&temp_dir.path(), "src/");
+
+    send_key(KeyCode::Char('j'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Char('G'), &event_sender);
+    send_key(KeyCode::Char('k'), &event_sender);
+    send_key(KeyCode::Char(' '), &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(
+        &mut snapshot_rx,
+        Pattern::final_screen(false, 0, 2, 7),
+        1000,
+    )
+    .await?;
+
+    assert_test_files!(&temp_dir);
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+async fn test_help_screen_keymaps() -> anyhow::Result<()> {
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_key_with_modifiers(KeyCode::Char('h'), KeyModifiers::CONTROL, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_help_screen_open", snapshot);
+
+    send_key(KeyCode::Esc, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_help_screen_closed", snapshot);
+
+    shutdown(event_sender, run_handle).await
+}
+
 // TODO: add tests for using fixed strings

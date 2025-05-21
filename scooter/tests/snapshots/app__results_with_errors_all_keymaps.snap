@@ -1,0 +1,31 @@
+---
+source: scooter/tests/app.rs
+assertion_line: 1597
+expression: app.keymaps_all()
+---
+[
+    (
+        "<j>",
+        "down",
+    ),
+    (
+        "<k>",
+        "up",
+    ),
+    (
+        "<C-r>",
+        "reset",
+    ),
+    (
+        "<C-h>",
+        "help",
+    ),
+    (
+        "<esc>",
+        "quit / close popup",
+    ),
+    (
+        "<C-c>",
+        "quit",
+    ),
+]

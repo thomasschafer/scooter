@@ -12,7 +12,10 @@ use parking_lot::{
 };
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
-use std::iter::Iterator;
+use std::{
+    cmp::{max, min},
+    iter::Iterator,
+};
 use std::{
     collections::HashMap,
     env::current_dir,
@@ -36,6 +39,7 @@ use crate::{
     config::{load_config, Config},
     fields::{CheckboxField, Field, TextField},
     replace::{ParsedFields, SearchType},
+    utils::ceil_div,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +52,7 @@ pub enum ReplaceResult {
 pub struct SearchResult {
     pub path: PathBuf,
     pub line_number: usize,
+    /// 1-indexed
     pub line: String,
     pub replacement: String,
     pub included: bool,
@@ -80,69 +85,239 @@ pub enum EventHandlingResult {
     None,
 }
 
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
+struct MultiSelected {
+    anchor: usize,
+    primary: usize,
+}
+impl MultiSelected {
+    fn ordered(&self) -> (usize, usize) {
+        if self.anchor < self.primary {
+            (self.anchor, self.primary)
+        } else {
+            (self.primary, self.anchor)
+        }
+    }
+
+    fn flip_direction(&mut self) {
+        (self.anchor, self.primary) = (self.primary, self.anchor);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Selected {
+    Single(usize),
+    Multi(MultiSelected),
+}
+
+#[derive(Debug)]
 pub struct SearchState {
-    pub results: Vec<SearchResult>,
     // TODO: make the view logic with scrolling etc. into a generic component
-    selected: usize, // TODO: allow for selection of ranges
-    pub view_offset: usize,
+    pub results: Vec<SearchResult>,
+    selected: Selected,
+    pub(crate) view_offset: usize,           // Updated by UI, not app
+    pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
+    processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
 }
 
 impl SearchState {
-    pub fn selected(&self) -> usize {
-        self.selected
-    }
-
-    pub fn move_selected_up(&mut self) {
-        if self.selected == 0 {
-            self.selected = self.results.len();
+    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
+        Self {
+            results: vec![],
+            selected: Selected::Single(0),
+            view_offset: 0,
+            num_displayed: None,
+            processing_receiver,
         }
-        self.selected = self.selected.saturating_sub(1);
     }
 
-    pub fn move_selected_down(&mut self) {
-        if self.selected >= self.results.len().saturating_sub(1) {
-            self.selected = 0;
+    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> EventHandlingResult {
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('j') | KeyCode::Down, _)
+            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                self.move_selected_down();
+            }
+            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.move_selected_up();
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_half_page();
+            }
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                self.move_selected_down_full_page();
+            }
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_half_page();
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                self.move_selected_up_full_page();
+            }
+            (KeyCode::Char('g'), _) => {
+                self.move_selected_top();
+            }
+            (KeyCode::Char('G'), _) => {
+                self.move_selected_bottom();
+            }
+            (KeyCode::Char(' '), _) => {
+                self.toggle_selected_inclusion();
+            }
+            (KeyCode::Char('a'), _) => {
+                self.toggle_all_selected();
+            }
+            (KeyCode::Char('v'), _) => {
+                self.toggle_multiselect_mode();
+            }
+            (KeyCode::Char(';'), KeyModifiers::ALT) => {
+                self.flip_multiselect_direction();
+            }
+            _ => return EventHandlingResult::None,
+        }
+
+        EventHandlingResult::Rerender
+    }
+
+    fn move_selected_up_by(&mut self, n: usize) {
+        let primary_selected_pos = self.primary_selected_pos();
+        if primary_selected_pos == 0 {
+            self.selected = Selected::Single(self.results.len().saturating_sub(1));
         } else {
-            self.selected += 1;
+            self.move_primary_sel(primary_selected_pos.saturating_sub(n));
         }
     }
 
-    pub fn move_selected_top(&mut self) {
-        self.selected = 0;
-        self.view_offset = 0;
-    }
-
-    pub fn move_selected_bottom(&mut self) {
-        self.selected = self.results.len().saturating_sub(1);
-    }
-
-    pub fn toggle_selected_inclusion(&mut self) {
-        if self.selected < self.results.len() {
-            let selected_result = self.selected_field();
-            selected_result.included = !selected_result.included;
+    fn move_selected_down_by(&mut self, n: usize) {
+        let primary_selected_pos = self.primary_selected_pos();
+        let end = self.results.len().saturating_sub(1);
+        if primary_selected_pos >= end {
+            self.selected = Selected::Single(0);
         } else {
-            self.selected = self.results.len().saturating_sub(1);
+            self.move_primary_sel(min(primary_selected_pos + n, end));
         }
     }
 
-    pub fn toggle_all_selected(&mut self) {
+    fn move_selected_up(&mut self) {
+        self.move_selected_up_by(1);
+    }
+
+    fn move_selected_down(&mut self) {
+        self.move_selected_down_by(1);
+    }
+
+    fn move_selected_up_full_page(&mut self) {
+        self.move_selected_up_by(max(self.num_displayed.unwrap(), 1));
+    }
+
+    fn move_selected_down_full_page(&mut self) {
+        self.move_selected_down_by(max(self.num_displayed.unwrap(), 1));
+    }
+
+    fn move_selected_up_half_page(&mut self) {
+        self.move_selected_up_by(max(ceil_div(self.num_displayed.unwrap(), 2), 1));
+    }
+
+    fn move_selected_down_half_page(&mut self) {
+        self.move_selected_down_by(max(ceil_div(self.num_displayed.unwrap(), 2), 1));
+    }
+
+    fn move_selected_top(&mut self) {
+        self.move_primary_sel(0);
+    }
+
+    fn move_selected_bottom(&mut self) {
+        self.move_primary_sel(self.results.len().saturating_sub(1));
+    }
+
+    fn move_primary_sel(&mut self, idx: usize) {
+        self.selected = match &self.selected {
+            Selected::Single(_) => Selected::Single(idx),
+            Selected::Multi(MultiSelected { anchor, .. }) => Selected::Multi(MultiSelected {
+                anchor: *anchor,
+                primary: idx,
+            }),
+        };
+    }
+
+    fn toggle_selected_inclusion(&mut self) {
+        let all_included = self.selected_fields().iter().all(|res| res.included);
+        self.selected_fields_mut().iter_mut().for_each(|selected| {
+            selected.included = !all_included;
+        });
+    }
+
+    fn toggle_all_selected(&mut self) {
         let all_included = self.results.iter().all(|res| res.included);
         self.results
             .iter_mut()
             .for_each(|res| res.included = !all_included);
     }
 
-    fn selected_field(&mut self) -> &mut SearchResult {
-        &mut self.results[self.selected]
+    // TODO: add tests
+    fn selected_range(&self) -> (usize, usize) {
+        match &self.selected {
+            Selected::Single(sel) => (*sel, *sel),
+            Selected::Multi(ms) => ms.ordered(),
+        }
     }
 
-    #[allow(dead_code)] // Used in tests
-    pub fn with_results(results: Vec<SearchResult>) -> Self {
-        Self {
-            results,
-            selected: 0,
-            view_offset: 0,
+    fn selected_fields(&self) -> &[SearchResult] {
+        let (low, high) = self.selected_range();
+        &self.results[low..=high]
+    }
+
+    fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+        let (low, high) = self.selected_range();
+        &mut self.results[low..=high]
+    }
+
+    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResult {
+        let sel = self.primary_selected_pos();
+        &mut self.results[sel]
+    }
+
+    pub(crate) fn primary_selected_pos(&self) -> usize {
+        match self.selected {
+            Selected::Single(sel) => sel,
+            Selected::Multi(MultiSelected { primary, .. }) => primary,
+        }
+    }
+
+    fn toggle_multiselect_mode(&mut self) {
+        self.selected = match &self.selected {
+            Selected::Single(sel) => Selected::Multi(MultiSelected {
+                anchor: *sel,
+                primary: *sel,
+            }),
+            Selected::Multi(MultiSelected { primary, .. }) => Selected::Single(*primary),
+        };
+    }
+
+    pub(crate) fn is_selected(&self, idx: usize) -> bool {
+        match &self.selected {
+            Selected::Single(sel) => idx == *sel,
+            Selected::Multi(ms) => {
+                let (low, high) = ms.ordered();
+                idx >= low && idx <= high
+            }
+        }
+    }
+
+    fn multiselect_enabled(&self) -> bool {
+        match &self.selected {
+            Selected::Single(_) => false,
+            Selected::Multi(_) => true,
+        }
+    }
+
+    pub(crate) fn is_primary_selected(&self, idx: usize) -> bool {
+        idx == self.primary_selected_pos()
+    }
+
+    fn flip_multiselect_direction(&mut self) {
+        match &mut self.selected {
+            Selected::Single(_) => {}
+            Selected::Multi(ms) => {
+                ms.flip_direction();
+            }
         }
     }
 }
@@ -156,8 +331,8 @@ pub struct ReplaceState {
 }
 
 impl ReplaceState {
-    fn handle_key_results(&mut self, key: &KeyEvent) -> bool {
-        let mut exit = false;
+    fn handle_key_results(&mut self, key: &KeyEvent) -> EventHandlingResult {
+        #[allow(clippy::match_same_arms)]
         match (key.code, key.modifiers) {
             (KeyCode::Char('j') | KeyCode::Down, _)
             | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -167,15 +342,13 @@ impl ReplaceState {
                 self.scroll_replacement_errors_up();
             }
             (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
-            (KeyCode::PageDown, _) => {}                      // TODO: scroll down a full page
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
-            (KeyCode::PageUp, _) => {}                        // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => {
-                exit = true;
-            }
-            _ => {}
-        };
-        exit
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
+            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit,
+            _ => return EventHandlingResult::None,
+        }
+        EventHandlingResult::Rerender
     }
 
     pub fn scroll_replacement_errors_up(&mut self) {
@@ -197,24 +370,36 @@ impl ReplaceState {
 #[derive(Debug)]
 pub struct SearchInProgressState {
     pub search_state: SearchState,
-    pub last_render: Instant,
+    pub(crate) last_render: Instant,
+    pub(crate) search_started: Instant,
     handle: JoinHandle<()>,
-    processing_sender: UnboundedSender<BackgroundProcessingEvent>,
-    processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
 }
 
 impl SearchInProgressState {
-    fn new(
+    pub fn new(
         handle: JoinHandle<()>,
-        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     ) -> Self {
         Self {
-            search_state: SearchState::default(),
+            search_state: SearchState::new(processing_receiver),
             last_render: Instant::now(),
+            search_started: Instant::now(),
             handle,
-            processing_sender,
-            processing_receiver,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SearchCompleteState {
+    pub search_state: SearchState,
+    pub(crate) search_time_taken: Duration,
+}
+
+impl SearchCompleteState {
+    pub fn new(search_state: SearchState, search_started: Instant) -> Self {
+        Self {
+            search_state,
+            search_time_taken: search_started.elapsed(),
         }
     }
 }
@@ -249,7 +434,7 @@ impl PerformingReplacementState {
 pub enum Screen {
     SearchFields,
     SearchProgressing(SearchInProgressState),
-    SearchComplete(SearchState),
+    SearchComplete(SearchCompleteState),
     PerformingReplacement(PerformingReplacementState),
     Results(ReplaceState),
 }
@@ -257,12 +442,20 @@ pub enum Screen {
 impl Screen {
     fn search_results_mut(&mut self) -> &mut SearchState {
         match self {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. }) => search_state,
-            Screen::SearchComplete(search_state) => search_state,
-            _ => panic!(
-                "Expected SearchInProgress or SearchComplete, found {:?}",
-                self
-            ),
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state,
+            _ => panic!("Expected SearchInProgress or SearchComplete, found {self:?}",),
+        }
+    }
+
+    fn name(&self) -> &str {
+        // TODO: is there a better way of doing this?
+        match &self {
+            Screen::SearchFields => "SearchFields",
+            Screen::SearchProgressing(_) => "SearchProgressing",
+            Screen::SearchComplete(_) => "SearchComplete",
+            Screen::PerformingReplacement(_) => "PerformingReplacement",
+            Screen::Results(_) => "Results",
         }
     }
 }
@@ -352,7 +545,6 @@ pub const NUM_SEARCH_FIELDS: usize = 7;
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
     pub highlighted: usize,
-    pub show_error_popup: bool,
     advanced_regex: bool,
     pub disable_populated_fields: bool,
 }
@@ -416,6 +608,7 @@ impl SearchFields {
     define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
     define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         let fields = [
             SearchField {
@@ -566,11 +759,11 @@ impl SearchFields {
         let search = self.search();
         let search_text = search.text();
         let result = if self.fixed_strings().checked {
-            SearchType::Fixed(search_text)
+            SearchType::Fixed(search_text.to_string())
         } else if self.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(&search_text)?)
+            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
         } else {
-            SearchType::Pattern(Regex::new(&search_text)?)
+            SearchType::Pattern(Regex::new(search_text)?)
         };
         Ok(result)
     }
@@ -587,15 +780,22 @@ pub struct AppError {
     pub long: String,
 }
 
+#[derive(Debug)]
+pub enum Popup {
+    Error,
+    Help,
+    Text { title: String, body: String },
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    errors: Vec<AppError>,
     pub directory: PathBuf,
-    include_hidden: bool,
     pub config: Config,
-
-    event_sender: UnboundedSender<Event>,
+    pub event_sender: UnboundedSender<Event>,
+    errors: Vec<AppError>,
+    include_hidden: bool,
+    popup: Option<Popup>,
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
@@ -632,10 +832,11 @@ impl<'a> App {
         Self {
             current_screen: Screen::SearchFields,
             search_fields,
-            errors: vec![],
             directory,
             include_hidden,
             config,
+            errors: vec![],
+            popup: None,
             event_sender,
         }
     }
@@ -671,7 +872,7 @@ impl<'a> App {
             ..
         }) = &mut self.current_screen
         {
-            handle.abort()
+            handle.abort();
         }
     }
 
@@ -690,10 +891,22 @@ impl<'a> App {
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
         match &mut self.current_screen {
             Screen::SearchProgressing(SearchInProgressState {
-                processing_receiver,
+                search_state:
+                    SearchState {
+                        processing_receiver,
+                        ..
+                    },
                 ..
-            }) => processing_receiver.recv().await,
-            Screen::PerformingReplacement(PerformingReplacementState {
+            })
+            | Screen::SearchComplete(SearchCompleteState {
+                search_state:
+                    SearchState {
+                        processing_receiver,
+                        ..
+                    },
+                ..
+            })
+            | Screen::PerformingReplacement(PerformingReplacementState {
                 processing_receiver,
                 ..
             }) => processing_receiver.recv().await,
@@ -701,21 +914,7 @@ impl<'a> App {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn background_processing_sender(
-        &mut self,
-    ) -> Option<&mut UnboundedSender<BackgroundProcessingEvent>> {
-        if let Screen::SearchProgressing(SearchInProgressState {
-            processing_sender, ..
-        }) = &mut self.current_screen
-        {
-            Some(processing_sender)
-        } else {
-            None
-        }
-    }
-
-    pub async fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
+    pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
@@ -726,10 +925,7 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
 
-        match self
-            .validate_fields(background_processing_sender.clone())
-            .unwrap()
-        {
+        match self.validate_fields(&background_processing_sender).unwrap() {
             None => {
                 self.current_screen = Screen::SearchFields;
             }
@@ -737,14 +933,14 @@ impl<'a> App {
                 let handle = Self::update_search_results(
                     parsed_fields,
                     background_processing_sender.clone(),
+                    self.event_sender.clone(),
                 );
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
-                    background_processing_sender,
                     background_processing_receiver,
                 ));
             }
-        };
+        }
 
         EventHandlingResult::Rerender
     }
@@ -761,7 +957,7 @@ impl<'a> App {
                 background_processing_receiver,
             )),
         ) {
-            Screen::SearchComplete(search_state) => {
+            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
                 let handle = Self::perform_replacement(search_state, background_processing_sender);
                 if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
                     state.set_handle(handle);
@@ -784,7 +980,8 @@ impl<'a> App {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
-            for res in search_state.results.into_iter().filter(|res| res.included) {
+            let (included, num_ignored) = split_results(search_state.results);
+            for res in included {
                 path_groups.entry(res.path.clone()).or_default().push(res);
             }
 
@@ -796,9 +993,9 @@ impl<'a> App {
                 let task = tokio::spawn(async move {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
                     if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
-                        results.iter_mut().for_each(|res| {
-                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()))
-                        });
+                        for res in &mut results {
+                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+                        }
                     }
                     drop(permit);
                     results
@@ -810,7 +1007,7 @@ impl<'a> App {
                 .await
                 .into_iter()
                 .flat_map(Result::unwrap);
-            let replace_state = Self::calculate_statistics(replacement_results);
+            let replace_state = Self::calculate_statistics(replacement_results, num_ignored);
 
             // Ignore error: we may have gone back to the previous screen
             let _ = background_processing_sender.send(
@@ -844,10 +1041,16 @@ impl<'a> App {
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
-                if let Screen::SearchProgressing(SearchInProgressState { search_state, .. }) =
-                    mem::replace(&mut self.current_screen, Screen::SearchFields)
+                if let Screen::SearchProgressing(SearchInProgressState {
+                    search_state,
+                    search_started,
+                    ..
+                }) = mem::replace(&mut self.current_screen, Screen::SearchFields)
                 {
-                    self.current_screen = Screen::SearchComplete(search_state);
+                    self.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+                        search_state,
+                        search_started,
+                    ));
                 }
                 EventHandlingResult::Rerender
             }
@@ -858,7 +1061,7 @@ impl<'a> App {
         }
     }
 
-    fn handle_key_searching(&mut self, key: &KeyEvent) -> bool {
+    fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
                 self.event_sender
@@ -875,47 +1078,32 @@ impl<'a> App {
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
-                };
+                }
                 self.search_fields
                     .highlighted_field()
                     .write()
                     .handle_keys(code, modifiers);
             }
-        };
-        false
+        }
+        EventHandlingResult::Rerender
     }
 
-    fn handle_key_confirmation(&mut self, key: &KeyEvent) -> bool {
+    /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
+    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
+        if !matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        ) {
+            panic!(
+                "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
+                self.current_screen
+            );
+        }
+
         match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_down();
-            }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                self.current_screen.search_results_mut().move_selected_up();
-            }
-            (KeyCode::Char('g'), _) => {
-                self.current_screen.search_results_mut().move_selected_top();
-            }
-            (KeyCode::Char('G'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .move_selected_bottom();
-            }
-            (KeyCode::Char(' '), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_selected_inclusion();
-            }
-            (KeyCode::Char('a'), _) => {
-                self.current_screen
-                    .search_results_mut()
-                    .toggle_all_selected();
-            }
             (KeyCode::Enter, _) => {
                 self.trigger_replacement();
+                Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
@@ -923,57 +1111,86 @@ impl<'a> App {
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
+                Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::NONE) => {
-                let selected = self.current_screen.search_results_mut().selected_field();
+                self.set_popup(Popup::Text{
+                    title: "Command deprecated".to_string(),
+                    body: "Pressing `o` to open the selected file in your editor is deprecated.\n\nPlease use `e` instead.".to_string(),
+                });
+                Some(EventHandlingResult::Rerender)
+            }
+            (KeyCode::Char('e'), KeyModifiers::NONE) => {
+                let selected = self
+                    .current_screen
+                    .search_results_mut()
+                    .primary_selected_field_mut();
                 self.event_sender
                     .send(Event::LaunchEditor((
                         selected.path.clone(),
                         selected.line_number,
                     )))
                     .unwrap();
+                Some(EventHandlingResult::Rerender)
             }
-            _ => {}
-        };
-        false
+            _ => None,
+        }
     }
 
-    pub fn handle_key_event(&mut self, key: &KeyEvent) -> anyhow::Result<EventHandlingResult> {
+    pub fn handle_key_event(&mut self, key: &KeyEvent) -> EventHandlingResult {
         if key.kind == KeyEventKind::Release {
-            return Ok(EventHandlingResult::Rerender);
+            return EventHandlingResult::Rerender;
         }
 
-        if self.show_error_popup() {
-            self.clear_app_errors();
-            self.search_fields.show_error_popup = false;
-            return Ok(EventHandlingResult::Rerender);
+        if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
+            self.reset();
+            return EventHandlingResult::Exit;
+        }
+
+        if self.popup.is_some() {
+            self.clear_popup();
+            return EventHandlingResult::Rerender;
         }
 
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                self.reset();
-                return Ok(EventHandlingResult::Exit);
+            (KeyCode::Esc, _) => {
+                if self.multiselect_enabled() {
+                    self.toggle_multiselect_mode();
+                    return EventHandlingResult::Rerender;
+                } else {
+                    self.reset();
+                    return EventHandlingResult::Exit;
+                }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
                 self.reset();
-                return Ok(EventHandlingResult::Rerender);
+                return EventHandlingResult::Rerender;
+            }
+            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+                self.set_popup(Popup::Help);
+                return EventHandlingResult::Rerender;
             }
             (_, _) => {}
         }
 
-        let exit = match &mut self.current_screen {
+        match &mut self.current_screen {
             Screen::SearchFields => self.handle_key_searching(key),
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                self.handle_key_confirmation(key)
+                if let Some(res) = self.try_handle_key_search(key) {
+                    res
+                } else {
+                    match &mut self.current_screen {
+                        Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
+                            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state.handle_key(key),
+                        screen => panic!(
+                            "Expected current_screen to be SearchProgressing or SearchComplete, found {screen:?}",
+                        ),
+                    }
+                }
             }
-            Screen::PerformingReplacement(_) => false,
+            Screen::PerformingReplacement(_) => EventHandlingResult::Rerender,
             Screen::Results(replace_state) => replace_state.handle_key_results(key),
-        };
-        Ok(if exit {
-            EventHandlingResult::Exit
-        } else {
-            EventHandlingResult::Rerender
-        })
+        }
     }
 
     fn is_regex_error(e: &Error) -> bool {
@@ -983,7 +1200,7 @@ impl<'a> App {
 
     fn validate_fields(
         &mut self,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
     ) -> anyhow::Result<Option<ParsedFields>> {
         let search_pattern = match self.search_fields.search_type() {
             Ok(p) => ValidatedField::Parsed(p),
@@ -1001,36 +1218,34 @@ impl<'a> App {
 
         let overrides = self.validate_overrides()?;
 
-        match (search_pattern, overrides) {
-            (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) => {
-                Ok(Some(ParsedFields::new(
-                    search_pattern,
-                    self.search_fields.replace().text(),
-                    self.search_fields.whole_word().checked,
-                    self.search_fields.match_case().checked,
-                    overrides,
-                    self.directory.clone(),
-                    self.include_hidden,
-                    background_processing_sender.clone(),
-                )))
-            }
-            (_, _) => {
-                self.search_fields.show_error_popup = true;
-                Ok(None)
-            }
+        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
+            (search_pattern, overrides)
+        {
+            Ok(Some(ParsedFields::new(
+                search_pattern,
+                self.search_fields.replace().text().to_string(),
+                self.search_fields.whole_word().checked,
+                self.search_fields.match_case().checked,
+                overrides,
+                self.directory.clone(),
+                self.include_hidden,
+                background_processing_sender.clone(),
+            )))
+        } else {
+            self.set_popup(Popup::Error);
+            Ok(None)
         }
     }
 
     fn add_overrides(
-        &self,
         overrides: &mut OverrideBuilder,
-        files: String,
+        files: &str,
         prefix: &str,
     ) -> anyhow::Result<()> {
-        for file in files.split(",") {
+        for file in files.split(',') {
             let file = file.trim();
             if !file.is_empty() {
-                overrides.add(&format!("{}{}", prefix, file))?;
+                overrides.add(&format!("{prefix}{file}"))?;
             }
         }
         Ok(())
@@ -1040,7 +1255,7 @@ impl<'a> App {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
         let mut success = true;
 
-        let include_res = self.add_overrides(
+        let include_res = Self::add_overrides(
             &mut overrides,
             self.search_fields.include_files().text(),
             "",
@@ -1050,9 +1265,9 @@ impl<'a> App {
                 .include_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
             success = false;
-        };
+        }
 
-        let exlude_res = self.add_overrides(
+        let exlude_res = Self::add_overrides(
             &mut overrides,
             self.search_fields.exclude_files().text(),
             "!",
@@ -1062,7 +1277,7 @@ impl<'a> App {
                 .exclude_files_mut()
                 .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
             success = false;
-        };
+        }
 
         if success {
             let overrides = overrides.build()?;
@@ -1075,25 +1290,23 @@ impl<'a> App {
     pub fn update_search_results(
         parsed_fields: ParsedFields,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        event_sender: UnboundedSender<Event>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let walker = parsed_fields.build_walker();
 
             tokio::spawn(async move {
-                let tx = tx;
                 walker.run(|| {
-                    let tx = tx.clone();
-                    Box::new(move |result| {
-                        let entry = match result {
-                            Ok(entry) => entry,
-                            Err(_) => return WalkState::Continue,
+                    Box::new(|result| {
+                        let Ok(entry) = result else {
+                            return WalkState::Continue;
                         };
 
                         let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
+                        #[allow(clippy::collapsible_if)]
                         if is_file && !Self::ignore_file(entry.path()) {
-                            let send_res = tx.send(entry.path().to_owned());
-                            if send_res.is_err() {
+                            if tx.send(entry.path().to_owned()).is_err() {
                                 return WalkState::Quit;
                             }
                         }
@@ -1103,18 +1316,28 @@ impl<'a> App {
                 });
             });
 
-            while let Some(path) = rx.recv().await {
-                parsed_fields.handle_path(&path).await;
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(393)); // Slightly random duration so that time taken isn't a round number
+            rerender_interval.tick().await;
+
+            loop {
+                tokio::select! {
+                    maybe_path = rx.recv() => {
+                        match maybe_path {
+                            Some(path) => parsed_fields.handle_path(&path).await,
+                            None => break,
+                        }
+                    },
+                    _ = rerender_interval.tick() => {
+                        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                    }
+                }
             }
 
             if let Err(err) =
                 background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
             {
                 // Log and ignore error: likely have gone back to previous screen
-                warn!(
-                    "Found error when attempting to send SearchCompleted event: {}",
-                    err
-                );
+                warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
         })
     }
@@ -1122,7 +1345,7 @@ impl<'a> App {
     fn ignore_file(path: &Path) -> bool {
         if let Some(ext) = path.extension() {
             if let Some(ext_str) = ext.to_str() {
-                if BINARY_EXTENSIONS.contains(&ext_str.to_lowercase().as_str()) {
+                if BINARY_EXTENSIONS.contains(&ext_str) {
                     return true;
                 }
             }
@@ -1130,34 +1353,34 @@ impl<'a> App {
         false
     }
 
-    fn calculate_statistics<I>(results: I) -> ReplaceState
+    fn calculate_statistics<I>(results: I, num_ignored: usize) -> ReplaceState
     where
         I: IntoIterator<Item = SearchResult>,
     {
         let mut num_successes = 0;
-        let mut num_ignored = 0;
         let mut errors = vec![];
 
-        results
-            .into_iter()
-            .for_each(|res| match (res.included, &res.replace_result) {
-                (false, _) => {
-                    num_ignored += 1;
-                }
-                (_, Some(ReplaceResult::Success)) => {
+        results.into_iter().for_each(|res| {
+            assert!(
+                res.included,
+                "Expected only included results, found {res:?}"
+            );
+            match &res.replace_result {
+                Some(ReplaceResult::Success) => {
                     num_successes += 1;
                 }
-                (_, None) => {
+                None => {
                     let mut res = res.clone();
                     res.replace_result = Some(ReplaceResult::Error(
                         "Failed to find search result in file".to_owned(),
                     ));
                     errors.push(res);
                 }
-                (_, Some(ReplaceResult::Error(_))) => {
+                Some(ReplaceResult::Error(_)) => {
                     errors.push(res.clone());
                 }
-            });
+            }
+        });
 
         ReplaceState {
             num_successes,
@@ -1171,8 +1394,10 @@ impl<'a> App {
         file_path: PathBuf,
         results: &mut [SearchResult],
     ) -> anyhow::Result<()> {
-        let mut line_map: HashMap<_, _> =
-            HashMap::from_iter(results.iter_mut().map(|res| (res.line_number, res)));
+        let mut line_map: HashMap<_, _> = results
+            .iter_mut()
+            .map(|res| (res.line_number, res))
+            .collect();
 
         let parent_dir = file_path.parent().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1215,8 +1440,12 @@ impl<'a> App {
         Ok(())
     }
 
-    pub fn show_error_popup(&self) -> bool {
-        !self.errors.is_empty() || self.search_fields.show_error_popup
+    pub fn show_popup(&self) -> bool {
+        self.popup.is_some()
+    }
+
+    pub fn popup(&self) -> Option<&Popup> {
+        self.popup.as_ref()
     }
 
     pub fn errors(&self) -> Vec<AppError> {
@@ -1226,12 +1455,162 @@ impl<'a> App {
     }
 
     pub fn add_error(&mut self, error: AppError) {
+        self.popup = Some(Popup::Error);
         self.errors.push(error);
     }
 
-    pub fn clear_app_errors(&mut self) {
-        self.errors = vec![];
+    fn clear_popup(&mut self) {
+        self.popup = None;
+        self.errors.clear();
     }
+
+    fn set_popup(&mut self, popup: Popup) {
+        self.popup = Some(popup);
+    }
+
+    pub fn keymaps_all(&self) -> Vec<(&str, String)> {
+        self.keymaps_impl(false)
+    }
+
+    pub fn keymaps_compact(&self) -> Vec<(&str, String)> {
+        self.keymaps_impl(true)
+    }
+
+    fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
+        enum Show {
+            Both,
+            FullOnly,
+            CompactOnly,
+        }
+
+        let current_screen_keys = match self.current_screen {
+            Screen::SearchFields => {
+                vec![
+                    ("<enter>", "search", Show::Both),
+                    ("<tab>", "focus next", Show::Both),
+                    ("<S-tab>", "focus previous", Show::FullOnly),
+                    ("<space>", "toggle checkbox", Show::FullOnly),
+                ]
+            }
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
+                let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
+                    vec![("<enter>", "replace selected", Show::Both)]
+                } else {
+                    vec![]
+                };
+                keys.append(&mut vec![
+                    ("<space>", "toggle", Show::Both),
+                    ("a", "toggle all", Show::FullOnly),
+                    ("v", "toggle multi-select mode", Show::FullOnly),
+                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
+                    ("e", "open in editor", Show::FullOnly),
+                    ("<C-o>", "back", Show::Both),
+                    ("j", "up", Show::FullOnly),
+                    ("k", "down", Show::FullOnly),
+                    ("<C-u>", "up half a page", Show::FullOnly),
+                    ("<C-d>", "down half a page", Show::FullOnly),
+                    ("<C-b>", "up a full page", Show::FullOnly),
+                    ("<C-f>", "down a full page", Show::FullOnly),
+                    ("g", "jump to top", Show::FullOnly),
+                    ("G", "jump to bottom", Show::FullOnly),
+                ]);
+                keys
+            }
+            Screen::PerformingReplacement(_) => vec![],
+            Screen::Results(ref replace_state) => {
+                if !replace_state.errors.is_empty() {
+                    vec![("<j>", "down", Show::Both), ("<k>", "up", Show::Both)]
+                } else {
+                    vec![]
+                }
+            }
+        };
+
+        let is_search_screen = matches!(
+            self.current_screen,
+            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
+        );
+        let esc_help = format!(
+            "quit / close popup{}",
+            if is_search_screen {
+                " / exit multi-select"
+            } else {
+                ""
+            }
+        );
+
+        let additional_keys = vec![
+            (
+                "<C-r>",
+                "reset",
+                if is_search_screen {
+                    Show::FullOnly
+                } else {
+                    Show::Both
+                },
+            ),
+            ("<C-h>", "help", Show::Both),
+            (
+                "<esc>",
+                if self.popup.is_some() {
+                    "close popup"
+                } else if self.multiselect_enabled() {
+                    "exit multi-select"
+                } else {
+                    "quit"
+                },
+                Show::CompactOnly,
+            ),
+            ("<esc>", &esc_help, Show::FullOnly),
+            ("<C-c>", "quit", Show::FullOnly),
+        ];
+
+        let all_keys = current_screen_keys.into_iter().chain(additional_keys);
+
+        all_keys
+            .filter_map(move |(from, to, show)| {
+                let include = match show {
+                    Show::Both => true,
+                    Show::CompactOnly => compact,
+                    Show::FullOnly => !compact,
+                };
+                if include {
+                    Some((from, to.to_owned()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn multiselect_enabled(&self) -> bool {
+        match &self.current_screen {
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+                search_state.multiselect_enabled()
+            }
+            _ => false,
+        }
+    }
+
+    fn toggle_multiselect_mode(&mut self) {
+        match &mut self.current_screen {
+            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
+            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+                search_state.toggle_multiselect_mode();
+            }
+            _ => panic!(
+                "Tried to disable multi-select on {:?}",
+                self.current_screen.name()
+            ),
+        }
+    }
+}
+
+fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
+    let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
+    let num_ignored = excluded.len();
+    (included, num_ignored)
 }
 
 #[cfg(test)]
@@ -1241,8 +1620,8 @@ mod tests {
     use super::*;
 
     fn random_num() -> usize {
-        let mut rng = rand::thread_rng();
-        rng.gen_range(1..10000)
+        let mut rng = rand::rng();
+        rng.random_range(1..10000)
     }
 
     fn search_result(included: bool) -> SearchResult {
@@ -1256,9 +1635,38 @@ mod tests {
         }
     }
 
+    fn build_test_results(num_results: usize) -> Vec<SearchResult> {
+        (0..num_results)
+            .map(|i| SearchResult {
+                path: PathBuf::from(format!("test{i}.txt")),
+                line_number: 1,
+                line: format!("test line {i}").to_string(),
+                replacement: format!("replacement {i}").to_string(),
+                included: true,
+                replace_result: None,
+            })
+            .collect()
+    }
+
+    fn build_test_search_state(num_results: usize) -> SearchState {
+        let results = build_test_results(num_results);
+        build_test_search_state_with_results(results)
+    }
+
+    fn build_test_search_state_with_results(results: Vec<SearchResult>) -> SearchState {
+        let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
+        SearchState {
+            results,
+            selected: Selected::Single(0),
+            view_offset: 0,
+            num_displayed: Some(5),
+            processing_receiver,
+        }
+    }
+
     #[test]
     fn test_toggle_all_selected_when_all_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(true),
             search_result(true),
             search_result(true),
@@ -1276,7 +1684,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_none_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(false),
             search_result(false),
             search_result(false),
@@ -1294,7 +1702,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_some_selected() {
-        let mut search_state = SearchState::with_results(vec![
+        let mut search_state = build_test_search_state_with_results(vec![
             search_result(true),
             search_result(false),
             search_result(true),
@@ -1312,7 +1720,7 @@ mod tests {
 
     #[test]
     fn test_toggle_all_selected_when_no_results() {
-        let mut search_state = SearchState::with_results(vec![]);
+        let mut search_state = build_test_search_state_with_results(vec![]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
@@ -1366,15 +1774,19 @@ mod tests {
             SearchFieldValues::default(),
             event_sender,
         );
-        app.current_screen = Screen::SearchComplete(SearchState::with_results(results));
+        app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
+            build_test_search_state_with_results(results),
+            Instant::now(),
+        ));
         app
     }
 
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            App::calculate_statistics(search_state.results)
+        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
+            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
+            App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1400,8 +1812,9 @@ mod tests {
             error_result.clone(),
             ignored_result(),
         ]);
-        let stats = if let Screen::SearchComplete(search_state) = app.current_screen {
-            App::calculate_statistics(search_state.results)
+        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
+            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
+            App::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1415,5 +1828,292 @@ mod tests {
                 replacement_errors_pos: 0,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn test_search_state_toggling() {
+        fn included(state: &SearchState) -> Vec<bool> {
+            state.results.iter().map(|r| r.included).collect::<Vec<_>>()
+        }
+
+        let mut state = build_test_search_state(3);
+
+        assert_eq!(included(&state), [true, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [true, true, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+        state.move_selected_down();
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, false, true]);
+        state.toggle_selected_inclusion();
+        assert_eq!(included(&state), [false, true, true]);
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_single() {
+        let mut state = build_test_search_state(3);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(2));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(2));
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(1));
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_top_bottom() {
+        let mut state = build_test_search_state(3);
+
+        state.move_selected_top();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_bottom();
+        assert_eq!(state.selected, Selected::Single(2));
+        state.move_selected_bottom();
+        assert_eq!(state.selected, Selected::Single(2));
+        state.move_selected_top();
+        assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_half_page_increments() {
+        let mut state = build_test_search_state(8);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected, Selected::Single(3));
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected, Selected::Single(6));
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected, Selected::Single(7));
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected, Selected::Single(7));
+        state.move_selected_up_half_page();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected, Selected::Single(7));
+        state.move_selected_down_half_page();
+        assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[tokio::test]
+    async fn test_search_state_movement_page_increments() {
+        let mut state = build_test_search_state(12);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected, Selected::Single(5));
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected, Selected::Single(10));
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected, Selected::Single(11));
+        state.move_selected_down_full_page();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(11));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(6));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(11));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(6));
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(5));
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.move_selected_up_full_page();
+        assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[test]
+    fn test_selected_fields_movement() {
+        let mut results = build_test_results(10);
+        let mut state = build_test_search_state_with_results(results.clone());
+
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 0,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=0]);
+
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[0..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 2,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &mut results[2..=2]);
+    }
+
+    #[test]
+    fn test_selected_fields_toggling() {
+        let mut state = build_test_search_state(6);
+
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(4));
+        state.toggle_multiselect_mode();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 4,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[4..=4]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, true, true, true, true]
+        );
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![true, true, false, false, false, true]
+        );
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 4,
+                primary: 2,
+            })
+        );
+        assert_eq!(state.selected_fields(), &state.results[2..=4]);
+        state.toggle_multiselect_mode();
+        assert_eq!(state.selected, Selected::Single(2));
+        assert_eq!(state.selected_fields(), &state.results[2..=2]);
+        state.move_selected_up();
+        state.move_selected_up();
+        assert_eq!(state.selected, Selected::Single(0));
+        assert_eq!(state.selected_fields(), &state.results[0..=0]);
+        state.toggle_selected_inclusion();
+        assert_eq!(
+            state
+                .results
+                .iter()
+                .map(|res| res.included)
+                .collect::<Vec<_>>(),
+            vec![false, true, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn test_flip_multi_select_direction() {
+        let mut state = build_test_search_state(10);
+        assert_eq!(state.selected, Selected::Single(0));
+        state.flip_multiselect_direction();
+        assert_eq!(state.selected, Selected::Single(0));
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(1));
+        state.toggle_multiselect_mode();
+        state.move_selected_down();
+        state.move_selected_down();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 1,
+                primary: 3,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 1,
+            })
+        );
+        state.move_selected_up();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 3,
+                primary: 0,
+            })
+        );
+        state.flip_multiselect_direction();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 3,
+            })
+        );
+        state.move_selected_bottom();
+        assert_eq!(
+            state.selected,
+            Selected::Multi(MultiSelected {
+                anchor: 0,
+                primary: 9,
+            })
+        );
+        state.move_selected_down();
+        assert_eq!(state.selected, Selected::Single(0));
     }
 }

@@ -70,7 +70,7 @@ struct Args {
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
-    LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {}", s))
+    LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {s}"))
 }
 
 impl<'a> From<&'a Args> for AppConfig<'a> {

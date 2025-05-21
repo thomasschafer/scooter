@@ -8,6 +8,9 @@ If the instance you're attempting to replace has changed since the search was pe
 
 ![Scooter preview](media/preview.gif)
 
+You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
+
+![Scooter with Catppuccin Macchiato theme](media/preview_catppuccin_macchiato.png)
 
 ## Contents
 
@@ -17,8 +20,9 @@ If the instance you're attempting to replace has changed since the search was pe
   - [Search fields](#search-fields)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
-  - [NixOS](#nixos)
+  - [Nix](#nix)
   - [AUR](#aur)
+  - [Winget](#winget)
   - [Prebuilt binaries](#prebuilt-binaries)
   - [Cargo](#cargo)
   - [Building from source](#building-from-source)
@@ -27,6 +31,7 @@ If the instance you're attempting to replace has changed since the search was pe
   - [Helix](#helix)
   - [Neovim](#neovim)
 - [Contributing](#contributing)
+  - [Development](#development)
 <!-- TOC END -->
 
 
@@ -36,7 +41,7 @@ Scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
-When viewing search results, you can open the selected file at the relevant line by pressing `o`. This will use the editor defined by your `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
+When viewing search results, you can open the selected file at the relevant line by pressing `e`. This will use the editor defined by your `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
 
 
 ## Usage
@@ -65,8 +70,8 @@ When on the search screen the following fields are available:
 
 - **Search text**: Text to search with. Defaults to regex, unless "Fixed strings" is enabled, in which case this reverts to case-sensitive string search.
 - **Replace text**: Text to replace the search text with. If searching with regex, this can include capture groups.
-- **Fixed strings**: If enabled, search with plain case-sensitive strings. If disabled, search with regex.
-- **Match whole word**: If enabled, only match when the search string forms the entire word and not a substring in a larger word. For instance, if the search string is "foo", "foo bar" would be matched but not "foobar".
+- **Fixed strings**: If enabled, search with plain strings. If disabled, search with regex.
+- **Match whole word**: If enabled, only match when the search string forms an entire word and not a substring in a larger word. For instance, if the search string is "foo", "foo bar" would be matched but not "foobar".
 - **Match case**: If enabled, match the case of the search string exactly, e.g. a search string of `Bar` would match `foo Bar baz` but not `foo bar baz`.
 - **Files to include**: Glob patterns, separated by commas (`,`), that file paths must match. For instance, `*.rs, *.py` matches all files with the `.rs` or `.py` extensions.
 - **Files to exclude**: Glob patterns, separated by commas (`,`), that file paths must not match. For instance, `env/**` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
@@ -86,7 +91,7 @@ On macOS and Linux, you can install Scooter using [Homebrew](https://formulae.br
 brew install scooter
 ```
 
-### NixOS
+### Nix
 
 Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=scooter), currently on the unstable channel.
 
@@ -104,18 +109,27 @@ Or, to build from the latest commit:
 yay -S scooter-git
 ```
 
+### Winget
+
+Install from Winget with
+
+```sh
+winget install thomasschafer.scooter
+```
+
 ### Prebuilt binaries
 
-You can download binaries from the [releases page](https://github.com/thomasschafer/scooter/releases/latest). After downloading, unzip the binary and move it to a directory in your `PATH`.
+Download the appropriate binary for your system from the [releases page](https://github.com/thomasschafer/scooter/releases/latest):
 
-- **Linux**
-  - Intel/AMD: `*-x86_64-unknown-linux-musl.tar.gz`
-  - ARM64: `*-aarch64-unknown-linux-musl.tar.gz`
-- **macOS**
-  - Apple silicon: `*-aarch64-apple-darwin.tar.gz`
-  - Intel: `*-x86_64-apple-darwin.tar.gz`
-- **Windows**
-  - `*-x86_64-pc-windows-msvc.zip`
+| Platform | Architecture | Download file |
+|-|-|-|
+| Linux | Intel/AMD | `*-x86_64-unknown-linux-musl.tar.gz` |
+| Linux | ARM64 | `*-aarch64-unknown-linux-musl.tar.gz` |
+| macOS | Apple Silicon| `*-aarch64-apple-darwin.tar.gz` |
+| macOS | Intel | `*-x86_64-apple-darwin.tar.gz` |
+| Windows | x64 | `*-x86_64-pc-windows-msvc.zip` |
+
+After downloading, extract the binary and move it to a directory in your `PATH`.
 
 ### Cargo
 
@@ -150,15 +164,44 @@ The following options can be set in your configuration file:
 
 #### `command`
 
-The command used when pressing `o` on the search results page. Two variables are available: `%file`, which will be replaced with the file path of the seach result, and `%line`, which will be replaced with the line number of the result. For example:
+The command used when pressing `e` on the search results page. Two variables are available: `%file`, which will be replaced
+with the file path of the search result, and `%line`, which will be replaced with the line number of the result. For example:
 ```toml
 [editor_open]
 command = "vi %file +%line"
 ```
+If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
 
 #### `exit`
 
-Whether to exit after running the command defined by `editor_open.command`.
+Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
+
+### `[preview]` section
+
+#### `syntax_highlighting`
+
+Whether to apply syntax highlighting to the preview. Defaults to `true`.
+
+#### `syntax_highlighting_theme`
+
+The theme to use when syntax highlighting is enabled.
+
+The default is `"base16-eighties.dark"`. Other built-in options are
+`"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
+
+You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
+and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+```sh
+wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
+```
+and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
+
+### `[style]` section
+
+#### `true_color`
+
+Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
+If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
 
 #### `disable_populated_fields`
 
@@ -169,18 +212,34 @@ Whether to disable fields set by CLI flags.
 
 ## Editor configuration
 
-Below are a couple of ways to configure Scooter to run in a floating window, without leaving your editor.
+Below are a couple of ways to run Scooter without leaving your editor.
 
 ### Helix
 
-If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter with `<enter> s`:
+As explained [here](https://github.com/helix-editor/helix/wiki/Recipes#project-wide-search-and-replace-with-scooter), you can add a keybinding like the following to open Scooter directly in Helix with `<enter> s`:
+
+```toml
+[keys.select.ret]
+s = [
+    ":write-all",
+    ":insert-output scooter >/dev/tty",
+    ":redraw",
+    ":reload-all"
+]
+```
+
+Note that this saves all files before opening Scooter.
+
+#### Floating window
+
+If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter in a popup with `<enter> s`:
 
 ```toml
 [keys.select.ret]
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-You can also add the following to your [Scooter config file](#configuration-options) to open files from the search results page with `o`:
+You can also add the following to your [Scooter config file](#configuration-options) to open files back in Helix from the search results page with `e`:
 
 ```toml
 [editor_open]
@@ -213,3 +272,17 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
 ## Contributing
 
 Contributions are very welcome! I'd be especially grateful for any contributions to add Scooter to popular package managers. If you'd like to add a new feature, please create an issue first so we can discuss the idea, then create a PR with your changes.
+
+### Development
+
+Once you've pulled down the repo, you can run Scooter with:
+
+```sh
+cargo run --bin scooter
+```
+
+If you make any changes to either the readme or config, you'll need to run the following to regenerate the docs:
+
+```sh
+cargo xtask readme
+```

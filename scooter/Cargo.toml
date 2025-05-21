@@ -1,6 +1,6 @@
 [package]
 name = "scooter"
-version = "0.4.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["thomasschafer97@gmail.com"]
 license = "MIT"
@@ -12,33 +12,44 @@ keywords = ["cli", "find", "search", "replace"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-anyhow = "1.0.97"
-clap = { version = "4.5.32", features = ["derive"] }
+anyhow = "1.0.98"
+clap = { version = "4.5.38", features = ["derive"] }
 content_inspector = "0.2.4"
-crossterm = { version = "0.27", features = ["event-stream"] }
-etcetera = "0.8.0"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+etcetera = "0.10.0"
 fancy-regex = "0.14.0"
 futures = "0.3.31"
 ignore = "0.4.23"
-itertools = "0.13.0"
-log = "0.4.26"
+itertools = "0.14.0"
+log = "0.4.27"
+lru = "0.14.0"
 parking_lot = "0.12.3"
-ratatui = "0.27.0"
+ratatui = "0.29.0"
 regex = "1.11.1"
 serde = "1.0.219"
 similar = "2.7.0"
-simple-log = "2.1.2"
-tempfile = "3.18.0"
-tokio = { version = "1.44.1", features = ["full"] }
+simple-log = "2.3.0"
+syntect = "5.2.0"
+tempfile = "3.20.0"
+termini = "1.0.0"
+tokio = { version = "1.45.0", features = ["full"] }
 toml = "0.8.20"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+crossterm = { version = "0.28", features = [
+  "event-stream",
+  "use-dev-tty",
+  "libc",
+] }
+
 [dev-dependencies]
-rand = "0.8.5"
+insta = "1.43.1"
+rand = "0.9.1"
 serial_test = "3.2.0"
 
 [lib]
 name = "scooter"
 path = "src/lib.rs"
 
-[lints.rust]
-rust_2018_idioms = "warn"
+[lints]
+workspace = true

@@ -1,0 +1,41 @@
+name: Check for unwanted files
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-for-unwanted-files:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v46
+
+    - name: Check for unwanted files
+      run: |
+        found_unwanted_files=false
+        unwanted_files=""
+
+        for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+          filename=$(basename "$file")
+
+          if [[ ${filename,,} =~ ^todo(\.[a-zA-Z0-9]+)?$ ]]; then
+            found_unwanted_files=true
+            unwanted_files="$unwanted_files\n- $file"
+          fi
+        done
+
+        if [ "$found_unwanted_files" = true ]; then
+          echo "❌ ERROR: The following unwanted files were found in this PR:"
+          echo -e "$unwanted_files"
+          exit 1
+        else
+          echo "✅ No unwanted files found."
+        fi

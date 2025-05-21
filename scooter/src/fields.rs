@@ -1,10 +1,6 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers},
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Block, Paragraph},
-    Frame,
+    text::Text,
 };
 
 #[derive(Clone, Debug)]
@@ -21,23 +17,24 @@ pub struct TextField {
 }
 
 impl TextField {
-    pub fn new(initial: String) -> Self {
+    pub fn new(initial: &str) -> Self {
         Self {
-            text: initial,
-            cursor_idx: 0,
+            text: initial.to_string(),
+            cursor_idx: initial.chars().count(),
             error: None,
         }
     }
-    pub fn text(&self) -> String {
-        self.text.to_owned()
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
-    pub fn cursor_idx(&self) -> usize {
-        self.cursor_idx
+    pub fn cursor_pos(&self) -> usize {
+        let prefix: String = self.text.chars().take(self.cursor_idx).collect();
+        Text::from(prefix).width()
     }
 
     pub fn move_cursor_left(&mut self) {
-        self.move_cursor_left_by(1)
+        self.move_cursor_left_by(1);
     }
 
     pub fn move_cursor_start(&mut self) {
@@ -50,7 +47,7 @@ impl TextField {
     }
 
     pub fn move_cursor_right(&mut self) {
-        self.move_cursor_right_by(1)
+        self.move_cursor_right_by(1);
     }
 
     fn move_cursor_right_by(&mut self, n: usize) {
@@ -178,7 +175,7 @@ impl TextField {
             (KeyCode::Backspace, _) => {
                 self.delete_char();
             }
-            (KeyCode::Left | KeyCode::Char('b') | KeyCode::Char('B'), _)
+            (KeyCode::Left | KeyCode::Char('b' | 'B'), _)
                 if modifiers.contains(KeyModifiers::ALT) =>
             {
                 self.move_cursor_back_word();
@@ -189,21 +186,18 @@ impl TextField {
             (KeyCode::Left, _) => {
                 self.move_cursor_left();
             }
-            (KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('F'), _)
+            (KeyCode::Right | KeyCode::Char('f' | 'F'), _)
                 if modifiers.contains(KeyModifiers::ALT) =>
             {
                 self.move_cursor_forward_word();
             }
-            (KeyCode::Right, KeyModifiers::META) => {
-                self.move_cursor_end();
-            }
-            (KeyCode::End, _) => {
+            (KeyCode::Right, KeyModifiers::META) | (KeyCode::End, _) => {
                 self.move_cursor_end();
             }
             (KeyCode::Right, _) => {
                 self.move_cursor_right();
             }
-            (KeyCode::Char('d'), KeyModifiers::ALT) | (KeyCode::Delete, KeyModifiers::ALT) => {
+            (KeyCode::Char('d') | KeyCode::Delete, KeyModifiers::ALT) => {
                 self.delete_word_forward();
             }
             (KeyCode::Delete, _) => {
@@ -243,8 +237,8 @@ pub enum Field {
 }
 
 impl Field {
-    pub fn text(initial: impl Into<String>) -> Field {
-        Field::Text(TextField::new(initial.into()))
+    pub fn text(initial: &str) -> Field {
+        Field::Text(TextField::new(initial))
     }
 
     pub fn checkbox(initial: bool) -> Field {
@@ -259,9 +253,9 @@ impl Field {
         }
     }
 
-    pub fn cursor_idx(&self) -> Option<usize> {
+    pub fn cursor_pos(&self) -> Option<usize> {
         match self {
-            Field::Text(f) => Some(f.cursor_idx()),
+            Field::Text(f) => Some(f.cursor_pos()),
             Field::Checkbox(_) => None,
         }
     }
