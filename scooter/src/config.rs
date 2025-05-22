@@ -209,7 +209,7 @@ fn detect_true_colour() -> bool {
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
-    /// Whether to disable fields set by CLI flags. Set to false to allow editing of these pre-populated fields. Defaults to true.
+    /// Whether to disable fields set by CLI flags. Set to `false` to allow editing of these pre-populated fields. Defaults to `true`.
     #[serde(default = "default_disable_prepopulated_fields")]
     pub disable_prepopulated_fields: bool,
 }
@@ -296,6 +296,12 @@ exit = true
 [preview]
 syntax_highlighting = false
 syntax_highlighting_theme = "Solarized (light)"
+
+[style]
+true_color = false
+
+[search]
+disable_prepopulated_fields = false
 "#,
         )?;
 
@@ -320,11 +326,9 @@ syntax_highlighting_theme = "Solarized (light)"
                     syntax_highlighting: false,
                     syntax_highlighting_theme: load_theme("Solarized (light)").unwrap(),
                 },
-                style: StyleConfig {
-                    true_color: detect_true_colour()
-                },
+                style: StyleConfig { true_color: false },
                 search: SearchConfig {
-                    disable_prepopulated_fields: default_disable_prepopulated_fields(),
+                    disable_prepopulated_fields: false,
                 },
             }
         );
@@ -362,12 +366,8 @@ command = "vim %file +%line"
                 syntax_highlighting: false,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
             },
-            style: StyleConfig {
-                true_color: detect_true_colour(),
-            },
-            search: SearchConfig {
-                disable_prepopulated_fields: default_disable_prepopulated_fields(),
-            },
+            style: StyleConfig::default(),
+            search: SearchConfig::default(),
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -380,12 +380,8 @@ command = "vim %file +%line"
                 syntax_highlighting: true,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
             },
-            style: StyleConfig {
-                true_color: detect_true_colour(),
-            },
-            search: SearchConfig {
-                disable_prepopulated_fields: default_disable_prepopulated_fields(),
-            },
+            style: StyleConfig::default(),
+            search: SearchConfig::default(),
         };
         assert_eq!(
             config.get_theme(),

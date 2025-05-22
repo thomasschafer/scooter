@@ -72,7 +72,7 @@ async fn test_back_from_results() {
         Instant::now(),
     ));
     app.search_fields = SearchFields::with_values(
-        SearchFieldValues {
+        &SearchFieldValues {
             search: FieldValue::new("foo", false),
             replace: FieldValue::new("bar", false),
             fixed_strings: FieldValue::new(true, false),
@@ -99,7 +99,7 @@ async fn test_back_from_results() {
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
-fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
+fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) =
         App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     app.current_screen = Screen::SearchFields;
@@ -130,7 +130,7 @@ fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
 
 #[tokio::test]
 async fn test_error_popup_invalid_search() {
-    test_error_popup_invalid_input_impl(SearchFieldValues {
+    test_error_popup_invalid_input_impl(&SearchFieldValues {
         search: FieldValue::new("search invalid regex(", false),
         replace: FieldValue::new("replacement", false),
         fixed_strings: FieldValue::new(false, false),
@@ -143,7 +143,7 @@ async fn test_error_popup_invalid_search() {
 
 #[tokio::test]
 async fn test_error_popup_invalid_include_files() {
-    test_error_popup_invalid_input_impl(SearchFieldValues {
+    test_error_popup_invalid_input_impl(&SearchFieldValues {
         search: FieldValue::new("search", false),
         replace: FieldValue::new("replacement", false),
         fixed_strings: FieldValue::new(false, false),
@@ -156,7 +156,7 @@ async fn test_error_popup_invalid_include_files() {
 
 #[tokio::test]
 async fn test_error_popup_invalid_exclude_files() {
-    test_error_popup_invalid_input_impl(SearchFieldValues {
+    test_error_popup_invalid_input_impl(&SearchFieldValues {
         search: FieldValue::new("search", false),
         replace: FieldValue::new("replacement", false),
         fixed_strings: FieldValue::new(false, false),
@@ -385,7 +385,7 @@ async fn test_search_replace_defaults() {
     );
 
     let search_fields = SearchFields::with_values(
-        SearchFieldValues {
+        &SearchFieldValues {
             search: FieldValue::new("t[esES]+t", false),
             replace: FieldValue::new("123,", false),
             ..SearchFieldValues::default()
@@ -450,7 +450,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new(".*", false),
                 replace: FieldValue::new("example", false),
                 fixed_strings: FieldValue::new(true, false),
@@ -522,7 +522,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("test", false),
                 replace: FieldValue::new("REPLACEMENT", false),
                 fixed_strings: FieldValue::new(true, false),
@@ -598,7 +598,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("test", false),
                 replace: FieldValue::new("REPLACEMENT", false),
                 fixed_strings: FieldValue::new(true, false),
@@ -670,7 +670,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new(r"\b\w+ing\b", false),
                 replace: FieldValue::new("VERB", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -738,7 +738,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("nonexistent-string", false),
                 replace: FieldValue::new("replacement", false),
                 fixed_strings: FieldValue::new(true, false),
@@ -806,7 +806,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("[invalid regex", false),
                 replace: FieldValue::new("replacement", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -852,7 +852,7 @@ async fn test_advanced_regex_negative_lookahead() {
     );
 
     let search_fields = SearchFields::with_values(
-        SearchFieldValues {
+        &SearchFieldValues {
             search: FieldValue::new("(test)(?!ing)", false),
             replace: FieldValue::new("BAR", false),
             fixed_strings: FieldValue::new(false, false),
@@ -930,7 +930,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("testing", false),
                 replace: FieldValue::new("f", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1024,7 +1024,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("testing", false),
                 replace: FieldValue::new("REPL", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1119,7 +1119,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("testing", false),
                 replace: FieldValue::new("REPL", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1229,7 +1229,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("testing", false),
                 replace: FieldValue::new("REPL", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1324,7 +1324,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     );
 
     let search_fields = SearchFields::with_values(
-        SearchFieldValues {
+        &SearchFieldValues {
             search: FieldValue::new("is", false),
             replace: FieldValue::new("", false),
             fixed_strings: FieldValue::new(false, false),
@@ -1379,7 +1379,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new(r"\bis\b", false),
                 replace: FieldValue::new("REPLACED", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1435,7 +1435,7 @@ test_with_both_regex_modes!(
         );
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new(r"\bis\b", false),
                 replace: FieldValue::new("REPLACED", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1504,7 +1504,7 @@ test_with_both_regex_modes!(
         copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
 
         let search_fields = SearchFields::with_values(
-            SearchFieldValues {
+            &SearchFieldValues {
                 search: FieldValue::new("sample", false),
                 replace: FieldValue::new("REPLACED", false),
                 fixed_strings: FieldValue::new(false, false),
@@ -1678,4 +1678,132 @@ async fn test_keymaps_popup() {
 
     assert_debug_snapshot!("popup_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("popup_all_keymaps", app.keymaps_all());
+}
+
+#[tokio::test]
+async fn test_unlock_prepopulated_fields_via_ctrl_u() {
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new("test_search", true),
+        replace: FieldValue::new("", false),
+        fixed_strings: FieldValue::new(false, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("*.rs", true),
+        exclude_files: FieldValue::new("", false),
+    };
+
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &search_field_values);
+
+    assert_eq!(
+        app.search_fields
+            .fields
+            .iter()
+            .map(|f| f.set_by_cli)
+            .collect::<Vec<_>>(),
+        vec![true, false, false, false, false, true, false]
+    );
+
+    let key_event = KeyEvent {
+        code: KeyCode::Char('u'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    };
+
+    let result = app.handle_key_event(&key_event);
+    assert_eq!(result, EventHandlingResult::Rerender);
+
+    for field in &app.search_fields.fields {
+        assert!(!field.set_by_cli);
+    }
+}
+
+#[tokio::test]
+async fn test_keybinding_integration_with_disabled_fields() {
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new("function", true),
+        replace: FieldValue::new("method", true),
+        fixed_strings: FieldValue::new(false, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("*.rs", true),
+        exclude_files: FieldValue::new("", false),
+    };
+
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &search_field_values);
+
+    assert_eq!(app.search_fields.highlighted, 2);
+
+    let tab_event = KeyEvent {
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::NONE,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    };
+
+    app.handle_key_event(&tab_event);
+    assert_eq!(app.search_fields.highlighted, 3);
+
+    app.handle_key_event(&tab_event);
+    assert_eq!(app.search_fields.highlighted, 4);
+
+    app.handle_key_event(&tab_event);
+    assert_eq!(app.search_fields.highlighted, 6);
+    let backtab_event = KeyEvent {
+        code: KeyCode::BackTab,
+        modifiers: KeyModifiers::NONE,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    };
+
+    app.handle_key_event(&backtab_event);
+    assert_eq!(app.search_fields.highlighted, 4);
+}
+
+#[tokio::test]
+async fn test_ctrl_u_unlocks_all_fields() {
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new("search", true),
+        replace: FieldValue::new("replace", true),
+        fixed_strings: FieldValue::new(true, true),
+        match_whole_word: FieldValue::new(false, true),
+        match_case: FieldValue::new(true, true),
+        include_files: FieldValue::new("*.rs", true),
+        exclude_files: FieldValue::new("*.txt", true),
+    };
+
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &search_field_values);
+
+    for field in &app.search_fields.fields {
+        assert!(field.set_by_cli);
+    }
+
+    let x_char_event = KeyEvent {
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    };
+
+    app.handle_key_event(&x_char_event);
+    assert_eq!(app.search_fields.search().text, "search"); // Shouldn't have changed - all fields locked
+
+    let ctrl_u_event = KeyEvent {
+        code: KeyCode::Char('u'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: crossterm::event::KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    };
+
+    app.handle_key_event(&ctrl_u_event);
+
+    for field in &app.search_fields.fields {
+        assert!(!field.set_by_cli);
+    }
+
+    app.handle_key_event(&x_char_event);
+    assert_eq!(app.search_fields.search().text, "searchx");
 }

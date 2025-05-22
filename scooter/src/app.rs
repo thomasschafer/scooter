@@ -502,7 +502,7 @@ impl<'a> App {
         };
 
         let search_fields = SearchFields::with_values(
-            search_field_values.clone(),
+            search_field_values,
             config.search.disable_prepopulated_fields,
         )
         .with_advanced_regex(advanced_regex);

@@ -407,7 +407,7 @@ impl SearchFields {
 
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_values(
-        search_field_values: SearchFieldValues<'_>,
+        search_field_values: &SearchFieldValues<'_>,
         disable_prepopulated_fields: bool,
     ) -> Self {
         let fields = [

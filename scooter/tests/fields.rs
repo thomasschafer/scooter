@@ -1,5 +1,8 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::{replace::SearchType, CheckboxField, SearchFieldValues, SearchFields, TextField};
+use scooter::{
+    replace::SearchType, CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields,
+    TextField,
+};
 
 #[test]
 fn test_text_field_operations() {
@@ -67,7 +70,7 @@ fn test_checkbox_field() {
 
 #[test]
 fn test_search_fields() {
-    let mut search_fields = SearchFields::with_values(SearchFieldValues::default(), true);
+    let mut search_fields = SearchFields::with_values(&SearchFieldValues::default(), true);
 
     // Test focus navigation
     assert_eq!(search_fields.highlighted, 0);
@@ -131,4 +134,143 @@ fn test_search_fields() {
         SearchType::Pattern(_) => {}
         _ => panic!("Expected Pattern, got {search_type:?}"),
     }
+}
+
+#[test]
+fn test_focus_with_locked_disabled_fields() {
+    let mut search_fields = SearchFields::with_values(
+        &SearchFieldValues {
+            search: FieldValue::new("prepopulated", true),
+            replace: FieldValue::new("", false),
+            fixed_strings: FieldValue::new(true, true),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("*.rs", true),
+            exclude_files: FieldValue::new("", false),
+        },
+        true,
+    );
+
+    assert_eq!(search_fields.highlighted, 1);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::Replace);
+
+    search_fields.focus_next(true);
+    assert_eq!(search_fields.highlighted, 3);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::WholeWord);
+
+    search_fields.focus_next(true);
+    assert_eq!(search_fields.highlighted, 4);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::MatchCase);
+
+    search_fields.focus_next(true);
+    assert_eq!(search_fields.highlighted, 6);
+    assert_eq!(
+        search_fields.highlighted_field().name,
+        FieldName::ExcludeFiles
+    );
+
+    search_fields.focus_next(true);
+    assert_eq!(search_fields.highlighted, 1);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::Replace);
+
+    search_fields.focus_prev(true);
+    assert_eq!(search_fields.highlighted, 6);
+    assert_eq!(
+        search_fields.highlighted_field().name,
+        FieldName::ExcludeFiles
+    );
+
+    search_fields.focus_prev(true);
+    assert_eq!(search_fields.highlighted, 4);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::MatchCase);
+}
+
+#[test]
+fn test_focus_with_unlocked_disabled_fields() {
+    let mut search_fields = SearchFields::with_values(
+        &SearchFieldValues {
+            search: FieldValue::new("prepopulated", true),
+            replace: FieldValue::new("", false),
+            fixed_strings: FieldValue::new(true, true),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("*.rs", true),
+            exclude_files: FieldValue::new("", false),
+        },
+        false,
+    );
+
+    assert_eq!(search_fields.highlighted, 0);
+
+    search_fields.focus_next(false);
+    assert_eq!(search_fields.highlighted, 1);
+    search_fields.focus_next(false);
+    assert_eq!(search_fields.highlighted, 2);
+    search_fields.focus_next(false);
+    assert_eq!(search_fields.highlighted, 3);
+}
+
+#[test]
+fn test_focus_all_fields_disabled_and_locked() {
+    let mut search_fields = SearchFields::with_values(
+        &SearchFieldValues {
+            search: FieldValue::new("search", true),
+            replace: FieldValue::new("replace", true),
+            fixed_strings: FieldValue::new(true, true),
+            match_whole_word: FieldValue::new(false, true),
+            match_case: FieldValue::new(true, true),
+            include_files: FieldValue::new("*.rs", true),
+            exclude_files: FieldValue::new("*.txt", true),
+        },
+        true,
+    );
+
+    assert_eq!(search_fields.highlighted, 0);
+
+    search_fields.focus_next(true);
+    assert_eq!(search_fields.highlighted, 0);
+
+    search_fields.focus_prev(true);
+    assert_eq!(search_fields.highlighted, 0);
+}
+
+#[test]
+fn test_initial_highlight_position_with_prepopulated_fields_disable_true() {
+    let search_fields = SearchFields::with_values(
+        &SearchFieldValues {
+            search: FieldValue::new("cli_search", true),
+            replace: FieldValue::new("cli_replace", true),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("*.rs", true),
+            exclude_files: FieldValue::new("", false),
+        },
+        true,
+    );
+
+    assert_eq!(search_fields.highlighted, 2);
+    assert_eq!(
+        search_fields.highlighted_field().name,
+        FieldName::FixedStrings
+    );
+}
+
+#[test]
+fn test_initial_highlight_position_with_prepopulated_fields_disable_false() {
+    let search_fields = SearchFields::with_values(
+        &SearchFieldValues {
+            search: FieldValue::new("cli_search", true),
+            replace: FieldValue::new("cli_replace", true),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("*.rs", true),
+            exclude_files: FieldValue::new("", false),
+        },
+        false,
+    );
+
+    assert_eq!(search_fields.highlighted, 0);
+    assert_eq!(search_fields.highlighted_field().name, FieldName::Search);
 }

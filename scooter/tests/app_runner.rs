@@ -14,7 +14,7 @@ use tokio::{
 
 use scooter::{
     app_runner::{AppConfig, AppRunner},
-    fields::SearchFieldValues,
+    fields::{FieldValue, SearchFieldValues},
     test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
 };
 
@@ -161,12 +161,20 @@ type TestRunner = (
 );
 
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
+    build_test_runner_with_config(directory, advanced_regex, SearchFieldValues::default())
+}
+
+fn build_test_runner_with_config(
+    directory: Option<&Path>,
+    advanced_regex: bool,
+    search_field_values: SearchFieldValues<'_>,
+) -> anyhow::Result<TestRunner> {
     let backend = TestBackend::new(80, 24);
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
         hidden: false,
         advanced_regex,
-        search_field_values: SearchFieldValues::default(),
+        search_field_values,
         log_level: LevelFilter::Warn,
     };
 
@@ -1112,4 +1120,87 @@ async fn test_help_screen_keymaps() -> anyhow::Result<()> {
     shutdown(event_sender, run_handle).await
 }
 
-// TODO: add tests for using fixed strings
+#[tokio::test]
+async fn test_prepopulated_fields() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut old_value = 0;",
+            "    let result = compute(data);",
+            "}",
+        },
+        "src/foo.py" => {
+            "def foo():",
+            "    old_value = 0",
+            "    result = compute(data)",
+        },
+    );
+
+    let search_field_values = SearchFieldValues {
+        search: FieldValue {
+            value: "old_value",
+            set_by_cli: true,
+        },
+        replace: FieldValue {
+            value: "new_value",
+            set_by_cli: true,
+        },
+        fixed_strings: FieldValue {
+            value: true,
+            set_by_cli: false,
+        },
+        match_whole_word: FieldValue {
+            value: false,
+            set_by_cli: true,
+        },
+        match_case: FieldValue {
+            value: false,
+            set_by_cli: false,
+        },
+        include_files: FieldValue {
+            value: "",
+            set_by_cli: false,
+        },
+        exclude_files: FieldValue {
+            value: "",
+            set_by_cli: false,
+        },
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_config(Some(temp_dir.path()), false, search_field_values)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    // Pre-populated fields should be skipped when tabbing
+    send_key(KeyCode::Tab, &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    // We should be at `include_files` field now
+    send_chars("foo.py", &event_sender);
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "src/lib.rs" => {
+            "fn process(mut data: Vec<u32>) {",
+            "    let mut old_value = 0;",
+            "    let result = compute(data);",
+            "}",
+        },
+        "src/foo.py" => {
+            "def foo():",
+            "    new_value = 0",
+            "    result = compute(data)",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
