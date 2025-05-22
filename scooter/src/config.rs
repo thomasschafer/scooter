@@ -206,14 +206,10 @@ fn detect_true_colour() -> bool {
     }
 }
 
-fn default_disable_prepopulated_fields() -> bool {
-    true
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
-    /// Whether to disable fields set by CLI flags.
+    /// Whether to disable fields set by CLI flags. Set to false to allow editing of these pre-populated fields. Defaults to true.
     #[serde(default = "default_disable_prepopulated_fields")]
     pub disable_prepopulated_fields: bool,
 }
@@ -224,6 +220,10 @@ impl Default for SearchConfig {
             disable_prepopulated_fields: default_disable_prepopulated_fields(),
         }
     }
+}
+
+fn default_disable_prepopulated_fields() -> bool {
+    true
 }
 
 #[cfg(test)]

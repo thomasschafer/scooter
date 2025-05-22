@@ -738,6 +738,9 @@ impl<'a> App {
 
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.unlock_prepopulated_fields();
+            }
             (KeyCode::Enter, _) => {
                 self.event_sender
                     .send(Event::App(AppEvent::PerformSearch))
@@ -1154,6 +1157,7 @@ impl<'a> App {
         self.keymaps_impl(true)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
         enum Show {
             Both,
@@ -1163,12 +1167,18 @@ impl<'a> App {
 
         let current_screen_keys = match self.current_screen {
             Screen::SearchFields => {
-                vec![
+                let mut keys = vec![
                     ("<enter>", "search", Show::Both),
                     ("<tab>", "focus next", Show::Both),
                     ("<S-tab>", "focus previous", Show::FullOnly),
                     ("<space>", "toggle checkbox", Show::FullOnly),
-                ]
+                ];
+                if self.config.search.disable_prepopulated_fields
+                    && self.search_fields.fields.iter().any(|f| f.set_by_cli)
+                {
+                    keys.push(("<C-u>", "unlock pre-populated fields", Show::FullOnly));
+                }
+                keys
             }
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
                 let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
@@ -1281,6 +1291,12 @@ impl<'a> App {
                 "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
             ),
+        }
+    }
+
+    fn unlock_prepopulated_fields(&mut self) {
+        for field in &mut self.search_fields.fields {
+            field.set_by_cli = false;
         }
     }
 }

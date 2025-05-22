@@ -78,6 +78,20 @@ When on the search screen the following fields are available:
 
 Note that the glob matching library used in Scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
 
+#### Pre-populating search fields
+
+You can pre-populate the search fields using command-line flags, for instance:
+
+```sh
+scooter \
+  --search-text "old_function" \
+  --replace-text "new_function" \
+  --fixed-strings \
+  --files-to-include "*.rs,*.py"
+```
+
+Note that, by default, pre-populated fields are disabled in the UI. To make these fields editable by default, you can set `search.disable_prepopulated_fields` to `true` in your config - see [here](#disable_prepopulated_fields).
+You can also temporarily unlock the pre-populated fields with `ctrl+u`.
 
 ## Installation
 
@@ -207,7 +221,7 @@ If omitted, Scooter will attempt to determine whether the terminal being used su
 
 #### `disable_prepopulated_fields`
 
-Whether to disable fields set by CLI flags.
+Whether to disable fields set by CLI flags. Set to false to allow editing of these pre-populated fields. Defaults to true.
 
 <!-- CONFIG END -->
 
