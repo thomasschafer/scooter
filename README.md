@@ -93,6 +93,8 @@ scooter \
 Note that, by default, pre-populated fields are disabled in the UI. To make these fields editable by default, you can set `search.disable_prepopulated_fields` to `true` in your config - see [here](#disable_prepopulated_fields).
 You can also temporarily unlock the pre-populated fields with `ctrl+u`.
 
+Run `scooter --help` to see the full list of command-line args that can be used to pre-populate fields.
+
 ## Installation
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/scooter.svg)](https://repology.org/project/scooter/versions)

@@ -71,15 +71,18 @@ async fn test_back_from_results() {
         SearchState::new(receiver),
         Instant::now(),
     ));
-    app.search_fields = SearchFields::with_values(SearchFieldValues {
-        search: FieldValue::new("foo", false),
-        replace: FieldValue::new("bar", false),
-        fixed_strings: FieldValue::new(true, false),
-        match_whole_word: FieldValue::new(false, false),
-        match_case: FieldValue::new(true, false),
-        include_files: FieldValue::new("pattern", false),
-        exclude_files: FieldValue::new("", false),
-    });
+    app.search_fields = SearchFields::with_values(
+        SearchFieldValues {
+            search: FieldValue::new("foo", false),
+            replace: FieldValue::new("bar", false),
+            fixed_strings: FieldValue::new(true, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("pattern", false),
+            exclude_files: FieldValue::new("", false),
+        },
+        true,
+    );
 
     let res = app.handle_key_event(&KeyEvent {
         code: KeyCode::Char('o'),
@@ -100,7 +103,7 @@ fn test_error_popup_invalid_input_impl(search_fields: SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) =
         App::new_with_receiver(None, false, false, &SearchFieldValues::default());
     app.current_screen = Screen::SearchFields;
-    app.search_fields = SearchFields::with_values(search_fields);
+    app.search_fields = SearchFields::with_values(search_fields, true);
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
@@ -381,11 +384,14 @@ async fn test_search_replace_defaults() {
         }
     );
 
-    let search_fields = SearchFields::with_values(SearchFieldValues {
-        search: FieldValue::new("t[esES]+t", false),
-        replace: FieldValue::new("123,", false),
-        ..SearchFieldValues::default()
-    });
+    let search_fields = SearchFields::with_values(
+        SearchFieldValues {
+            search: FieldValue::new("t[esES]+t", false),
+            replace: FieldValue::new("123,", false),
+            ..SearchFieldValues::default()
+        },
+        true,
+    );
     search_and_replace_test(
         &temp_dir,
         search_fields,
@@ -443,15 +449,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new(".*", false),
-            replace: FieldValue::new("example", false),
-            fixed_strings: FieldValue::new(true, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new(".*", false),
+                replace: FieldValue::new("example", false),
+                fixed_strings: FieldValue::new(true, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             &temp_dir,
@@ -512,15 +521,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("test", false),
-            replace: FieldValue::new("REPLACEMENT", false),
-            fixed_strings: FieldValue::new(true, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("test", false),
+                replace: FieldValue::new("REPLACEMENT", false),
+                fixed_strings: FieldValue::new(true, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             &temp_dir,
@@ -585,15 +597,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("test", false),
-            replace: FieldValue::new("REPLACEMENT", false),
-            fixed_strings: FieldValue::new(true, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(false, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("test", false),
+                replace: FieldValue::new("REPLACEMENT", false),
+                fixed_strings: FieldValue::new(true, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(false, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             &temp_dir,
@@ -654,15 +669,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new(r"\b\w+ing\b", false),
-            replace: FieldValue::new("VERB", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new(r"\b\w+ing\b", false),
+                replace: FieldValue::new("VERB", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -719,15 +737,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("nonexistent-string", false),
-            replace: FieldValue::new("replacement", false),
-            fixed_strings: FieldValue::new(true, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("nonexistent-string", false),
+                replace: FieldValue::new("replacement", false),
+                fixed_strings: FieldValue::new(true, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -784,15 +805,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("[invalid regex", false),
-            replace: FieldValue::new("replacement", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("[invalid regex", false),
+                replace: FieldValue::new("replacement", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         let mut app = setup_app(temp_dir, search_fields, false);
 
@@ -827,15 +851,18 @@ async fn test_advanced_regex_negative_lookahead() {
         }
     );
 
-    let search_fields = SearchFields::with_values(SearchFieldValues {
-        search: FieldValue::new("(test)(?!ing)", false),
-        replace: FieldValue::new("BAR", false),
-        fixed_strings: FieldValue::new(false, false),
-        match_whole_word: FieldValue::new(false, false),
-        match_case: FieldValue::new(true, false),
-        include_files: FieldValue::new("", false),
-        exclude_files: FieldValue::new("", false),
-    })
+    let search_fields = SearchFields::with_values(
+        SearchFieldValues {
+            search: FieldValue::new("(test)(?!ing)", false),
+            replace: FieldValue::new("BAR", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        },
+        true,
+    )
     .with_advanced_regex(true);
     search_and_replace_test(
         temp_dir,
@@ -902,15 +929,18 @@ test_with_both_regex_modes!(
             },
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("testing", false),
-            replace: FieldValue::new("f", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("dir2/*, dir3/**, */subdir3/*", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("testing", false),
+                replace: FieldValue::new("f", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("dir2/*, dir3/**, */subdir3/*", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -993,15 +1023,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("testing", false),
-            replace: FieldValue::new("REPL", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("dir1", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("testing", false),
+                replace: FieldValue::new("REPL", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("dir1", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -1085,15 +1118,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("testing", false),
-            replace: FieldValue::new("REPL", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("dir1/*, *.rs", false),
-            exclude_files: FieldValue::new("**/file2.rs", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("testing", false),
+                replace: FieldValue::new("REPL", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("dir1/*, *.rs", false),
+                exclude_files: FieldValue::new("**/file2.rs", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -1192,15 +1228,18 @@ test_with_both_regex_modes!(
             },
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("testing", false),
-            replace: FieldValue::new("REPL", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new(" dir1/*,*.rs   ,  *.py", false),
-            exclude_files: FieldValue::new("  **/file2.rs ", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("testing", false),
+                replace: FieldValue::new("REPL", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new(" dir1/*,*.rs   ,  *.py", false),
+                exclude_files: FieldValue::new("  **/file2.rs ", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -1284,15 +1323,18 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         }
     );
 
-    let search_fields = SearchFields::with_values(SearchFieldValues {
-        search: FieldValue::new("is", false),
-        replace: FieldValue::new("", false),
-        fixed_strings: FieldValue::new(false, false),
-        match_whole_word: FieldValue::new(false, false),
-        match_case: FieldValue::new(true, false),
-        include_files: FieldValue::new("", false),
-        exclude_files: FieldValue::new("", false),
-    })
+    let search_fields = SearchFields::with_values(
+        SearchFieldValues {
+            search: FieldValue::new("is", false),
+            replace: FieldValue::new("", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        },
+        true,
+    )
     .with_advanced_regex(advanced_regex);
     search_and_replace_test(
         temp_dir,
@@ -1336,15 +1378,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new(r"\bis\b", false),
-            replace: FieldValue::new("REPLACED", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new(r"\bis\b", false),
+                replace: FieldValue::new("REPLACED", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -1389,15 +1434,18 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new(r"\bis\b", false),
-            replace: FieldValue::new("REPLACED", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new(r"\bis\b", false),
+                replace: FieldValue::new("REPLACED", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
         search_and_replace_test(
             temp_dir,
@@ -1455,15 +1503,18 @@ test_with_both_regex_modes!(
         let fixtures_dir = "tests/fixtures/binary_test";
         copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
 
-        let search_fields = SearchFields::with_values(SearchFieldValues {
-            search: FieldValue::new("sample", false),
-            replace: FieldValue::new("REPLACED", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        })
+        let search_fields = SearchFields::with_values(
+            SearchFieldValues {
+                search: FieldValue::new("sample", false),
+                replace: FieldValue::new("REPLACED", false),
+                fixed_strings: FieldValue::new(false, false),
+                match_whole_word: FieldValue::new(false, false),
+                match_case: FieldValue::new(true, false),
+                include_files: FieldValue::new("", false),
+                exclude_files: FieldValue::new("", false),
+            },
+            true,
+        )
         .with_advanced_regex(advanced_regex);
 
         search_and_replace_test(

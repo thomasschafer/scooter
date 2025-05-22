@@ -376,12 +376,6 @@ macro_rules! define_field_accessor_mut {
     };
 }
 
-impl Default for SearchFields {
-    fn default() -> Self {
-        Self::with_values(SearchFieldValues::default())
-    }
-}
-
 impl SearchFields {
     // TODO: generate these automatically?
     define_field_accessor!(search, FieldName::Search, Text, &TextField);
@@ -412,7 +406,10 @@ impl SearchFields {
     );
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
+    pub fn with_values(
+        search_field_values: SearchFieldValues<'_>,
+        disable_prepopulated_fields: bool,
+    ) -> Self {
         let fields = [
             SearchField::new_text(
                 FieldName::Search,
@@ -452,21 +449,25 @@ impl SearchFields {
         ];
 
         Self {
-            highlighted: Self::initial_highlight_position(&fields),
+            highlighted: Self::initial_highlight_position(&fields, disable_prepopulated_fields),
             fields,
             advanced_regex: false,
         }
     }
 
-    fn initial_highlight_position(fields: &[SearchField]) -> usize {
-        let mut highlighted = 0;
-        for (index, field) in fields.iter().enumerate() {
-            if !field.set_by_cli {
-                highlighted = index;
-                break;
-            }
+    fn initial_highlight_position(
+        fields: &[SearchField],
+        disable_prepopulated_fields: bool,
+    ) -> usize {
+        if disable_prepopulated_fields {
+            fields
+                .iter()
+                .enumerate()
+                .find_map(|(idx, field)| if !field.set_by_cli { Some(idx) } else { None })
+                .unwrap_or(0)
+        } else {
+            0
         }
-        highlighted
     }
 
     pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {

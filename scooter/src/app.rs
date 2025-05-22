@@ -501,8 +501,11 @@ impl<'a> App {
             None => current_dir().unwrap(),
         };
 
-        let search_fields = SearchFields::with_values(search_field_values.clone())
-            .with_advanced_regex(advanced_regex);
+        let search_fields = SearchFields::with_values(
+            search_field_values.clone(),
+            config.search.disable_prepopulated_fields,
+        )
+        .with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
