@@ -11,7 +11,10 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
 
-use crate::app::{BackgroundProcessingEvent, SearchFieldValues, SearchResult};
+use crate::{
+    app::{BackgroundProcessingEvent, SearchResult},
+    fields::SearchFieldValues,
+};
 
 fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {
@@ -72,6 +75,8 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
         search_regex_str = format!(r"(?i){search_regex_str}");
     }
 
+    // Shouldn't fail as we have already verified that `search` is valid, so `unwrap` here is fine.
+    // (Any issues will likely be with the padding we are doing in this function.)
     let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
     SearchType::PatternAdvanced(fancy_regex)
 }

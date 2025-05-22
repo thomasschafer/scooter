@@ -1,17 +1,12 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
-use fancy_regex::Regex as FancyRegex;
 use futures::future;
 use ignore::{
     overrides::{Override, OverrideBuilder},
     WalkState,
 };
 use log::warn;
-use parking_lot::{
-    MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
-use regex::Regex;
 use std::{
     cmp::{max, min},
     iter::Iterator,
@@ -37,8 +32,8 @@ use tokio::{
 
 use crate::{
     config::{load_config, Config},
-    fields::{CheckboxField, Field, TextField},
-    replace::{ParsedFields, SearchType},
+    fields::{FieldName, SearchFieldValues, SearchFields},
+    replace::ParsedFields,
     utils::ceil_div,
 };
 
@@ -460,226 +455,6 @@ impl Screen {
     }
 }
 
-#[derive(PartialEq)]
-pub enum FieldName {
-    Search,
-    Replace,
-    FixedStrings,
-    WholeWord,
-    MatchCase,
-    IncludeFiles,
-    ExcludeFiles,
-}
-
-pub struct SearchFieldValues<'a> {
-    pub search: &'a str,
-    pub replace: &'a str,
-    pub fixed_strings: bool,
-    pub whole_word: bool,
-    pub match_case: bool,
-    pub include_files: &'a str,
-    pub exclude_files: &'a str,
-}
-impl<'a> Default for SearchFieldValues<'a> {
-    fn default() -> SearchFieldValues<'a> {
-        Self {
-            search: Self::DEFAULT_SEARCH,
-            replace: Self::DEFAULT_REPLACE,
-            fixed_strings: Self::DEFAULT_FIXED_STRINGS,
-            whole_word: Self::DEFAULT_WHOLE_WORD,
-            match_case: Self::DEFAULT_MATCH_CASE,
-            include_files: Self::DEFAULT_INCLUDE_FILES,
-            exclude_files: Self::DEFAULT_EXCLUDE_FILES,
-        }
-    }
-}
-
-impl SearchFieldValues<'_> {
-    const DEFAULT_SEARCH: &'static str = "";
-    const DEFAULT_REPLACE: &'static str = "";
-    const DEFAULT_FIXED_STRINGS: bool = false;
-    const DEFAULT_WHOLE_WORD: bool = false;
-    const DEFAULT_MATCH_CASE: bool = true;
-    const DEFAULT_INCLUDE_FILES: &'static str = "";
-    const DEFAULT_EXCLUDE_FILES: &'static str = "";
-
-    pub fn whole_word_default() -> bool {
-        Self::DEFAULT_WHOLE_WORD
-    }
-
-    pub fn match_case_default() -> bool {
-        Self::DEFAULT_MATCH_CASE
-    }
-}
-
-pub struct SearchField {
-    pub name: FieldName,
-    pub field: Arc<RwLock<Field>>,
-}
-
-pub const NUM_SEARCH_FIELDS: usize = 7;
-
-pub struct SearchFields {
-    pub fields: [SearchField; NUM_SEARCH_FIELDS],
-    pub highlighted: usize,
-    advanced_regex: bool,
-}
-
-macro_rules! define_field_accessor {
-    ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&self) -> MappedRwLockReadGuard<'_, $return_type> {
-            let field = self
-                .fields
-                .iter()
-                .find(|SearchField { name, .. }| *name == $field_name)
-                .expect("Couldn't find field");
-
-            RwLockReadGuard::map(field.field.read(), |f| {
-                if let Field::$field_variant(ref inner) = f {
-                    inner
-                } else {
-                    panic!("Incorrect field type")
-                }
-            })
-        }
-    };
-}
-
-macro_rules! define_field_accessor_mut {
-    ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&self) -> MappedRwLockWriteGuard<'_, $return_type> {
-            let field = self
-                .fields
-                .iter()
-                .find(|SearchField { name, .. }| *name == $field_name)
-                .expect("Couldn't find field");
-
-            RwLockWriteGuard::map(field.field.write(), |f| {
-                if let Field::$field_variant(ref mut inner) = f {
-                    inner
-                } else {
-                    panic!("Incorrect field type")
-                }
-            })
-        }
-    };
-}
-
-impl SearchFields {
-    // TODO: generate these automatically?
-    define_field_accessor!(search, FieldName::Search, Text, TextField);
-    define_field_accessor!(replace, FieldName::Replace, Text, TextField);
-    define_field_accessor!(
-        fixed_strings,
-        FieldName::FixedStrings,
-        Checkbox,
-        CheckboxField
-    );
-    define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, CheckboxField);
-    define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, CheckboxField);
-    define_field_accessor!(include_files, FieldName::IncludeFiles, Text, TextField);
-    define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, TextField);
-
-    define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
-    define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
-    define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
-
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
-        Self {
-            fields: [
-                SearchField {
-                    name: FieldName::Search,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.search))),
-                },
-                SearchField {
-                    name: FieldName::Replace,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.replace))),
-                },
-                SearchField {
-                    name: FieldName::FixedStrings,
-                    field: Arc::new(RwLock::new(Field::checkbox(
-                        search_field_values.fixed_strings,
-                    ))),
-                },
-                SearchField {
-                    name: FieldName::WholeWord,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.whole_word))),
-                },
-                SearchField {
-                    name: FieldName::MatchCase,
-                    field: Arc::new(RwLock::new(Field::checkbox(search_field_values.match_case))),
-                },
-                SearchField {
-                    name: FieldName::IncludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.include_files))),
-                },
-                SearchField {
-                    name: FieldName::ExcludeFiles,
-                    field: Arc::new(RwLock::new(Field::text(search_field_values.exclude_files))),
-                },
-            ],
-            highlighted: 0,
-            advanced_regex: false,
-        }
-    }
-
-    pub fn with_default_values() -> Self {
-        Self::with_values(SearchFieldValues::default())
-    }
-
-    pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
-        self.advanced_regex = advanced_regex;
-        self
-    }
-
-    fn highlighted_field_impl(&self) -> &SearchField {
-        &self.fields[self.highlighted]
-    }
-
-    pub fn highlighted_field(&self) -> &Arc<RwLock<Field>> {
-        &self.highlighted_field_impl().field
-    }
-
-    pub fn highlighted_field_name(&self) -> &FieldName {
-        &self.highlighted_field_impl().name
-    }
-
-    pub fn focus_next(&mut self) {
-        self.highlighted = (self.highlighted + 1) % self.fields.len();
-    }
-
-    pub fn focus_prev(&mut self) {
-        self.highlighted =
-            (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
-    }
-
-    pub fn errors(&self) -> Vec<AppError> {
-        self.fields
-            .iter()
-            .filter_map(|field| {
-                field.field.read().error().map(|err| AppError {
-                    name: field.name.title().to_string(),
-                    long: err.long,
-                })
-            })
-            .collect::<Vec<_>>()
-    }
-
-    pub fn search_type(&self) -> anyhow::Result<SearchType> {
-        let search = self.search();
-        let search_text = search.text();
-        let result = if self.fixed_strings().checked {
-            SearchType::Fixed(search_text.to_string())
-        } else if self.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
-        } else {
-            SearchType::Pattern(Regex::new(search_text)?)
-        };
-        Ok(result)
-    }
-}
-
 enum ValidatedField<T> {
     Parsed(T),
     Error,
@@ -711,11 +486,12 @@ pub struct App {
 
 const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
 
-impl App {
+impl<'a> App {
     fn new(
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
@@ -725,7 +501,11 @@ impl App {
             None => current_dir().unwrap(),
         };
 
-        let search_fields = SearchFields::with_default_values().with_advanced_regex(advanced_regex);
+        let search_fields = SearchFields::with_values(
+            search_field_values,
+            config.search.disable_prepopulated_fields,
+        )
+        .with_advanced_regex(advanced_regex);
 
         Self {
             current_screen: Screen::SearchFields,
@@ -743,9 +523,16 @@ impl App {
         directory: Option<PathBuf>,
         include_hidden: bool,
         advanced_regex: bool,
+        search_field_values: &SearchFieldValues<'a>,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(directory, include_hidden, advanced_regex, event_sender);
+        let app = Self::new(
+            directory,
+            include_hidden,
+            advanced_regex,
+            search_field_values,
+            event_sender,
+        );
         (app, app_event_receiver)
     }
 
@@ -774,6 +561,7 @@ impl App {
             Some(self.directory.clone()),
             self.include_hidden,
             self.search_fields.advanced_regex,
+            &SearchFieldValues::default(),
             self.event_sender.clone(),
         );
     }
@@ -953,26 +741,32 @@ impl App {
 
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+                self.unlock_prepopulated_fields();
+            }
             (KeyCode::Enter, _) => {
                 self.event_sender
                     .send(Event::App(AppEvent::PerformSearch))
                     .unwrap();
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
-                self.search_fields.focus_prev();
+                self.search_fields
+                    .focus_prev(self.config.search.disable_prepopulated_fields);
             }
             (KeyCode::Tab, _) => {
-                self.search_fields.focus_next();
+                self.search_fields
+                    .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
-                if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
+                if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
                 }
-                self.search_fields
-                    .highlighted_field()
-                    .write()
-                    .handle_keys(code, modifiers);
+                self.search_fields.highlighted_field_mut().handle_keys(
+                    code,
+                    modifiers,
+                    self.config.search.disable_prepopulated_fields,
+                );
             }
         }
         EventHandlingResult::Rerender
@@ -1366,6 +1160,7 @@ impl App {
         self.keymaps_impl(true)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
         enum Show {
             Both,
@@ -1375,12 +1170,18 @@ impl App {
 
         let current_screen_keys = match self.current_screen {
             Screen::SearchFields => {
-                vec![
+                let mut keys = vec![
                     ("<enter>", "search", Show::Both),
                     ("<tab>", "focus next", Show::Both),
                     ("<S-tab>", "focus previous", Show::FullOnly),
                     ("<space>", "toggle checkbox", Show::FullOnly),
-                ]
+                ];
+                if self.config.search.disable_prepopulated_fields
+                    && self.search_fields.fields.iter().any(|f| f.set_by_cli)
+                {
+                    keys.push(("<C-u>", "unlock pre-populated fields", Show::FullOnly));
+                }
+                keys
             }
             Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
                 let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
@@ -1493,6 +1294,12 @@ impl App {
                 "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
             ),
+        }
+    }
+
+    fn unlock_prepopulated_fields(&mut self) {
+        for field in &mut self.search_fields.fields {
+            field.set_by_cli = false;
         }
     }
 }
@@ -1657,7 +1464,13 @@ mod tests {
 
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(None, false, false, event_sender);
+        let mut app = App::new(
+            None,
+            false,
+            false,
+            &SearchFieldValues::default(),
+            event_sender,
+        );
         app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
             build_test_search_state_with_results(results),
             Instant::now(),
