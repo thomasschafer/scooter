@@ -57,10 +57,10 @@ impl Field {
         title: &'a str,
         highlighted: bool,
         set_by_cli: bool,
-        disable_populated_fields: bool,
+        disable_prepopulated_fields: bool,
     ) -> Vec<Span<'a>> {
         let mut fg_color = Color::Reset;
-        if set_by_cli && disable_populated_fields {
+        if set_by_cli && disable_prepopulated_fields {
             fg_color = Color::Blue;
         } else if highlighted {
             fg_color = Color::Green;
@@ -83,18 +83,18 @@ impl Field {
         area: Rect,
         title: &str,
         highlighted: bool,
-        disable_populated_fields: bool,
+        disable_prepopulated_fields: bool,
         set_by_cli: bool,
     ) {
         let mut block = Block::bordered();
-        if set_by_cli && disable_populated_fields {
+        if set_by_cli && disable_prepopulated_fields {
             block = block.border_style(Style::new().blue());
         } else if highlighted {
             block = block.border_style(Style::new().green());
         }
 
         let title_spans =
-            self.create_title_spans(title, highlighted, set_by_cli, disable_populated_fields);
+            self.create_title_spans(title, highlighted, set_by_cli, disable_prepopulated_fields);
 
         match self {
             Field::Text(f) => {
@@ -154,7 +154,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     field_area,
                     name.title(),
                     idx == app.search_fields.highlighted,
-                    app.search_fields.disable_populated_fields,
+                    app.search_fields.disable_prepopulated_fields,
                     *set_by_cli,
                 );
             },

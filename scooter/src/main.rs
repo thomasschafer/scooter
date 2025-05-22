@@ -25,6 +25,24 @@ struct Args {
     #[arg(index = 1)]
     directory: Option<String>,
 
+    /// Include hidden files and directories, such as those whose name starts with a dot (.)
+    #[arg(short = '.', long, default_value = "false")]
+    hidden: bool,
+
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(
+        long,
+        value_parser = parse_log_level,
+        default_value = DEFAULT_LOG_LEVEL
+    )]
+    log_level: LevelFilter,
+
+    /// Use advanced regex features (including negative look-ahead), at the cost of performance
+    #[arg(short = 'a', long, default_value = "false")]
+    advanced_regex: bool,
+
+    // --- Initial values for fields ---
+    //
     /// Text to search with
     #[arg(short = 's', long, default_value = None)]
     search_text: Option<String>,
@@ -52,22 +70,6 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long, default_value = None)]
     files_to_exclude: Option<String>,
-
-    /// Include hidden files and directories, such as those whose name starts with a dot (.)
-    #[arg(short = '.', long, default_value = "false")]
-    hidden: bool,
-
-    /// Log level (trace, debug, info, warn, error)
-    #[arg(
-        long,
-        value_parser = parse_log_level,
-        default_value = DEFAULT_LOG_LEVEL
-    )]
-    log_level: LevelFilter,
-
-    /// Use advanced regex features (including negative look-ahead), at the cost of performance
-    #[arg(short = 'a', long, default_value = "false")]
-    advanced_regex: bool,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {

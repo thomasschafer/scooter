@@ -203,7 +203,9 @@ and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
 If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
 
-#### `disable_populated_fields`
+### `[search]` section
+
+#### `disable_prepopulated_fields`
 
 Whether to disable fields set by CLI flags.
 

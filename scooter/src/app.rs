@@ -547,7 +547,7 @@ pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
     pub highlighted: usize,
     advanced_regex: bool,
-    pub disable_populated_fields: bool,
+    pub disable_prepopulated_fields: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -669,7 +669,7 @@ impl SearchFields {
             highlighted: Self::initial_highlight_position(&fields),
             fields,
             advanced_regex: false,
-            disable_populated_fields: false,
+            disable_prepopulated_fields: false,
         }
     }
 
@@ -688,8 +688,8 @@ impl SearchFields {
         self.fields.iter().all(|f| f.set_by_cli)
     }
 
-    pub fn with_disable_populated_fields(mut self, disable_populated_fields: bool) -> Self {
-        self.disable_populated_fields = disable_populated_fields;
+    pub fn with_disable_prepopulated_fields(mut self, disable_prepopulated_fields: bool) -> Self {
+        self.disable_prepopulated_fields = disable_prepopulated_fields;
         self
     }
 
@@ -710,43 +710,29 @@ impl SearchFields {
         &self.highlighted_field_impl().name
     }
 
-    pub fn focus_next(&mut self) {
-        if self.all_populated() {
-            return;
-        }
-        let mut next = (self.highlighted + 1) % self.fields.len();
-        if self.disable_populated_fields {
-            loop {
-                if self.fields[next].set_by_cli {
-                    next = (next + 1) % self.fields.len();
-                    continue;
-                }
-                self.highlighted = next;
-                break;
+    fn focus_impl(&mut self, backward: bool) {
+        let step = if backward {
+            self.fields.len().saturating_sub(1)
+        } else {
+            1
+        };
+
+        let initial = self.highlighted;
+        let mut next = (initial + step).rem_euclid(self.fields.len());
+        if self.disable_prepopulated_fields {
+            while self.fields[next].set_by_cli && next != initial {
+                next = (next + step).rem_euclid(self.fields.len());
             }
-            return;
         }
-        self.highlighted = (self.highlighted + 1) % self.fields.len();
+        self.highlighted = next;
+    }
+
+    pub fn focus_next(&mut self) {
+        self.focus_impl(false);
     }
 
     pub fn focus_prev(&mut self) {
-        if self.all_populated() {
-            return;
-        }
-        let mut prev = (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
-        if self.disable_populated_fields {
-            loop {
-                if self.fields[prev].set_by_cli {
-                    prev = (prev + self.fields.len().saturating_sub(1)) % self.fields.len();
-                    continue;
-                }
-                self.highlighted = prev;
-                break;
-            }
-            return;
-        }
-        self.highlighted =
-            (self.highlighted + self.fields.len().saturating_sub(1)) % self.fields.len();
+        self.focus_impl(true);
     }
 
     pub fn errors(&self) -> Vec<AppError> {
@@ -822,7 +808,7 @@ impl<'a> App {
         };
 
         let search_fields = SearchFields::with_values(search_field_values.clone())
-            .with_disable_populated_fields(config.search.disable_populated_fields)
+            .with_disable_prepopulated_fields(config.search.disable_prepopulated_fields)
             .with_advanced_regex(advanced_regex);
 
         Self {

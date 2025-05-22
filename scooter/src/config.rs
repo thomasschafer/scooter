@@ -206,7 +206,7 @@ fn detect_true_colour() -> bool {
     }
 }
 
-fn default_disable_populated_fields() -> bool {
+fn default_disable_prepopulated_fields() -> bool {
     true
 }
 
@@ -214,14 +214,14 @@ fn default_disable_populated_fields() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
     /// Whether to disable fields set by CLI flags.
-    #[serde(default = "default_disable_populated_fields")]
-    pub disable_populated_fields: bool,
+    #[serde(default = "default_disable_prepopulated_fields")]
+    pub disable_prepopulated_fields: bool,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            disable_populated_fields: default_disable_populated_fields(),
+            disable_prepopulated_fields: default_disable_prepopulated_fields(),
         }
     }
 }
@@ -324,7 +324,7 @@ syntax_highlighting_theme = "Solarized (light)"
                     true_color: detect_true_colour()
                 },
                 search: SearchConfig {
-                    disable_populated_fields: default_disable_populated_fields(),
+                    disable_prepopulated_fields: default_disable_prepopulated_fields(),
                 },
             }
         );
@@ -366,7 +366,7 @@ command = "vim %file +%line"
                 true_color: detect_true_colour(),
             },
             search: SearchConfig {
-                disable_populated_fields: default_disable_populated_fields(),
+                disable_prepopulated_fields: default_disable_prepopulated_fields(),
             },
         };
         assert_eq!(config.get_theme(), None);
@@ -384,7 +384,7 @@ command = "vim %file +%line"
                 true_color: detect_true_colour(),
             },
             search: SearchConfig {
-                disable_populated_fields: default_disable_populated_fields(),
+                disable_prepopulated_fields: default_disable_prepopulated_fields(),
             },
         };
         assert_eq!(

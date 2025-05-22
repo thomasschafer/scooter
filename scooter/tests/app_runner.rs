@@ -4,8 +4,8 @@ use futures::Stream;
 use insta::assert_snapshot;
 use log::LevelFilter;
 use ratatui::backend::TestBackend;
-use scooter::app::SearchFieldValues;
 use regex::Regex;
+use scooter::app::SearchFieldValues;
 use scooter::{
     app_runner::{AppConfig, AppRunner},
     test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
