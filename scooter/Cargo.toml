@@ -15,6 +15,7 @@ categories = ["command-line-utilities"]
 anyhow = "1.0.98"
 clap = { version = "4.5.38", features = ["derive"] }
 content_inspector = "0.2.4"
+crossbeam-channel = "0.5"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
 fancy-regex = "0.14.0"
