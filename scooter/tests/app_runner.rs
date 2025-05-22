@@ -5,16 +5,17 @@ use insta::assert_snapshot;
 use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use regex::Regex;
-use scooter::app::SearchFieldValues;
-use scooter::{
-    app_runner::{AppConfig, AppRunner},
-    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
-};
 use std::{io, path::Path, pin::Pin, task::Poll};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
     time::{sleep, Duration, Instant},
+};
+
+use scooter::{
+    app_runner::{AppConfig, AppRunner},
+    fields::SearchFieldValues,
+    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
 };
 
 mod utils;

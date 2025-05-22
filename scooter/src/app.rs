@@ -1,6 +1,5 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
-use fancy_regex::Regex as FancyRegex;
 use futures::future;
 use ignore::{
     overrides::{Override, OverrideBuilder},
@@ -8,7 +7,6 @@ use ignore::{
 };
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
-use regex::Regex;
 use std::{
     cmp::{max, min},
     iter::Iterator,
@@ -34,8 +32,8 @@ use tokio::{
 
 use crate::{
     config::{load_config, Config},
-    fields::{CheckboxField, Field, TextField},
-    replace::{ParsedFields, SearchType},
+    fields::{FieldName, SearchFieldValues, SearchFields},
+    replace::ParsedFields,
     utils::ceil_div,
 };
 
@@ -457,295 +455,6 @@ impl Screen {
     }
 }
 
-#[derive(PartialEq)]
-pub enum FieldName {
-    Search,
-    Replace,
-    FixedStrings,
-    WholeWord,
-    MatchCase,
-    IncludeFiles,
-    ExcludeFiles,
-}
-
-#[derive(Clone)]
-pub struct FieldValue<T> {
-    pub value: T,
-    pub set_by_cli: bool,
-}
-
-impl<T> FieldValue<T> {
-    pub fn new(value: T, set_by_cli: bool) -> Self {
-        Self { value, set_by_cli }
-    }
-}
-
-impl<T: Default> Default for FieldValue<T> {
-    fn default() -> Self {
-        Self {
-            value: T::default(),
-            set_by_cli: false,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct SearchFieldValues<'a> {
-    pub search: FieldValue<&'a str>,
-    pub replace: FieldValue<&'a str>,
-    pub fixed_strings: FieldValue<bool>,
-    pub match_whole_word: FieldValue<bool>,
-    pub match_case: FieldValue<bool>,
-    pub include_files: FieldValue<&'a str>,
-    pub exclude_files: FieldValue<&'a str>,
-}
-
-impl<'a> Default for SearchFieldValues<'a> {
-    fn default() -> SearchFieldValues<'a> {
-        Self {
-            search: FieldValue::new(Self::DEFAULT_SEARCH, false),
-            replace: FieldValue::new(Self::DEFAULT_REPLACE, false),
-            fixed_strings: FieldValue::new(Self::DEFAULT_FIXED_STRINGS, false),
-            match_whole_word: FieldValue::new(Self::DEFAULT_WHOLE_WORD, false),
-            match_case: FieldValue::new(Self::DEFAULT_MATCH_CASE, false),
-            include_files: FieldValue::new(Self::DEFAULT_INCLUDE_FILES, false),
-            exclude_files: FieldValue::new(Self::DEFAULT_EXCLUDE_FILES, false),
-        }
-    }
-}
-
-impl SearchFieldValues<'_> {
-    const DEFAULT_SEARCH: &'static str = "";
-    const DEFAULT_REPLACE: &'static str = "";
-    const DEFAULT_FIXED_STRINGS: bool = false;
-    const DEFAULT_WHOLE_WORD: bool = false;
-    const DEFAULT_MATCH_CASE: bool = true;
-    const DEFAULT_INCLUDE_FILES: &'static str = "";
-    const DEFAULT_EXCLUDE_FILES: &'static str = "";
-
-    pub fn whole_word_default() -> bool {
-        Self::DEFAULT_WHOLE_WORD
-    }
-
-    pub fn match_case_default() -> bool {
-        Self::DEFAULT_MATCH_CASE
-    }
-}
-
-pub struct SearchField {
-    pub name: FieldName,
-    pub field: Field,
-    pub set_by_cli: bool,
-}
-
-pub const NUM_SEARCH_FIELDS: usize = 7;
-
-pub struct SearchFields {
-    pub fields: [SearchField; NUM_SEARCH_FIELDS],
-    pub highlighted: usize,
-    advanced_regex: bool,
-    pub disable_prepopulated_fields: bool,
-}
-
-macro_rules! define_field_accessor {
-    ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&self) -> $return_type {
-            let field = self
-                .fields
-                .iter()
-                .find(|SearchField { name, .. }| *name == $field_name)
-                .expect("Couldn't find field");
-
-            if let Field::$field_variant(ref inner) = field.field {
-                inner
-            } else {
-                panic!("Incorrect field type")
-            }
-        }
-    };
-}
-
-macro_rules! define_field_accessor_mut {
-    ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&mut self) -> $return_type {
-            let field = self
-                .fields
-                .iter_mut()
-                .find(|SearchField { name, .. }| *name == $field_name)
-                .expect("Couldn't find field");
-
-            if let Field::$field_variant(ref mut inner) = &mut field.field {
-                inner
-            } else {
-                panic!("Incorrect field type")
-            }
-        }
-    };
-}
-
-impl Default for SearchFields {
-    fn default() -> Self {
-        Self::with_values(SearchFieldValues::default())
-    }
-}
-
-impl SearchFields {
-    // TODO: generate these automatically?
-    define_field_accessor!(search, FieldName::Search, Text, &TextField);
-    define_field_accessor!(replace, FieldName::Replace, Text, &TextField);
-    define_field_accessor!(
-        fixed_strings,
-        FieldName::FixedStrings,
-        Checkbox,
-        &CheckboxField
-    );
-    define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, &CheckboxField);
-    define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, &CheckboxField);
-    define_field_accessor!(include_files, FieldName::IncludeFiles, Text, &TextField);
-    define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, &TextField);
-
-    define_field_accessor_mut!(search_mut, FieldName::Search, Text, &mut TextField);
-    define_field_accessor_mut!(
-        include_files_mut,
-        FieldName::IncludeFiles,
-        Text,
-        &mut TextField
-    );
-    define_field_accessor_mut!(
-        exclude_files_mut,
-        FieldName::ExcludeFiles,
-        Text,
-        &mut TextField
-    );
-
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
-        let fields = [
-            SearchField {
-                name: FieldName::Search,
-                field: Field::text(search_field_values.search.value),
-                set_by_cli: search_field_values.search.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::Replace,
-                field: Field::text(search_field_values.replace.value),
-                set_by_cli: search_field_values.replace.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::FixedStrings,
-                field: Field::checkbox(search_field_values.fixed_strings.value),
-                set_by_cli: search_field_values.fixed_strings.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::WholeWord,
-                field: Field::checkbox(search_field_values.match_whole_word.value),
-                set_by_cli: search_field_values.match_whole_word.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::MatchCase,
-                field: Field::checkbox(search_field_values.match_case.value),
-                set_by_cli: search_field_values.match_case.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::IncludeFiles,
-                field: Field::text(search_field_values.include_files.value),
-                set_by_cli: search_field_values.include_files.set_by_cli,
-            },
-            SearchField {
-                name: FieldName::ExcludeFiles,
-                field: Field::text(search_field_values.exclude_files.value),
-                set_by_cli: search_field_values.exclude_files.set_by_cli,
-            },
-        ];
-
-        Self {
-            highlighted: Self::initial_highlight_position(&fields),
-            fields,
-            advanced_regex: false,
-            disable_prepopulated_fields: false,
-        }
-    }
-
-    fn initial_highlight_position(fields: &[SearchField]) -> usize {
-        let mut highlighted = 0;
-        for (index, field) in fields.iter().enumerate() {
-            if !field.set_by_cli {
-                highlighted = index;
-                break;
-            }
-        }
-        highlighted
-    }
-
-    pub fn with_disable_prepopulated_fields(mut self, disable_prepopulated_fields: bool) -> Self {
-        self.disable_prepopulated_fields = disable_prepopulated_fields;
-        self
-    }
-
-    pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
-        self.advanced_regex = advanced_regex;
-        self
-    }
-
-    pub fn highlighted_field(&self) -> &SearchField {
-        &self.fields[self.highlighted]
-    }
-
-    pub fn highlighted_field_mut(&mut self) -> &mut SearchField {
-        &mut self.fields[self.highlighted]
-    }
-
-    fn focus_impl(&mut self, backward: bool) {
-        let step = if backward {
-            self.fields.len().saturating_sub(1)
-        } else {
-            1
-        };
-
-        let initial = self.highlighted;
-        let mut next = (initial + step).rem_euclid(self.fields.len());
-        if self.disable_prepopulated_fields {
-            while self.fields[next].set_by_cli && next != initial {
-                next = (next + step).rem_euclid(self.fields.len());
-            }
-        }
-        self.highlighted = next;
-    }
-
-    pub fn focus_next(&mut self) {
-        self.focus_impl(false);
-    }
-
-    pub fn focus_prev(&mut self) {
-        self.focus_impl(true);
-    }
-
-    pub fn errors(&self) -> Vec<AppError> {
-        self.fields
-            .iter()
-            .filter_map(|field| {
-                field.field.error().map(|err| AppError {
-                    name: field.name.title().to_string(),
-                    long: err.long,
-                })
-            })
-            .collect::<Vec<_>>()
-    }
-
-    pub fn search_type(&self) -> anyhow::Result<SearchType> {
-        let search = self.search();
-        let search_text = search.text();
-        let result = if self.fixed_strings().checked {
-            SearchType::Fixed(search_text.to_string())
-        } else if self.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
-        } else {
-            SearchType::Pattern(Regex::new(search_text)?)
-        };
-        Ok(result)
-    }
-}
-
 enum ValidatedField<T> {
     Parsed(T),
     Error,
@@ -793,7 +502,6 @@ impl<'a> App {
         };
 
         let search_fields = SearchFields::with_values(search_field_values.clone())
-            .with_disable_prepopulated_fields(config.search.disable_prepopulated_fields)
             .with_advanced_regex(advanced_regex);
 
         Self {
@@ -1036,20 +744,23 @@ impl<'a> App {
                     .unwrap();
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
-                self.search_fields.focus_prev();
+                self.search_fields
+                    .focus_prev(self.config.search.disable_prepopulated_fields);
             }
             (KeyCode::Tab, _) => {
-                self.search_fields.focus_next();
+                self.search_fields
+                    .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
                 }
-                self.search_fields
-                    .highlighted_field_mut()
-                    .field
-                    .handle_keys(code, modifiers);
+                self.search_fields.highlighted_field_mut().handle_keys(
+                    code,
+                    modifiers,
+                    self.config.search.disable_prepopulated_fields,
+                );
             }
         }
         EventHandlingResult::Rerender

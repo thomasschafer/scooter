@@ -11,7 +11,10 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{fs::File, io::BufReader};
 
-use crate::app::{BackgroundProcessingEvent, SearchFieldValues, SearchResult};
+use crate::{
+    app::{BackgroundProcessingEvent, SearchResult},
+    fields::SearchFieldValues,
+};
 
 fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {

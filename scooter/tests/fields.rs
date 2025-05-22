@@ -71,49 +71,50 @@ fn test_search_fields() {
 
     // Test focus navigation
     assert_eq!(search_fields.highlighted, 0);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 1);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 2);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 3);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 4);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 5);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 6);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 0);
-    search_fields.focus_prev();
+    search_fields.focus_prev(true);
     assert_eq!(search_fields.highlighted, 6);
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 0);
 
     for c in "test search".chars() {
-        search_fields
-            .highlighted_field_mut()
-            .field
-            .handle_keys(KeyCode::Char(c), KeyModifiers::NONE);
+        search_fields.highlighted_field_mut().handle_keys(
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+            true,
+        );
     }
     assert_eq!(search_fields.search().text, "test search");
 
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 1);
     for c in "test replace".chars() {
-        search_fields
-            .highlighted_field_mut()
-            .field
-            .handle_keys(KeyCode::Char(c), KeyModifiers::NONE);
+        search_fields.highlighted_field_mut().handle_keys(
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+            true,
+        );
     }
     assert_eq!(search_fields.replace().text, "test replace");
 
-    search_fields.focus_next();
+    search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 2);
     search_fields
         .highlighted_field_mut()
-        .field
-        .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
+        .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
     assert!(search_fields.fixed_strings().checked);
 
     let search_type = search_fields.search_type().unwrap();
@@ -124,8 +125,7 @@ fn test_search_fields() {
 
     search_fields
         .highlighted_field_mut()
-        .field
-        .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
+        .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
     let search_type = search_fields.search_type().unwrap();
     match search_type {
         SearchType::Pattern(_) => {}

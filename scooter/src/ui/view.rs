@@ -25,10 +25,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     app::{
-        App, AppError, AppEvent, Event, FieldName, Popup, ReplaceResult, ReplaceState, Screen,
-        SearchField, SearchResult, SearchState, NUM_SEARCH_FIELDS,
+        App, AppError, AppEvent, Event, Popup, ReplaceResult, ReplaceState, Screen, SearchResult,
+        SearchState,
     },
-    fields::Field,
+    fields::{Field, SearchField, NUM_SEARCH_FIELDS},
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
@@ -37,21 +37,7 @@ use crate::{
 
 use super::colour::to_ratatui_colour;
 
-impl FieldName {
-    pub(crate) fn title(&self) -> &str {
-        match self {
-            FieldName::Search => "Search text",
-            FieldName::Replace => "Replace text",
-            FieldName::FixedStrings => "Fixed strings",
-            FieldName::WholeWord => "Match whole word",
-            FieldName::MatchCase => "Match case",
-            FieldName::IncludeFiles => "Files to include",
-            FieldName::ExcludeFiles => "Files to exclude",
-        }
-    }
-}
-
-impl Field {
+impl SearchField {
     fn create_title_spans<'a>(
         &self,
         title: &'a str,
@@ -81,22 +67,24 @@ impl Field {
         &self,
         frame: &mut Frame<'_>,
         area: Rect,
-        title: &str,
         highlighted: bool,
         disable_prepopulated_fields: bool,
-        set_by_cli: bool,
     ) {
         let mut block = Block::bordered();
-        if set_by_cli && disable_prepopulated_fields {
+        if self.set_by_cli && disable_prepopulated_fields {
             block = block.border_style(Style::new().blue());
         } else if highlighted {
             block = block.border_style(Style::new().green());
         }
 
-        let title_spans =
-            self.create_title_spans(title, highlighted, set_by_cli, disable_prepopulated_fields);
+        let title_spans = self.create_title_spans(
+            self.name.title(),
+            highlighted,
+            self.set_by_cli,
+            disable_prepopulated_fields,
+        );
 
-        match self {
+        match &self.field {
             Field::Text(f) => {
                 block = block.title(Line::from(title_spans));
                 frame.render_widget(Paragraph::new(f.text()).block(block), area);
@@ -137,37 +125,26 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         .iter()
         .zip(areas)
         .enumerate()
-        .for_each(
-            |(
-                idx,
-                (
-                    SearchField {
-                        name,
-                        field,
-                        set_by_cli,
-                    },
-                    field_area,
-                ),
-            )| {
-                field.render(
-                    frame,
-                    field_area,
-                    name.title(),
-                    idx == app.search_fields.highlighted,
-                    app.search_fields.disable_prepopulated_fields,
-                    *set_by_cli,
-                );
-            },
-        );
+        .for_each(|(idx, (search_field, field_area))| {
+            search_field.render(
+                frame,
+                field_area,
+                idx == app.search_fields.highlighted,
+                app.config.search.disable_prepopulated_fields,
+            );
+        });
 
     if !app.show_popup() {
-        if let Some(cursor_pos) = app.search_fields.highlighted_field().field.cursor_pos() {
-            let highlighted_area = areas[app.search_fields.highlighted];
+        let field = app.search_fields.highlighted_field();
+        if !field.set_by_cli || !app.config.search.disable_prepopulated_fields {
+            if let Some(cursor_pos) = field.cursor_pos() {
+                let highlighted_area = areas[app.search_fields.highlighted];
 
-            frame.set_cursor_position(Position {
-                x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
-                y: highlighted_area.y + 1,
-            });
+                frame.set_cursor_position(Position {
+                    x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
+                    y: highlighted_area.y + 1,
+                });
+            }
         }
     }
 }

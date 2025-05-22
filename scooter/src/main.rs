@@ -1,10 +1,10 @@
-use crate::app::FieldValue;
-use crate::app::SearchFieldValues;
-use app_runner::{run_app, AppConfig};
 use clap::Parser;
 use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
 use std::str::FromStr;
+
+use app_runner::{run_app, AppConfig};
+use fields::{FieldValue, SearchFieldValues};
 
 mod app;
 mod app_runner;
