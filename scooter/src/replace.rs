@@ -75,6 +75,8 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
         search_regex_str = format!(r"(?i){search_regex_str}");
     }
 
+    // Shouldn't fail as we have already verified that `search` is valid, so `unwrap` here is fine.
+    // (Any issues will likely be with the padding we are doing in this function.)
     let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
     SearchType::PatternAdvanced(fancy_regex)
 }

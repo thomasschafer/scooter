@@ -44,11 +44,11 @@ struct Args {
     // --- Initial values for fields ---
     //
     /// Text to search with
-    #[arg(short = 's', long, default_value = None)]
+    #[arg(short = 's', long)]
     search_text: Option<String>,
 
     /// Text to replace the search text with
-    #[arg(short = 'r', long, default_value = None)]
+    #[arg(short = 'r', long)]
     replace_text: Option<String>,
 
     /// Search with plain strings, rather than regex
@@ -59,16 +59,16 @@ struct Args {
     #[arg(short = 'w', long, action = clap::ArgAction::SetTrue)]
     match_whole_word: bool,
 
-    /// Match the case of the search string exactly
+    /// Ignore case when matching the search string
     #[arg(short = 'i', long, action = clap::ArgAction::SetTrue)]
     case_insensitive: bool,
 
     /// Glob patterns, separated by commas (,), that file paths must match
-    #[arg(short = 'I', long, default_value = None)]
+    #[arg(short = 'I', long)]
     files_to_include: Option<String>,
 
     /// Glob patterns, separated by commas (,), that file paths must not match
-    #[arg(short = 'E', long, default_value = None)]
+    #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
 }
 

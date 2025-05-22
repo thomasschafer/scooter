@@ -24,6 +24,7 @@ use crate::{
     tui::Tui,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppConfig<'a> {
     pub directory: Option<String>,
     pub hidden: bool,

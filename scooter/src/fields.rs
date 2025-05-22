@@ -8,13 +8,13 @@ use std::iter::Iterator;
 
 use crate::{app::AppError, replace::SearchType};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FieldError {
     pub short: String,
     pub long: String,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextField {
     pub text: String,
     pub cursor_idx: usize,
@@ -216,6 +216,7 @@ impl TextField {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckboxField {
     pub checked: bool,
     pub error: Option<FieldError>, // Not used currently so not rendered
@@ -236,12 +237,13 @@ impl CheckboxField {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Field {
     Text(TextField),
     Checkbox(CheckboxField),
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FieldName {
     Search,
     Replace,
@@ -266,6 +268,7 @@ impl FieldName {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchField {
     pub name: FieldName,
     pub field: Field,
@@ -330,6 +333,7 @@ impl SearchField {
 
 pub const NUM_SEARCH_FIELDS: usize = 7;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS],
     pub highlighted: usize,
@@ -550,7 +554,7 @@ impl<T: Default> Default for FieldValue<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchFieldValues<'a> {
     pub search: FieldValue<&'a str>,
     pub replace: FieldValue<&'a str>,

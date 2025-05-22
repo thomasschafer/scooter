@@ -3,7 +3,7 @@ use scooter::{replace::SearchType, CheckboxField, SearchFields, TextField};
 
 #[test]
 fn test_text_field_operations() {
-    let mut field = TextField::default();
+    let mut field = TextField::new("");
 
     // Test input
     for c in "Hello".chars() {
