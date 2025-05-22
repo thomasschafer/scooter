@@ -1,20 +1,20 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
-use serial_test::serial;
-use std::cmp::max;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
-use tempfile::TempDir;
-use tokio::sync::mpsc;
-
 use scooter::{
     test_with_both_regex_modes, App, AppError, EventHandlingResult, FieldValue,
     PerformingReplacementState, Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState,
     SearchFieldValues, SearchFields, SearchInProgressState, SearchResult, SearchState,
 };
+use serial_test::serial;
+use std::cmp::max;
+use std::fs;
+use std::io;
+use std::mem;
+use std::path::{Path, PathBuf};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
+use tokio::sync::mpsc;
 
 mod utils;
 
@@ -162,6 +162,90 @@ async fn test_error_popup_invalid_exclude_files() {
         include_files: FieldValue::new("", false),
         exclude_files: FieldValue::new("bar{", false),
     });
+}
+
+fn test_help_popup_on_screen(initial_screen: Screen) {
+    let (mut app, _app_event_receiver) =
+        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let screen_variant = std::mem::discriminant(&initial_screen);
+    app.current_screen = initial_screen;
+
+    assert!(app.popup().is_none());
+    assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
+
+    let res_open = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Char('h'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    assert!(res_open == EventHandlingResult::Rerender);
+    assert!(matches!(app.popup(), Some(Popup::Help)));
+    assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
+
+    let res_close = app.handle_key_event(&KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
+    assert!(res_close == EventHandlingResult::Rerender);
+    assert!(app.popup().is_none());
+    assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
+}
+
+#[tokio::test]
+async fn test_help_popup_on_search_fields() {
+    test_help_popup_on_screen(Screen::SearchFields);
+}
+
+#[tokio::test]
+async fn test_help_popup_on_search_in_progress() {
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let initial_screen =
+        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
+    test_help_popup_on_screen(initial_screen);
+}
+
+#[tokio::test]
+async fn test_help_popup_on_search_complete() {
+    let results = (0..100)
+        .map(|i| SearchResult {
+            path: PathBuf::from(format!("test{i}.txt")),
+            line_number: 1,
+            line: format!("test line {i}").to_string(),
+            replacement: format!("replacement {i}").to_string(),
+            included: true,
+            replace_result: None,
+        })
+        .collect();
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let mut search_state = SearchState::new(receiver);
+    search_state.results = results;
+
+    test_help_popup_on_screen(Screen::SearchComplete(SearchCompleteState::new(
+        search_state,
+        Instant::now(),
+    )));
+}
+
+#[tokio::test]
+async fn test_help_popup_on_performing_replacement() {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let initial_screen =
+        Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
+    test_help_popup_on_screen(initial_screen);
+}
+
+#[tokio::test]
+async fn test_help_popup_on_results() {
+    let results_state = ReplaceState {
+        num_successes: 5,
+        num_ignored: 2,
+        errors: vec![],
+        replacement_errors_pos: 0,
+    };
+    test_help_popup_on_screen(Screen::Results(results_state));
 }
 
 pub fn wait_until<F>(condition: F, timeout: Duration) -> bool
