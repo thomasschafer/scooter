@@ -149,7 +149,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     field_area,
                 ),
             )| {
-                field.read().render(
+                field.render(
                     frame,
                     field_area,
                     name.title(),
@@ -161,7 +161,7 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         );
 
     if !app.show_popup() {
-        if let Some(cursor_pos) = app.search_fields.highlighted_field().read().cursor_pos() {
+        if let Some(cursor_pos) = app.search_fields.highlighted_field().field.cursor_pos() {
             let highlighted_area = areas[app.search_fields.highlighted];
 
             frame.set_cursor_position(Position {

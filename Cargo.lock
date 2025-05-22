@@ -1314,7 +1314,6 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "lru 0.14.0",
- "parking_lot",
  "rand 0.9.1",
  "ratatui",
  "regex",

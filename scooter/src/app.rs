@@ -7,9 +7,6 @@ use ignore::{
     WalkState,
 };
 use log::warn;
-use parking_lot::{
-    MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
 use std::{
@@ -537,7 +534,7 @@ impl SearchFieldValues<'_> {
 
 pub struct SearchField {
     pub name: FieldName,
-    pub field: Arc<RwLock<Field>>,
+    pub field: Field,
     pub set_by_cli: bool,
 }
 
@@ -552,40 +549,36 @@ pub struct SearchFields {
 
 macro_rules! define_field_accessor {
     ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&self) -> MappedRwLockReadGuard<'_, $return_type> {
+        pub fn $method_name(&self) -> $return_type {
             let field = self
                 .fields
                 .iter()
                 .find(|SearchField { name, .. }| *name == $field_name)
                 .expect("Couldn't find field");
 
-            RwLockReadGuard::map(field.field.read(), |f| {
-                if let Field::$field_variant(ref inner) = f {
-                    inner
-                } else {
-                    panic!("Incorrect field type")
-                }
-            })
+            if let Field::$field_variant(ref inner) = field.field {
+                inner
+            } else {
+                panic!("Incorrect field type")
+            }
         }
     };
 }
 
 macro_rules! define_field_accessor_mut {
     ($method_name:ident, $field_name:expr, $field_variant:ident, $return_type:ty) => {
-        pub fn $method_name(&self) -> MappedRwLockWriteGuard<'_, $return_type> {
+        pub fn $method_name(&mut self) -> $return_type {
             let field = self
                 .fields
-                .iter()
+                .iter_mut()
                 .find(|SearchField { name, .. }| *name == $field_name)
                 .expect("Couldn't find field");
 
-            RwLockWriteGuard::map(field.field.write(), |f| {
-                if let Field::$field_variant(ref mut inner) = f {
-                    inner
-                } else {
-                    panic!("Incorrect field type")
-                }
-            })
+            if let Field::$field_variant(ref mut inner) = &mut field.field {
+                inner
+            } else {
+                panic!("Incorrect field type")
+            }
         }
     };
 }
@@ -598,69 +591,69 @@ impl Default for SearchFields {
 
 impl SearchFields {
     // TODO: generate these automatically?
-    define_field_accessor!(search, FieldName::Search, Text, TextField);
-    define_field_accessor!(replace, FieldName::Replace, Text, TextField);
+    define_field_accessor!(search, FieldName::Search, Text, &TextField);
+    define_field_accessor!(replace, FieldName::Replace, Text, &TextField);
     define_field_accessor!(
         fixed_strings,
         FieldName::FixedStrings,
         Checkbox,
-        CheckboxField
+        &CheckboxField
     );
-    define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, CheckboxField);
-    define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, CheckboxField);
-    define_field_accessor!(include_files, FieldName::IncludeFiles, Text, TextField);
-    define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, TextField);
+    define_field_accessor!(whole_word, FieldName::WholeWord, Checkbox, &CheckboxField);
+    define_field_accessor!(match_case, FieldName::MatchCase, Checkbox, &CheckboxField);
+    define_field_accessor!(include_files, FieldName::IncludeFiles, Text, &TextField);
+    define_field_accessor!(exclude_files, FieldName::ExcludeFiles, Text, &TextField);
 
-    define_field_accessor_mut!(search_mut, FieldName::Search, Text, TextField);
-    define_field_accessor_mut!(include_files_mut, FieldName::IncludeFiles, Text, TextField);
-    define_field_accessor_mut!(exclude_files_mut, FieldName::ExcludeFiles, Text, TextField);
+    define_field_accessor_mut!(search_mut, FieldName::Search, Text, &mut TextField);
+    define_field_accessor_mut!(
+        include_files_mut,
+        FieldName::IncludeFiles,
+        Text,
+        &mut TextField
+    );
+    define_field_accessor_mut!(
+        exclude_files_mut,
+        FieldName::ExcludeFiles,
+        Text,
+        &mut TextField
+    );
 
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_values(search_field_values: SearchFieldValues<'_>) -> Self {
         let fields = [
             SearchField {
                 name: FieldName::Search,
-                field: Arc::new(RwLock::new(Field::text(search_field_values.search.value))),
+                field: Field::text(search_field_values.search.value),
                 set_by_cli: search_field_values.search.set_by_cli,
             },
             SearchField {
                 name: FieldName::Replace,
-                field: Arc::new(RwLock::new(Field::text(search_field_values.replace.value))),
+                field: Field::text(search_field_values.replace.value),
                 set_by_cli: search_field_values.replace.set_by_cli,
             },
             SearchField {
                 name: FieldName::FixedStrings,
-                field: Arc::new(RwLock::new(Field::checkbox(
-                    search_field_values.fixed_strings.value,
-                ))),
+                field: Field::checkbox(search_field_values.fixed_strings.value),
                 set_by_cli: search_field_values.fixed_strings.set_by_cli,
             },
             SearchField {
                 name: FieldName::WholeWord,
-                field: Arc::new(RwLock::new(Field::checkbox(
-                    search_field_values.match_whole_word.value,
-                ))),
+                field: Field::checkbox(search_field_values.match_whole_word.value),
                 set_by_cli: search_field_values.match_whole_word.set_by_cli,
             },
             SearchField {
                 name: FieldName::MatchCase,
-                field: Arc::new(RwLock::new(Field::checkbox(
-                    search_field_values.match_case.value,
-                ))),
+                field: Field::checkbox(search_field_values.match_case.value),
                 set_by_cli: search_field_values.match_case.set_by_cli,
             },
             SearchField {
                 name: FieldName::IncludeFiles,
-                field: Arc::new(RwLock::new(Field::text(
-                    search_field_values.include_files.value,
-                ))),
+                field: Field::text(search_field_values.include_files.value),
                 set_by_cli: search_field_values.include_files.set_by_cli,
             },
             SearchField {
                 name: FieldName::ExcludeFiles,
-                field: Arc::new(RwLock::new(Field::text(
-                    search_field_values.exclude_files.value,
-                ))),
+                field: Field::text(search_field_values.exclude_files.value),
                 set_by_cli: search_field_values.exclude_files.set_by_cli,
             },
         ];
@@ -684,10 +677,6 @@ impl SearchFields {
         highlighted
     }
 
-    fn all_populated(&self) -> bool {
-        self.fields.iter().all(|f| f.set_by_cli)
-    }
-
     pub fn with_disable_prepopulated_fields(mut self, disable_prepopulated_fields: bool) -> Self {
         self.disable_prepopulated_fields = disable_prepopulated_fields;
         self
@@ -698,16 +687,12 @@ impl SearchFields {
         self
     }
 
-    fn highlighted_field_impl(&self) -> &SearchField {
+    pub fn highlighted_field(&self) -> &SearchField {
         &self.fields[self.highlighted]
     }
 
-    pub fn highlighted_field(&self) -> &Arc<RwLock<Field>> {
-        &self.highlighted_field_impl().field
-    }
-
-    pub fn highlighted_field_name(&self) -> &FieldName {
-        &self.highlighted_field_impl().name
+    pub fn highlighted_field_mut(&mut self) -> &mut SearchField {
+        &mut self.fields[self.highlighted]
     }
 
     fn focus_impl(&mut self, backward: bool) {
@@ -739,7 +724,7 @@ impl SearchFields {
         self.fields
             .iter()
             .filter_map(|field| {
-                field.field.read().error().map(|err| AppError {
+                field.field.error().map(|err| AppError {
                     name: field.name.title().to_string(),
                     long: err.long,
                 })
@@ -1057,13 +1042,13 @@ impl<'a> App {
                 self.search_fields.focus_next();
             }
             (code, modifiers) => {
-                if let FieldName::FixedStrings = self.search_fields.highlighted_field_name() {
+                if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
                 }
                 self.search_fields
-                    .highlighted_field()
-                    .write()
+                    .highlighted_field_mut()
+                    .field
                     .handle_keys(code, modifiers);
             }
         }

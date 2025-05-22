@@ -92,8 +92,8 @@ fn test_search_fields() {
 
     for c in "test search".chars() {
         search_fields
-            .highlighted_field()
-            .write()
+            .highlighted_field_mut()
+            .field
             .handle_keys(KeyCode::Char(c), KeyModifiers::NONE);
     }
     assert_eq!(search_fields.search().text, "test search");
@@ -102,8 +102,8 @@ fn test_search_fields() {
     assert_eq!(search_fields.highlighted, 1);
     for c in "test replace".chars() {
         search_fields
-            .highlighted_field()
-            .write()
+            .highlighted_field_mut()
+            .field
             .handle_keys(KeyCode::Char(c), KeyModifiers::NONE);
     }
     assert_eq!(search_fields.replace().text, "test replace");
@@ -111,8 +111,8 @@ fn test_search_fields() {
     search_fields.focus_next();
     assert_eq!(search_fields.highlighted, 2);
     search_fields
-        .highlighted_field()
-        .write()
+        .highlighted_field_mut()
+        .field
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
     assert!(search_fields.fixed_strings().checked);
 
@@ -123,8 +123,8 @@ fn test_search_fields() {
     }
 
     search_fields
-        .highlighted_field()
-        .write()
+        .highlighted_field_mut()
+        .field
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
     let search_type = search_fields.search_type().unwrap();
     match search_type {
