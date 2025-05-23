@@ -1,10 +1,7 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
 use futures::future;
-use ignore::{
-    overrides::{Override, OverrideBuilder},
-    WalkState,
-};
+use ignore::overrides::{Override, OverrideBuilder};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use std::{
@@ -15,7 +12,7 @@ use std::{
     collections::HashMap,
     env::current_dir,
     mem,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -27,13 +24,13 @@ use tokio::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         Semaphore,
     },
-    task::JoinHandle,
+    task::{self, JoinHandle},
 };
 
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::ParsedFields,
+    search::ParsedFields,
     utils::ceil_div,
 };
 
@@ -68,7 +65,7 @@ pub enum AppEvent {
 
 #[derive(Debug)]
 pub enum BackgroundProcessingEvent {
-    AddSearchResult(SearchResult),
+    AddSearchResults(Vec<SearchResult>),
     SearchCompleted,
     ReplacementCompleted(ReplaceState),
 }
@@ -484,8 +481,6 @@ pub struct App {
     popup: Option<Popup>,
 }
 
-const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
-
 impl<'a> App {
     fn new(
         directory: Option<PathBuf>,
@@ -699,15 +694,18 @@ impl<'a> App {
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
-            BackgroundProcessingEvent::AddSearchResult(result) => {
+            BackgroundProcessingEvent::AddSearchResults(mut results) => {
                 let mut rerender = false;
                 if let Screen::SearchProgressing(search_in_progress_state) =
                     &mut self.current_screen
                 {
-                    search_in_progress_state.search_state.results.push(result);
+                    search_in_progress_state
+                        .search_state
+                        .results
+                        .append(&mut results);
 
-                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(100)
-                    {
+                    // Slightly random duration so that time taken isn't a round number
+                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
                         rerender = true;
                         search_in_progress_state.last_render = Instant::now();
                     }
@@ -977,39 +975,20 @@ impl<'a> App {
         event_sender: UnboundedSender<Event>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let walker = parsed_fields.build_walker();
-
-            tokio::spawn(async move {
-                walker.run(|| {
-                    Box::new(|result| {
-                        let Ok(entry) = result else {
-                            return WalkState::Continue;
-                        };
-
-                        let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
-                        #[allow(clippy::collapsible_if)]
-                        if is_file && !Self::ignore_file(entry.path()) {
-                            if tx.send(entry.path().to_owned()).is_err() {
-                                return WalkState::Quit;
-                            }
-                        }
-
-                        WalkState::Continue
-                    })
-                });
+            let mut search_handle = task::spawn_blocking(move || {
+                parsed_fields.search_parallel();
             });
 
-            let mut rerender_interval = tokio::time::interval(Duration::from_millis(393)); // Slightly random duration so that time taken isn't a round number
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
             rerender_interval.tick().await;
 
             loop {
                 tokio::select! {
-                    maybe_path = rx.recv() => {
-                        match maybe_path {
-                            Some(path) => parsed_fields.handle_path(&path).await,
-                            None => break,
+                    res = &mut search_handle => {
+                        if let Err(e) = res {
+                            warn!("Search thread panicked: {e}");
                         }
+                        break;
                     },
                     _ = rerender_interval.tick() => {
                         let _ = event_sender.send(Event::App(AppEvent::Rerender));
@@ -1024,17 +1003,6 @@ impl<'a> App {
                 warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
         })
-    }
-
-    fn ignore_file(path: &Path) -> bool {
-        if let Some(ext) = path.extension() {
-            if let Some(ext_str) = ext.to_str() {
-                if BINARY_EXTENSIONS.contains(&ext_str) {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     fn calculate_statistics<I>(results: I, num_ignored: usize) -> ReplaceState
@@ -1313,6 +1281,7 @@ fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
 #[cfg(test)]
 mod tests {
     use rand::Rng;
+    use std::path::Path;
 
     use super::*;
 

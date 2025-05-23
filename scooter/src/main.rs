@@ -11,7 +11,7 @@ mod app_runner;
 mod config;
 mod fields;
 mod logging;
-mod replace;
+mod search;
 mod tui;
 mod ui;
 mod utils;

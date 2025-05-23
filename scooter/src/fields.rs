@@ -6,7 +6,7 @@ use ratatui::{
 use regex::Regex;
 use std::iter::Iterator;
 
-use crate::{app::AppError, replace::SearchType};
+use crate::{app::AppError, search::SearchType};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FieldError {

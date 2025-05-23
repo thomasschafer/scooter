@@ -1,15 +1,17 @@
-use content_inspector::{inspect, ContentType};
-use fancy_regex::Regex as FancyRegex;
-use ignore::overrides::Override;
-use ignore::{WalkBuilder, WalkParallel};
-use log::warn;
-use regex::Regex;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::thread;
-use tokio::io::AsyncBufReadExt;
+
+use content_inspector::{inspect, ContentType};
+use crossbeam_channel::bounded;
+use fancy_regex::Regex as FancyRegex;
+use ignore::overrides::Override;
+use ignore::{WalkBuilder, WalkState};
+use log::{error, warn};
+use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::{fs::File, io::BufReader};
 
 use crate::{
     app::{BackgroundProcessingEvent, SearchResult},
@@ -49,6 +51,7 @@ pub enum SearchType {
     PatternAdvanced(FancyRegex),
     Fixed(String),
 }
+
 impl SearchType {
     fn is_empty(&self) -> bool {
         let str = match &self {
@@ -63,7 +66,6 @@ impl SearchType {
 fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> SearchType {
     let mut search_regex_str = match search {
         SearchType::Fixed(ref fixed_str) => regex::escape(fixed_str),
-
         SearchType::Pattern(ref pattern) => pattern.as_str().to_owned(),
         SearchType::PatternAdvanced(ref pattern) => pattern.as_str().to_owned(),
     };
@@ -94,7 +96,6 @@ pub struct ParsedFields {
 }
 
 impl ParsedFields {
-    // TODO: add tests for instantiating and handling paths
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         search: SearchType,
@@ -123,65 +124,137 @@ impl ParsedFields {
         }
     }
 
-    pub async fn handle_path(&self, path: &Path) {
-        match File::open(path).await {
-            Ok(file) => {
-                let reader = BufReader::new(file);
+    pub fn search_parallel(&self) {
+        let (path_tx, path_rx) = bounded::<PathBuf>(1000);
 
-                let mut lines = reader.lines();
-                let mut line_number = 0;
-                loop {
-                    match lines.next_line().await {
-                        Ok(Some(line)) => {
-                            if let ContentType::BINARY = inspect(line.as_bytes()) {
-                                break;
-                            }
-                            if let Some(replacement) =
-                                replacement_if_match(&line, &self.search, &self.replace)
-                            {
-                                let search_result = SearchResult {
-                                    path: path.to_path_buf(),
-                                    line_number: line_number + 1,
-                                    line: line.clone(),
-                                    replacement,
-                                    included: true,
-                                    replace_result: None,
-                                };
-                                let send_result = self.background_processing_sender.send(
-                                    BackgroundProcessingEvent::AddSearchResult(search_result),
-                                );
-                                if send_result.is_err() {
-                                    // likely state reset, thread about to be killed
-                                    return;
-                                }
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(err) => {
-                            warn!("Error retrieving line {line_number} of {path:?}: {err}");
-                            break;
-                        }
+        let num_threads = thread::available_parallelism()
+            .map(NonZero::get)
+            .unwrap_or(4)
+            .min(12);
+
+        thread::scope(|scope| {
+            let mut handles = vec![];
+
+            for _ in 0..num_threads {
+                let path_rx = path_rx.clone();
+                let sender = self.background_processing_sender.clone();
+
+                let handle = scope.spawn(move || {
+                    while let Ok(path) = path_rx.recv() {
+                        Self::search_file(&path, &self.search, &self.replace, &sender);
                     }
-                    line_number += 1;
-                }
+                });
+
+                handles.push(handle);
             }
+
+            // Receiver is dropped automatically when Arc ref count reaches 0
+
+            let walker = WalkBuilder::new(&self.root_dir)
+                .hidden(!self.include_hidden)
+                .overrides(self.overrides.clone())
+                .filter_entry(|entry| entry.file_name() != ".git")
+                .threads(num_threads)
+                .build_parallel();
+
+            walker.run(|| {
+                let path_tx = path_tx.clone();
+                Box::new(move |result| {
+                    let Ok(entry) = result else {
+                        return WalkState::Continue;
+                    };
+
+                    if entry.file_type().is_some_and(|ft| ft.is_file())
+                        && !Self::is_likely_binary(entry.path())
+                        && path_tx.send(entry.path().to_owned()).is_err()
+                    {
+                        return WalkState::Quit;
+                    }
+                    WalkState::Continue
+                })
+            });
+
+            // Close channel to signal workers to finish
+            drop(path_tx);
+        });
+    }
+
+    fn search_file(
+        path: &Path,
+        search: &SearchType,
+        replace: &str,
+        sender: &UnboundedSender<BackgroundProcessingEvent>,
+    ) {
+        let mut file = match File::open(path) {
+            Ok(f) => f,
             Err(err) => {
                 warn!("Error opening file {path:?}: {err}");
+                return;
             }
+        };
+
+        // Fast upfront binary sniff (8 KiB)
+        let mut probe = [0u8; 8192];
+        let read = file.read(&mut probe).unwrap_or(0);
+        if matches!(inspect(&probe[..read]), ContentType::BINARY) {
+            return;
+        }
+        if file.seek(SeekFrom::Start(0)).is_err() {
+            error!("Failed to seek file {path:?} to start");
+            return;
+        }
+
+        let reader = BufReader::with_capacity(16384, file);
+        let mut results = Vec::new();
+
+        let mut read_errors = 0;
+
+        for (mut line_number, line_result) in reader.lines().enumerate() {
+            line_number += 1; // Ensure line-number is 1-indexed
+
+            let line = match line_result {
+                Ok(l) => l,
+                Err(err) => {
+                    read_errors += 1;
+                    warn!("Error retrieving line {line_number} of {path:?}: {err}");
+                    if read_errors >= 10 {
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            if let Some(replacement) = replacement_if_match(&line, search, replace) {
+                let result = SearchResult {
+                    path: path.to_path_buf(),
+                    line_number,
+                    line,
+                    replacement,
+                    included: true,
+                    replace_result: None,
+                };
+                results.push(result);
+            }
+        }
+
+        if !results.is_empty() {
+            // Ignore error - likely state reset, thread about to be killed
+            let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
         }
     }
 
-    pub(crate) fn build_walker(&self) -> WalkParallel {
-        // Default threads copied from ripgrep
-        let threads = thread::available_parallelism()
-            .map_or(1, NonZero::get)
-            .min(12);
-        WalkBuilder::new(&self.root_dir)
-            .hidden(!self.include_hidden)
-            .overrides(self.overrides.clone())
-            .filter_entry(|entry| entry.file_name() != ".git")
-            .threads(threads)
-            .build_parallel()
+    fn is_likely_binary(path: &Path) -> bool {
+        const BINARY_EXTENSIONS: &[&str] = &[
+            "png", "gif", "jpg", "jpeg", "ico", "svg", "pdf", "exe", "dll", "so", "bin", "class",
+            "jar", "zip", "gz", "bz2", "xz", "7z", "tar",
+        ];
+        if let Some(ext) = path.extension() {
+            if let Some(ext_str) = ext.to_str() {
+                return BINARY_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
+            }
+        }
+
+        false
     }
 }
 

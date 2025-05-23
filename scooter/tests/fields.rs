@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use scooter::{
-    replace::SearchType, CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields,
+    search::SearchType, CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields,
     TextField,
 };
 
