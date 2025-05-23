@@ -1,6 +1,5 @@
 use anyhow::Error;
 use crossterm::event::KeyEvent;
-use futures::future;
 use ignore::overrides::{Override, OverrideBuilder};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
@@ -9,47 +8,23 @@ use std::{
     iter::Iterator,
 };
 use std::{
-    collections::HashMap,
     env::current_dir,
     mem,
     path::PathBuf,
-    sync::Arc,
     time::{Duration, Instant},
 };
-use tempfile::NamedTempFile;
 use tokio::{
-    fs::File,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
-    sync::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
-        Semaphore,
-    },
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::{self, JoinHandle},
 };
 
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    search::ParsedFields,
+    replace::{self, PerformingReplacementState, ReplaceState},
+    search::{ParsedFields, SearchResult},
     utils::ceil_div,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReplaceResult {
-    Success,
-    Error(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchResult {
-    pub path: PathBuf,
-    pub line_number: usize,
-    /// 1-indexed
-    pub line: String,
-    pub replacement: String,
-    pub included: bool,
-    pub replace_result: Option<ReplaceResult>,
-}
 
 #[derive(Debug)]
 pub enum Event {
@@ -314,51 +289,6 @@ impl SearchState {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ReplaceState {
-    pub num_successes: usize,
-    pub num_ignored: usize,
-    pub errors: Vec<SearchResult>,
-    pub replacement_errors_pos: usize,
-}
-
-impl ReplaceState {
-    fn handle_key_results(&mut self, key: &KeyEvent) -> EventHandlingResult {
-        #[allow(clippy::match_same_arms)]
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.scroll_replacement_errors_down();
-            }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                self.scroll_replacement_errors_up();
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
-            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
-            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit,
-            _ => return EventHandlingResult::None,
-        }
-        EventHandlingResult::Rerender
-    }
-
-    pub fn scroll_replacement_errors_up(&mut self) {
-        if self.replacement_errors_pos == 0 {
-            self.replacement_errors_pos = self.errors.len();
-        }
-        self.replacement_errors_pos = self.replacement_errors_pos.saturating_sub(1);
-    }
-
-    pub fn scroll_replacement_errors_down(&mut self) {
-        if self.replacement_errors_pos >= self.errors.len().saturating_sub(1) {
-            self.replacement_errors_pos = 0;
-        } else {
-            self.replacement_errors_pos += 1;
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct SearchInProgressState {
     pub search_state: SearchState,
@@ -393,32 +323,6 @@ impl SearchCompleteState {
             search_state,
             search_time_taken: search_started.elapsed(),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct PerformingReplacementState {
-    handle: Option<JoinHandle<()>>,
-    #[allow(dead_code)]
-    processing_sender: UnboundedSender<BackgroundProcessingEvent>,
-    processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
-}
-
-impl PerformingReplacementState {
-    pub fn new(
-        handle: Option<JoinHandle<()>>,
-        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
-        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
-    ) -> Self {
-        Self {
-            handle,
-            processing_sender,
-            processing_receiver,
-        }
-    }
-
-    fn set_handle(&mut self, handle: JoinHandle<()>) {
-        self.handle = Some(handle);
     }
 }
 
@@ -631,7 +535,8 @@ impl<'a> App {
             )),
         ) {
             Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                let handle = Self::perform_replacement(search_state, background_processing_sender);
+                let handle =
+                    replace::perform_replacement(search_state, background_processing_sender);
                 if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
                     state.set_handle(handle);
                 } else {
@@ -645,48 +550,6 @@ impl<'a> App {
                 self.current_screen = screen;
             }
         }
-    }
-
-    pub fn perform_replacement(
-        search_state: SearchState,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
-            let (included, num_ignored) = split_results(search_state.results);
-            for res in included {
-                path_groups.entry(res.path.clone()).or_default().push(res);
-            }
-
-            let semaphore = Arc::new(Semaphore::new(8));
-            let mut file_tasks = vec![];
-
-            for (path, mut results) in path_groups {
-                let semaphore = semaphore.clone();
-                let task = tokio::spawn(async move {
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    if let Err(file_err) = Self::replace_in_file(path, &mut results).await {
-                        for res in &mut results {
-                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
-                        }
-                    }
-                    drop(permit);
-                    results
-                });
-                file_tasks.push(task);
-            }
-
-            let replacement_results = future::join_all(file_tasks)
-                .await
-                .into_iter()
-                .flat_map(Result::unwrap);
-            let replace_state = Self::calculate_statistics(replacement_results, num_ignored);
-
-            // Ignore error: we may have gone back to the previous screen
-            let _ = background_processing_sender.send(
-                BackgroundProcessingEvent::ReplacementCompleted(replace_state),
-            );
-        })
     }
 
     pub fn handle_background_processing_event(
@@ -1005,93 +868,6 @@ impl<'a> App {
         })
     }
 
-    fn calculate_statistics<I>(results: I, num_ignored: usize) -> ReplaceState
-    where
-        I: IntoIterator<Item = SearchResult>,
-    {
-        let mut num_successes = 0;
-        let mut errors = vec![];
-
-        results.into_iter().for_each(|res| {
-            assert!(
-                res.included,
-                "Expected only included results, found {res:?}"
-            );
-            match &res.replace_result {
-                Some(ReplaceResult::Success) => {
-                    num_successes += 1;
-                }
-                None => {
-                    let mut res = res.clone();
-                    res.replace_result = Some(ReplaceResult::Error(
-                        "Failed to find search result in file".to_owned(),
-                    ));
-                    errors.push(res);
-                }
-                Some(ReplaceResult::Error(_)) => {
-                    errors.push(res.clone());
-                }
-            }
-        });
-
-        ReplaceState {
-            num_successes,
-            num_ignored,
-            errors,
-            replacement_errors_pos: 0,
-        }
-    }
-
-    async fn replace_in_file(
-        file_path: PathBuf,
-        results: &mut [SearchResult],
-    ) -> anyhow::Result<()> {
-        let mut line_map: HashMap<_, _> = results
-            .iter_mut()
-            .map(|res| (res.line_number, res))
-            .collect();
-
-        let parent_dir = file_path.parent().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Cannot create temp file: target path '{}' has no parent directory",
-                file_path.display()
-            )
-        })?;
-        let temp_output_file = NamedTempFile::new_in(parent_dir)?;
-
-        // Scope the file operations so they're closed before rename
-        {
-            let input = File::open(&file_path).await?;
-            let reader = BufReader::new(input);
-
-            let output = File::create(temp_output_file.path()).await?;
-            let mut writer = BufWriter::new(output);
-
-            let mut lines = reader.lines();
-            let mut line_number = 0;
-            while let Some(mut line) = lines.next_line().await? {
-                if let Some(res) = line_map.get_mut(&(line_number + 1)) {
-                    if line == res.line {
-                        line.clone_from(&res.replacement);
-                        res.replace_result = Some(ReplaceResult::Success);
-                    } else {
-                        res.replace_result = Some(ReplaceResult::Error(
-                            "File changed since last search".to_owned(),
-                        ));
-                    }
-                }
-                line.push('\n');
-                writer.write_all(line.as_bytes()).await?;
-                line_number += 1;
-            }
-
-            writer.flush().await?;
-        }
-
-        temp_output_file.persist(&file_path)?;
-        Ok(())
-    }
-
     pub fn show_popup(&self) -> bool {
         self.popup.is_some()
     }
@@ -1272,12 +1048,6 @@ impl<'a> App {
     }
 }
 
-fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
-    let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
-    let num_ignored = excluded.len();
-    (included, num_ignored)
-}
-
 #[cfg(test)]
 mod tests {
     use rand::Rng;
@@ -1405,7 +1175,7 @@ mod tests {
             line: "foo".to_owned(),
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(ReplaceResult::Success),
+            replace_result: Some(replace::ReplaceResult::Success),
         }
     }
 
@@ -1427,7 +1197,7 @@ mod tests {
             line: "foo".to_owned(),
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(ReplaceResult::Error("error".to_owned())),
+            replace_result: Some(replace::ReplaceResult::Error("error".to_owned())),
         }
     }
 
@@ -1451,8 +1221,9 @@ mod tests {
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
-            App::calculate_statistics(results, num_ignored)
+            let (results, num_ignored) =
+                replace::split_results(search_complete_state.search_state.results);
+            replace::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1479,8 +1250,9 @@ mod tests {
             ignored_result(),
         ]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) = split_results(search_complete_state.search_state.results);
-            App::calculate_statistics(results, num_ignored)
+            let (results, num_ignored) =
+                replace::split_results(search_complete_state.search_state.results);
+            replace::calculate_statistics(results, num_ignored)
         } else {
             panic!("Expected SearchComplete");
         };

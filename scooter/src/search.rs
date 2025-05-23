@@ -13,10 +13,18 @@ use log::{error, warn};
 use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    app::{BackgroundProcessingEvent, SearchResult},
-    fields::SearchFieldValues,
-};
+use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchResult {
+    pub path: PathBuf,
+    pub line_number: usize,
+    /// 1-indexed
+    pub line: String,
+    pub replacement: String,
+    pub included: bool,
+    pub replace_result: Option<ReplaceResult>,
+}
 
 fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {
