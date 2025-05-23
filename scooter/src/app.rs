@@ -22,7 +22,7 @@ use tokio::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, PerformingReplacementState, ReplaceState},
+    replace::{self, PerformingReplacementState, ReplaceState, REPLACE_CANCELLED},
     search::{ParsedFields, SearchResult, SEARCH_CANCELLED},
     utils::ceil_div,
 };
@@ -228,11 +228,17 @@ impl SearchState {
     }
 
     fn selected_fields(&self) -> &[SearchResult] {
+        if self.results.is_empty() {
+            return &[];
+        }
         let (low, high) = self.selected_range();
         &self.results[low..=high]
     }
 
     fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+        if self.results.is_empty() {
+            return &mut [];
+        }
         let (low, high) = self.selected_range();
         &mut self.results[low..=high]
     }
@@ -447,7 +453,7 @@ impl<'a> App {
     }
 
     fn cancel_replacement(&mut self) {
-        crate::replace::REPLACE_CANCELLED.store(true, Ordering::Relaxed);
+        REPLACE_CANCELLED.store(true, Ordering::Relaxed);
 
         if let Screen::PerformingReplacement(PerformingReplacementState {
             handle: Some(ref mut handle),
