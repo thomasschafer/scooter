@@ -30,7 +30,7 @@ use tokio::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::ParsedFields,
+    search::ParsedFields,
     utils::ceil_div,
 };
 

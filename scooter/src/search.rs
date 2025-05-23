@@ -83,7 +83,6 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
     SearchType::PatternAdvanced(fancy_regex)
 }
 
-// TODO: move this into a new file e.g. `search.rs`
 #[derive(Clone, Debug)]
 pub struct ParsedFields {
     search: SearchType,
@@ -138,13 +137,15 @@ impl ParsedFields {
 
             for _ in 0..num_threads {
                 let path_rx = path_rx.clone();
-                let sender = self.background_processing_sender.clone();
-                let search_pattern = self.search.clone();
-                let replace_str = self.replace.clone();
 
                 let handle = scope.spawn(move || {
                     while let Ok(path) = path_rx.recv() {
-                        Self::search_file(&path, &search_pattern, &replace_str, &sender);
+                        Self::search_file(
+                            &path,
+                            &self.search,
+                            &self.replace,
+                            &self.background_processing_sender,
+                        );
                     }
                 });
                 handles.push(handle);
