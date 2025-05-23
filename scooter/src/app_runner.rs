@@ -16,12 +16,12 @@ use std::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::utils::validate_directory;
-use crate::SearchFieldValues;
 use crate::{
     app::{App, AppError, Event, EventHandlingResult},
+    fields::SearchFieldValues,
     logging::setup_logging,
     tui::Tui,
+    utils::validate_directory,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

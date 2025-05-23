@@ -2,7 +2,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use content_inspector::{inspect, ContentType};
 use crossbeam_channel::bounded;
@@ -14,6 +16,8 @@ use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
+
+pub static SEARCH_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
@@ -133,6 +137,8 @@ impl ParsedFields {
     }
 
     pub fn search_parallel(&self) {
+        SEARCH_CANCELLED.store(false, Ordering::Relaxed);
+
         let (path_tx, path_rx) = bounded::<PathBuf>(1000);
 
         let num_threads = thread::available_parallelism()
@@ -140,49 +146,91 @@ impl ParsedFields {
             .unwrap_or(4)
             .min(12);
 
-        thread::scope(|scope| {
-            let mut handles = vec![];
+        let mut handles = vec![];
 
-            for _ in 0..num_threads {
-                let path_rx = path_rx.clone();
-                let sender = self.background_processing_sender.clone();
+        for _ in 0..num_threads {
+            let path_rx = path_rx.clone();
+            let sender = self.background_processing_sender.clone();
+            let search = self.search.clone();
+            let replace = self.replace.clone();
 
-                let handle = scope.spawn(move || {
-                    while let Ok(path) = path_rx.recv() {
-                        Self::search_file(&path, &self.search, &self.replace, &sender);
+            let handle = thread::spawn(move || {
+                loop {
+                    if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+                        break;
                     }
-                });
 
-                handles.push(handle);
-            }
-
-            let walker = WalkBuilder::new(&self.root_dir)
-                .hidden(!self.include_hidden)
-                .overrides(self.overrides.clone())
-                .filter_entry(|entry| entry.file_name() != ".git")
-                .threads(num_threads)
-                .build_parallel();
-
-            walker.run(|| {
-                let path_tx = path_tx.clone();
-                Box::new(move |result| {
-                    let Ok(entry) = result else {
-                        return WalkState::Continue;
-                    };
-
-                    if entry.file_type().is_some_and(|ft| ft.is_file())
-                        && !Self::is_likely_binary(entry.path())
-                        && path_tx.send(entry.path().to_owned()).is_err()
-                    {
-                        return WalkState::Quit;
+                    match path_rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(path) => {
+                            Self::search_file(&path, &search, &replace, &sender);
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                            // Keep polling
+                        }
+                        Err(_) => {
+                            // Channel closed, exit
+                            break;
+                        }
                     }
-                    WalkState::Continue
-                })
+                }
             });
 
-            // Close channel to signal workers to finish
-            drop(path_tx);
-        });
+            handles.push(handle);
+        }
+
+        let walker_handle = {
+            let root_dir = self.root_dir.clone();
+            let include_hidden = self.include_hidden;
+            let overrides = self.overrides.clone();
+            let path_tx = path_tx.clone();
+
+            thread::spawn(move || {
+                let walker = WalkBuilder::new(&root_dir)
+                    .hidden(!include_hidden)
+                    .overrides(overrides)
+                    .filter_entry(|entry| entry.file_name() != ".git")
+                    .threads(num_threads)
+                    .build_parallel();
+
+                walker.run(|| {
+                    let path_tx = path_tx.clone();
+                    Box::new(move |result| {
+                        if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+                            return WalkState::Quit;
+                        }
+
+                        let Ok(entry) = result else {
+                            return WalkState::Continue;
+                        };
+
+                        if entry.file_type().is_some_and(|ft| ft.is_file())
+                            && !Self::is_likely_binary(entry.path())
+                            && path_tx.send(entry.path().to_owned()).is_err()
+                        {
+                            return WalkState::Quit;
+                        }
+                        WalkState::Continue
+                    })
+                });
+            })
+        };
+
+        while !walker_handle.is_finished() {
+            if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        drop(path_tx);
+
+        if !SEARCH_CANCELLED.load(Ordering::Relaxed) {
+            let _ = walker_handle.join();
+
+            for handle in handles {
+                let _ = handle.join();
+            }
+        }
     }
 
     fn search_file(

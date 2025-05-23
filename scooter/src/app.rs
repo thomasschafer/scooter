@@ -6,6 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use std::{
     cmp::{max, min},
     iter::Iterator,
+    sync::atomic::Ordering,
 };
 use std::{
     env::current_dir,
@@ -22,7 +23,7 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
-    search::{ParsedFields, SearchResult},
+    search::{ParsedFields, SearchResult, SEARCH_CANCELLED},
     utils::ceil_div,
 };
 
@@ -436,6 +437,8 @@ impl<'a> App {
     }
 
     fn cancel_search(&mut self) {
+        SEARCH_CANCELLED.store(true, Ordering::Relaxed);
+
         if let Screen::SearchProgressing(SearchInProgressState { handle, .. }) =
             &mut self.current_screen
         {
@@ -444,6 +447,8 @@ impl<'a> App {
     }
 
     fn cancel_replacement(&mut self) {
+        crate::replace::REPLACE_CANCELLED.store(true, Ordering::Relaxed);
+
         if let Screen::PerformingReplacement(PerformingReplacementState {
             handle: Some(ref mut handle),
             ..

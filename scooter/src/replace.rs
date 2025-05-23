@@ -1,7 +1,14 @@
 use crossterm::event::KeyEvent;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tempfile::NamedTempFile;
 use tokio::{
     fs::File,
@@ -17,6 +24,8 @@ use crate::{
     app::{BackgroundProcessingEvent, EventHandlingResult},
     search::SearchResult,
 };
+
+pub static REPLACE_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplaceResult {
@@ -100,6 +109,8 @@ pub fn perform_replacement(
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        REPLACE_CANCELLED.store(false, Ordering::Relaxed);
+
         let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
         let (included, num_ignored) = split_results(search_state.results);
         for res in included {
@@ -110,6 +121,10 @@ pub fn perform_replacement(
         let mut file_tasks = vec![];
 
         for (path, mut results) in path_groups {
+            if REPLACE_CANCELLED.load(Ordering::Relaxed) {
+                break;
+            }
+
             let semaphore = semaphore.clone();
             let task = tokio::spawn(async move {
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
