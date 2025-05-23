@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -9,7 +9,7 @@ use crossbeam_channel::bounded;
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkState};
-use log::warn;
+use log::{error, warn};
 use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -137,22 +137,20 @@ impl ParsedFields {
 
             for _ in 0..num_threads {
                 let path_rx = path_rx.clone();
+                let sender = self.background_processing_sender.clone();
+                let search = self.search.clone();
+                let replace = self.replace.clone();
 
                 let handle = scope.spawn(move || {
                     while let Ok(path) = path_rx.recv() {
-                        Self::search_file(
-                            &path,
-                            &self.search,
-                            &self.replace,
-                            &self.background_processing_sender,
-                        );
+                        Self::search_file(&path, &search, &replace, &sender);
                     }
                 });
+
                 handles.push(handle);
             }
 
-            // Drop the original receiver to ensure workers will terminate
-            drop(path_rx);
+            // Receiver is dropped automatically when Arc ref count reaches 0
 
             let walker = WalkBuilder::new(&self.root_dir)
                 .hidden(!self.include_hidden)
@@ -189,7 +187,7 @@ impl ParsedFields {
         replace: &str,
         sender: &UnboundedSender<BackgroundProcessingEvent>,
     ) {
-        let file = match File::open(path) {
+        let mut file = match File::open(path) {
             Ok(f) => f,
             Err(err) => {
                 warn!("Error opening file {path:?}: {err}");
@@ -197,12 +195,22 @@ impl ParsedFields {
             }
         };
 
+        // Fast upfront binary sniff (8 KiB)
+        let mut probe = [0u8; 8192];
+        let read = file.read(&mut probe).unwrap_or(0);
+        if matches!(inspect(&probe[..read]), ContentType::BINARY) {
+            return;
+        }
+        if file.seek(SeekFrom::Start(0)).is_err() {
+            error!("Failed to seek file {path:?} to start");
+            return;
+        }
+
         let reader = BufReader::with_capacity(16384, file);
-        let mut line_number = 0;
         let mut results = Vec::new();
 
-        for line_result in reader.lines() {
-            line_number += 1;
+        for (mut line_number, line_result) in reader.lines().enumerate() {
+            line_number += 1; // Ensure line-number is 1-indexed
 
             let line = match line_result {
                 Ok(l) => l,
@@ -211,10 +219,6 @@ impl ParsedFields {
                     continue;
                 }
             };
-
-            if let ContentType::BINARY = inspect(line.as_bytes()) {
-                break;
-            }
 
             if let Some(replacement) = replacement_if_match(&line, search, replace) {
                 let result = SearchResult {
@@ -236,8 +240,10 @@ impl ParsedFields {
     }
 
     fn is_likely_binary(path: &Path) -> bool {
-        const BINARY_EXTENSIONS: &[&str] = &["png", "gif", "jpg", "jpeg", "ico", "svg", "pdf"];
-
+        const BINARY_EXTENSIONS: &[&str] = &[
+            "png", "gif", "jpg", "jpeg", "ico", "svg", "pdf", "exe", "dll", "so", "bin", "class",
+            "jar", "zip", "gz", "bz2", "xz", "7z", "tar",
+        ];
         if let Some(ext) = path.extension() {
             if let Some(ext_str) = ext.to_str() {
                 return BINARY_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());

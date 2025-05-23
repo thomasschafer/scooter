@@ -984,7 +984,10 @@ impl<'a> App {
 
             loop {
                 tokio::select! {
-                    _ = &mut search_handle => {
+                    res = &mut search_handle => {
+                        if let Err(e) = res {
+                            warn!("Search thread panicked: {e}");
+                        }
                         break;
                     },
                     _ = rerender_interval.tick() => {
