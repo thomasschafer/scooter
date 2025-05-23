@@ -156,8 +156,6 @@ impl ParsedFields {
                 handles.push(handle);
             }
 
-            // Receiver is dropped automatically when Arc ref count reaches 0
-
             let walker = WalkBuilder::new(&self.root_dir)
                 .hidden(!self.include_hidden)
                 .overrides(self.overrides.clone())

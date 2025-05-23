@@ -435,7 +435,7 @@ impl<'a> App {
         (app, app_event_receiver)
     }
 
-    pub fn cancel_search(&mut self) {
+    fn cancel_search(&mut self) {
         if let Screen::SearchProgressing(SearchInProgressState { handle, .. }) =
             &mut self.current_screen
         {
@@ -443,7 +443,7 @@ impl<'a> App {
         }
     }
 
-    pub fn cancel_replacement(&mut self) {
+    fn cancel_replacement(&mut self) {
         if let Screen::PerformingReplacement(PerformingReplacementState {
             handle: Some(ref mut handle),
             ..
@@ -453,9 +453,13 @@ impl<'a> App {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn cancel_in_progress_tasks(&mut self) {
         self.cancel_search();
         self.cancel_replacement();
+    }
+
+    pub fn reset(&mut self) {
+        self.cancel_in_progress_tasks();
         *self = Self::new(
             Some(self.directory.clone()),
             self.include_hidden,

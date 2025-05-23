@@ -213,6 +213,7 @@ where
     }
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
+        self.app.cancel_in_progress_tasks();
         self.tui.exit()
     }
 
