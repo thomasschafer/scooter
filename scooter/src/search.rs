@@ -2,7 +2,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -16,8 +19,6 @@ use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
-
-pub static SEARCH_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
@@ -103,6 +104,7 @@ pub struct ParsedFields {
     // TODO: `root_dir` and `include_hidden` are duplicated across this and App
     root_dir: PathBuf,
     include_hidden: bool,
+    cancelled: Arc<AtomicBool>,
 
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 }
@@ -117,6 +119,7 @@ impl ParsedFields {
         overrides: Override,
         root_dir: PathBuf,
         include_hidden: bool,
+        cancelled: Arc<AtomicBool>,
         background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> Self {
         let search = if whole_word == SearchFieldValues::whole_word_default()
@@ -132,12 +135,13 @@ impl ParsedFields {
             overrides,
             root_dir,
             include_hidden,
+            cancelled,
             background_processing_sender,
         }
     }
 
     pub fn search_parallel(&self) {
-        SEARCH_CANCELLED.store(false, Ordering::Relaxed);
+        self.cancelled.store(false, Ordering::Relaxed);
 
         let (path_tx, path_rx) = bounded::<PathBuf>(1000);
 
@@ -153,10 +157,11 @@ impl ParsedFields {
             let sender = self.background_processing_sender.clone();
             let search = self.search.clone();
             let replace = self.replace.clone();
+            let cancelled = self.cancelled.clone();
 
             let handle = thread::spawn(move || {
                 loop {
-                    if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+                    if cancelled.load(Ordering::Relaxed) {
                         break;
                     }
 
@@ -183,6 +188,7 @@ impl ParsedFields {
             let include_hidden = self.include_hidden;
             let overrides = self.overrides.clone();
             let path_tx = path_tx.clone();
+            let cancelled = self.cancelled.clone();
 
             thread::spawn(move || {
                 let walker = WalkBuilder::new(&root_dir)
@@ -194,8 +200,9 @@ impl ParsedFields {
 
                 walker.run(|| {
                     let path_tx = path_tx.clone();
+                    let cancelled = cancelled.clone();
                     Box::new(move |result| {
-                        if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+                        if cancelled.load(Ordering::Relaxed) {
                             return WalkState::Quit;
                         }
 
@@ -216,7 +223,7 @@ impl ParsedFields {
         };
 
         while !walker_handle.is_finished() {
-            if SEARCH_CANCELLED.load(Ordering::Relaxed) {
+            if self.cancelled.load(Ordering::Relaxed) {
                 break;
             }
             thread::sleep(Duration::from_millis(50));
@@ -224,7 +231,7 @@ impl ParsedFields {
 
         drop(path_tx);
 
-        if !SEARCH_CANCELLED.load(Ordering::Relaxed) {
+        if !self.cancelled.load(Ordering::Relaxed) {
             let _ = walker_handle.join();
 
             for handle in handles {

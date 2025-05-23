@@ -6,7 +6,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use std::{
     cmp::{max, min},
     iter::Iterator,
-    sync::atomic::Ordering,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use std::{
     env::current_dir,
@@ -22,8 +25,8 @@ use tokio::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, PerformingReplacementState, ReplaceState, REPLACE_CANCELLED},
-    search::{ParsedFields, SearchResult, SEARCH_CANCELLED},
+    replace::{self, PerformingReplacementState, ReplaceState},
+    search::{ParsedFields, SearchResult},
     utils::ceil_div,
 };
 
@@ -302,18 +305,21 @@ pub struct SearchInProgressState {
     pub(crate) last_render: Instant,
     pub(crate) search_started: Instant,
     handle: JoinHandle<()>,
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 impl SearchInProgressState {
     pub fn new(
         handle: JoinHandle<()>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
             search_state: SearchState::new(processing_receiver),
             last_render: Instant::now(),
             search_started: Instant::now(),
             handle,
+            cancelled,
         }
     }
 }
@@ -443,23 +449,23 @@ impl<'a> App {
     }
 
     fn cancel_search(&mut self) {
-        SEARCH_CANCELLED.store(true, Ordering::Relaxed);
-
-        if let Screen::SearchProgressing(SearchInProgressState { handle, .. }) =
-            &mut self.current_screen
+        if let Screen::SearchProgressing(SearchInProgressState {
+            handle, cancelled, ..
+        }) = &mut self.current_screen
         {
+            cancelled.store(true, Ordering::Relaxed);
             handle.abort();
         }
     }
 
     fn cancel_replacement(&mut self) {
-        REPLACE_CANCELLED.store(true, Ordering::Relaxed);
-
         if let Screen::PerformingReplacement(PerformingReplacementState {
             handle: Some(ref mut handle),
+            cancelled,
             ..
         }) = &mut self.current_screen
         {
+            cancelled.store(true, Ordering::Relaxed);
             handle.abort();
         }
     }
@@ -516,8 +522,12 @@ impl<'a> App {
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
 
-        match self.validate_fields(&background_processing_sender).unwrap() {
+        match self
+            .validate_fields(&background_processing_sender, cancelled.clone())
+            .unwrap()
+        {
             None => {
                 self.current_screen = Screen::SearchFields;
             }
@@ -530,6 +540,7 @@ impl<'a> App {
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
                     background_processing_receiver,
+                    cancelled,
                 ));
             }
         }
@@ -540,6 +551,7 @@ impl<'a> App {
     pub fn trigger_replacement(&mut self) {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
 
         match mem::replace(
             &mut self.current_screen,
@@ -547,11 +559,15 @@ impl<'a> App {
                 None,
                 background_processing_sender.clone(),
                 background_processing_receiver,
+                cancelled.clone(),
             )),
         ) {
             Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                let handle =
-                    replace::perform_replacement(search_state, background_processing_sender);
+                let handle = replace::perform_replacement(
+                    search_state,
+                    background_processing_sender,
+                    cancelled,
+                );
                 if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
                     state.set_handle(handle);
                 } else {
@@ -761,6 +777,7 @@ impl<'a> App {
     fn validate_fields(
         &mut self,
         background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
     ) -> anyhow::Result<Option<ParsedFields>> {
         let search_pattern = match self.search_fields.search_type() {
             Ok(p) => ValidatedField::Parsed(p),
@@ -789,6 +806,7 @@ impl<'a> App {
                 overrides,
                 self.directory.clone(),
                 self.include_hidden,
+                cancelled,
                 background_processing_sender.clone(),
             )))
         } else {

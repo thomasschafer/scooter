@@ -25,8 +25,6 @@ use crate::{
     search::SearchResult,
 };
 
-pub static REPLACE_CANCELLED: AtomicBool = AtomicBool::new(false);
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplaceResult {
     Success,
@@ -84,6 +82,7 @@ pub struct PerformingReplacementState {
     #[allow(dead_code)]
     pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+    pub cancelled: Arc<AtomicBool>,
 }
 
 impl PerformingReplacementState {
@@ -91,11 +90,13 @@ impl PerformingReplacementState {
         handle: Option<JoinHandle<()>>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
             handle,
             processing_sender,
             processing_receiver,
+            cancelled,
         }
     }
 
@@ -107,9 +108,10 @@ impl PerformingReplacementState {
 pub fn perform_replacement(
     search_state: crate::app::SearchState,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+    cancelled: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        REPLACE_CANCELLED.store(false, Ordering::Relaxed);
+        cancelled.store(false, Ordering::Relaxed);
 
         let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
         let (included, num_ignored) = split_results(search_state.results);
@@ -121,7 +123,7 @@ pub fn perform_replacement(
         let mut file_tasks = vec![];
 
         for (path, mut results) in path_groups {
-            if REPLACE_CANCELLED.load(Ordering::Relaxed) {
+            if cancelled.load(Ordering::Relaxed) {
                 break;
             }
 
