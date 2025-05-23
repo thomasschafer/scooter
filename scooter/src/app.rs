@@ -65,7 +65,7 @@ pub enum AppEvent {
 
 #[derive(Debug)]
 pub enum BackgroundProcessingEvent {
-    AddSearchResult(SearchResult),
+    AddSearchResults(Vec<SearchResult>),
     SearchCompleted,
     ReplacementCompleted(ReplaceState),
 }
@@ -694,12 +694,15 @@ impl<'a> App {
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
-            BackgroundProcessingEvent::AddSearchResult(result) => {
+            BackgroundProcessingEvent::AddSearchResults(mut results) => {
                 let mut rerender = false;
                 if let Screen::SearchProgressing(search_in_progress_state) =
                     &mut self.current_screen
                 {
-                    search_in_progress_state.search_state.results.push(result);
+                    search_in_progress_state
+                        .search_state
+                        .results
+                        .append(&mut results);
 
                     if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(100)
                     {

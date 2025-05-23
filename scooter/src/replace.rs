@@ -198,6 +198,7 @@ impl ParsedFields {
 
         let reader = BufReader::with_capacity(16384, file);
         let mut line_number = 0;
+        let mut results = Vec::new();
 
         for line_result in reader.lines() {
             line_number += 1;
@@ -223,15 +224,13 @@ impl ParsedFields {
                     included: true,
                     replace_result: None,
                 };
-
-                if sender
-                    .send(BackgroundProcessingEvent::AddSearchResult(result))
-                    .is_err()
-                {
-                    // likely state reset, thread about to be killed
-                    return;
-                }
+                results.push(result);
             }
+        }
+
+        if !results.is_empty() {
+            // Ignore error - likely state reset, thread about to be killed
+            let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
         }
     }
 
