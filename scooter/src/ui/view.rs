@@ -24,11 +24,10 @@ use syntect::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{
-        App, AppError, AppEvent, Event, Popup, ReplaceResult, ReplaceState, Screen, SearchResult,
-        SearchState,
-    },
+    app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
+    replace::{ReplaceResult, ReplaceState},
+    search::SearchResult,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,

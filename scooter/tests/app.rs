@@ -1,9 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
 use scooter::{
-    test_with_both_regex_modes, App, AppError, EventHandlingResult, FieldValue,
-    PerformingReplacementState, Popup, ReplaceResult, ReplaceState, Screen, SearchCompleteState,
-    SearchFieldValues, SearchFields, SearchInProgressState, SearchResult, SearchState,
+    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
+    search::SearchResult,
+    test_with_both_regex_modes, App, AppError, EventHandlingResult, FieldValue, Popup, Screen,
+    SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState, SearchState,
 };
 use serial_test::serial;
 use std::cmp::max;
