@@ -1,8 +1,7 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek};
+use std::io::{BufRead, BufReader};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::thread;
 
 use content_inspector::{inspect, ContentType};
@@ -84,6 +83,7 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
     SearchType::PatternAdvanced(fancy_regex)
 }
 
+// TODO: move this into a new file e.g. `search.rs`
 #[derive(Clone, Debug)]
 pub struct ParsedFields {
     search: SearchType,
@@ -127,63 +127,59 @@ impl ParsedFields {
 
     pub fn search_parallel(&self) {
         let (path_tx, path_rx) = bounded::<PathBuf>(1000);
-        let search_pattern = Arc::new(self.search.clone());
-        let replace_str = Arc::new(self.replace.clone());
 
         let num_threads = thread::available_parallelism()
             .map(NonZero::get)
             .unwrap_or(4)
             .min(12);
 
-        let mut handles = vec![];
-        for _ in 0..num_threads {
-            let path_rx = path_rx.clone();
-            let sender = self.background_processing_sender.clone();
-            let search_pattern = Arc::clone(&search_pattern);
-            let replace_str = Arc::clone(&replace_str);
+        thread::scope(|scope| {
+            let mut handles = vec![];
 
-            let handle = thread::spawn(move || {
-                while let Ok(path) = path_rx.recv() {
-                    Self::search_file(&path, &search_pattern, &replace_str, &sender);
-                }
+            for _ in 0..num_threads {
+                let path_rx = path_rx.clone();
+                let sender = self.background_processing_sender.clone();
+                let search_pattern = self.search.clone();
+                let replace_str = self.replace.clone();
+
+                let handle = scope.spawn(move || {
+                    while let Ok(path) = path_rx.recv() {
+                        Self::search_file(&path, &search_pattern, &replace_str, &sender);
+                    }
+                });
+                handles.push(handle);
+            }
+
+            // Drop the original receiver to ensure workers will terminate
+            drop(path_rx);
+
+            let walker = WalkBuilder::new(&self.root_dir)
+                .hidden(!self.include_hidden)
+                .overrides(self.overrides.clone())
+                .filter_entry(|entry| entry.file_name() != ".git")
+                .threads(num_threads)
+                .build_parallel();
+
+            walker.run(|| {
+                let path_tx = path_tx.clone();
+                Box::new(move |result| {
+                    let Ok(entry) = result else {
+                        return WalkState::Continue;
+                    };
+
+                    if entry.file_type().is_some_and(|ft| ft.is_file())
+                        && !Self::is_likely_binary(entry.path())
+                        && path_tx.send(entry.path().to_owned()).is_err()
+                    {
+                        return WalkState::Quit;
+                    }
+                    WalkState::Continue
+                })
             });
-            handles.push(handle);
-        }
 
-        // Drop the original receiver to ensure workers will terminate
-        drop(path_rx);
-
-        // Build and run the parallel walker
-        let walker = WalkBuilder::new(&self.root_dir)
-            .hidden(!self.include_hidden)
-            .overrides(self.overrides.clone())
-            .filter_entry(|entry| entry.file_name() != ".git")
-            .threads(num_threads)
-            .build_parallel();
-
-        walker.run(|| {
-            let path_tx = path_tx.clone();
-            Box::new(move |result| {
-                let Ok(entry) = result else {
-                    return WalkState::Continue;
-                };
-
-                if entry.file_type().is_some_and(|ft| ft.is_file())
-                    && !Self::is_likely_binary(entry.path())
-                    && path_tx.send(entry.path().to_owned()).is_err()
-                {
-                    return WalkState::Quit;
-                }
-                WalkState::Continue
-            })
+            // Close channel to signal workers to finish
+            drop(path_tx);
         });
-
-        // Close channel to signal workers to finish
-        drop(path_tx);
-
-        for handle in handles {
-            let _ = handle.join();
-        }
     }
 
     fn search_file(
@@ -192,17 +188,13 @@ impl ParsedFields {
         replace: &str,
         sender: &UnboundedSender<BackgroundProcessingEvent>,
     ) {
-        let mut file = match File::open(path) {
+        let file = match File::open(path) {
             Ok(f) => f,
             Err(err) => {
                 warn!("Error opening file {path:?}: {err}");
                 return;
             }
         };
-
-        if file.seek(std::io::SeekFrom::Start(0)).is_err() {
-            return;
-        }
 
         let reader = BufReader::with_capacity(16384, file);
         let mut line_number = 0;
