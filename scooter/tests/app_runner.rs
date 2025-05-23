@@ -1241,7 +1241,7 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
     wait_for_text(
         &mut snapshot_rx,
         Pattern::regex_must_compile(
-            r"Performing replacement\.\.\.\s*\n\s*Completed: \d+/8 \[Time: \d+\.\d{3}s\]",
+            r"Performing replacement\.\.\.\s*\n\s*Completed: \d+/8 \(\d+\.\d{2}%\)\s*\n\s*Time: \d+\.\d{3}s",
         ),
         1000,
     )

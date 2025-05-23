@@ -828,10 +828,13 @@ fn render_performing_replacement_view(
 ) {
     let area = default_width(area);
 
-    let [progress_area, stats_area] =
-        Layout::vertical([Constraint::Length(4), Constraint::Length(2)])
-            .flex(Flex::Center)
-            .areas(area);
+    let [progress_area, _, stats_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(2),
+    ])
+    .flex(Flex::Center)
+    .areas(area);
 
     let text = Paragraph::new(Line::from(Span::raw("Performing replacement...")))
         .block(Block::default())
@@ -839,12 +842,15 @@ fn render_performing_replacement_view(
 
     frame.render_widget(text, progress_area);
 
-    let completed = state.replacements_completed.load(Ordering::Relaxed);
+    let num_completed = state.num_replacements_completed.load(Ordering::Relaxed);
     let time_taken = state.replacement_started.elapsed();
+
+    #[allow(clippy::cast_precision_loss)]
     let stats_text = format!(
-        "Completed: {}/{} [Time: {}]",
-        completed,
+        "Completed: {}/{} ({:.2}%)\nTime: {}",
+        num_completed,
         state.total_replacements,
+        (num_completed as f64) / (state.total_replacements.max(1) as f64) * 100.0,
         display_duration(time_taken)
     );
 

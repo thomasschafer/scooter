@@ -563,19 +563,16 @@ impl<'a> App {
             )),
         ) {
             Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                let total_replacements = search_state.results.iter().filter(|r| r.included).count();
-
                 if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
-                    state.total_replacements = total_replacements;
-                    let replacements_completed = state.replacements_completed.clone();
-                    let last_render = state.last_render.clone();
+                    state.total_replacements =
+                        search_state.results.iter().filter(|r| r.included).count();
+                    let replacements_completed = state.num_replacements_completed.clone();
 
                     let handle = replace::perform_replacement(
                         search_state,
                         background_processing_sender,
                         cancelled,
                         replacements_completed,
-                        last_render,
                         self.event_sender.clone(),
                     );
                     state.set_handle(handle);
