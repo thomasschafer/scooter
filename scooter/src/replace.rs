@@ -5,9 +5,10 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 use tempfile::NamedTempFile;
 use tokio::{
@@ -21,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{BackgroundProcessingEvent, EventHandlingResult},
+    app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     search::SearchResult,
 };
 
@@ -83,6 +84,10 @@ pub struct PerformingReplacementState {
     pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     pub cancelled: Arc<AtomicBool>,
+    pub replacement_started: Instant,
+    pub replacements_completed: Arc<AtomicUsize>,
+    pub total_replacements: usize,
+    pub last_render: Arc<Mutex<Instant>>,
 }
 
 impl PerformingReplacementState {
@@ -97,6 +102,10 @@ impl PerformingReplacementState {
             processing_sender,
             processing_receiver,
             cancelled,
+            replacement_started: Instant::now(),
+            replacements_completed: Arc::new(AtomicUsize::new(0)),
+            total_replacements: 0,
+            last_render: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -109,6 +118,9 @@ pub fn perform_replacement(
     search_state: crate::app::SearchState,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     cancelled: Arc<AtomicBool>,
+    replacements_completed: Arc<AtomicUsize>,
+    last_render: Arc<Mutex<Instant>>,
+    event_sender: UnboundedSender<Event>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         cancelled.store(false, Ordering::Relaxed);
@@ -128,6 +140,9 @@ pub fn perform_replacement(
             }
 
             let semaphore = semaphore.clone();
+            let replacements_completed_clone = replacements_completed.clone();
+            let last_render_clone = last_render.clone();
+            let event_sender_clone = event_sender.clone();
             let task = tokio::spawn(async move {
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
                 if let Err(file_err) = replace_in_file(path, &mut results).await {
@@ -135,6 +150,16 @@ pub fn perform_replacement(
                         res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
                     }
                 }
+                replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
+                
+                // Only send rerender event if enough time has passed (throttle to ~92ms like search)
+                if let Ok(mut last_render_guard) = last_render_clone.lock() {
+                    if last_render_guard.elapsed() >= Duration::from_millis(92) {
+                        let _ = event_sender_clone.send(crate::app::Event::App(crate::app::AppEvent::Rerender));
+                        *last_render_guard = Instant::now();
+                    }
+                }
+                
                 drop(permit);
                 results
             });
@@ -146,6 +171,9 @@ pub fn perform_replacement(
             .into_iter()
             .flat_map(Result::unwrap);
         let replace_state = calculate_statistics(replacement_results, num_ignored);
+
+        // Send a final rerender to ensure the UI shows the final state
+        let _ = event_sender.send(crate::app::Event::App(crate::app::AppEvent::Rerender));
 
         // Ignore error: we may have gone back to the previous screen
         let _ = background_processing_sender.send(BackgroundProcessingEvent::ReplacementCompleted(
