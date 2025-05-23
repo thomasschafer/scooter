@@ -704,8 +704,8 @@ impl<'a> App {
                         .results
                         .append(&mut results);
 
-                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(100)
-                    {
+                    // Slightly random duration so that time taken isn't a round number
+                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
                         rerender = true;
                         search_in_progress_state.last_render = Instant::now();
                     }

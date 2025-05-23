@@ -138,12 +138,10 @@ impl ParsedFields {
             for _ in 0..num_threads {
                 let path_rx = path_rx.clone();
                 let sender = self.background_processing_sender.clone();
-                let search = self.search.clone();
-                let replace = self.replace.clone();
 
                 let handle = scope.spawn(move || {
                     while let Ok(path) = path_rx.recv() {
-                        Self::search_file(&path, &search, &replace, &sender);
+                        Self::search_file(&path, &self.search, &self.replace, &sender);
                     }
                 });
 
@@ -209,13 +207,19 @@ impl ParsedFields {
         let reader = BufReader::with_capacity(16384, file);
         let mut results = Vec::new();
 
+        let mut read_errors = 0;
+
         for (mut line_number, line_result) in reader.lines().enumerate() {
             line_number += 1; // Ensure line-number is 1-indexed
 
             let line = match line_result {
                 Ok(l) => l,
                 Err(err) => {
+                    read_errors += 1;
                     warn!("Error retrieving line {line_number} of {path:?}: {err}");
+                    if read_errors >= 10 {
+                        break;
+                    }
                     continue;
                 }
             };
