@@ -12,6 +12,7 @@ use std::fs;
 use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::sync::{atomic::AtomicBool, Arc};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -206,8 +207,12 @@ async fn test_help_popup_on_search_fields() {
 #[tokio::test]
 async fn test_help_popup_on_search_in_progress() {
     let (_sender, receiver) = mpsc::unbounded_channel();
-    let initial_screen =
-        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let initial_screen = Screen::SearchProgressing(SearchInProgressState::new(
+        tokio::spawn(async {}),
+        receiver,
+        cancelled,
+    ));
     test_help_popup_on_screen(initial_screen);
 }
 
@@ -236,8 +241,10 @@ async fn test_help_popup_on_search_complete() {
 #[tokio::test]
 async fn test_help_popup_on_performing_replacement() {
     let (sender, receiver) = mpsc::unbounded_channel();
-    let initial_screen =
-        Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let initial_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
+        None, sender, receiver, cancelled,
+    ));
     test_help_popup_on_screen(initial_screen);
 }
 
@@ -1607,8 +1614,12 @@ async fn test_keymaps_search_progressing() {
         App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let (_sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen =
-        Screen::SearchProgressing(SearchInProgressState::new(tokio::spawn(async {}), receiver));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    app.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
+        tokio::spawn(async {}),
+        receiver,
+        cancelled,
+    ));
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_progressing_all_keymaps", app.keymaps_all());
@@ -1620,8 +1631,10 @@ async fn test_keymaps_performing_replacement() {
         App::new_with_receiver(None, false, false, &SearchFieldValues::default());
 
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen =
-        Screen::PerformingReplacement(PerformingReplacementState::new(None, sender, receiver));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    app.current_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
+        None, sender, receiver, cancelled,
+    ));
 
     assert_debug_snapshot!(
         "performing_replacement_compact_keymaps",

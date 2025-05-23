@@ -1,7 +1,14 @@
 use crossterm::event::KeyEvent;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tempfile::NamedTempFile;
 use tokio::{
     fs::File,
@@ -75,6 +82,7 @@ pub struct PerformingReplacementState {
     #[allow(dead_code)]
     pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+    pub cancelled: Arc<AtomicBool>,
 }
 
 impl PerformingReplacementState {
@@ -82,11 +90,13 @@ impl PerformingReplacementState {
         handle: Option<JoinHandle<()>>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
             handle,
             processing_sender,
             processing_receiver,
+            cancelled,
         }
     }
 
@@ -98,8 +108,11 @@ impl PerformingReplacementState {
 pub fn perform_replacement(
     search_state: crate::app::SearchState,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+    cancelled: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        cancelled.store(false, Ordering::Relaxed);
+
         let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
         let (included, num_ignored) = split_results(search_state.results);
         for res in included {
@@ -110,6 +123,10 @@ pub fn perform_replacement(
         let mut file_tasks = vec![];
 
         for (path, mut results) in path_groups {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+
             let semaphore = semaphore.clone();
             let task = tokio::spawn(async move {
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
