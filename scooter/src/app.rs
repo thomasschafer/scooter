@@ -498,7 +498,7 @@ impl<'a> App {
                 include_hidden: self.include_hidden,
                 advanced_regex: self.search_fields.advanced_regex,
                 immediate_search: false,
-            }, // Don't trigger immediate search on reset
+            },
         );
     }
 
