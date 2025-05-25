@@ -387,6 +387,23 @@ pub enum Popup {
     Text { title: String, body: String },
 }
 
+pub struct AppRunConfig {
+    pub include_hidden: bool,
+    pub advanced_regex: bool,
+    pub immediate_search: bool,
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for AppRunConfig {
+    fn default() -> Self {
+        Self {
+            include_hidden: false,
+            advanced_regex: false,
+            immediate_search: false,
+        }
+    }
+}
+
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
@@ -401,10 +418,9 @@ pub struct App {
 impl<'a> App {
     fn new(
         directory: Option<PathBuf>,
-        include_hidden: bool,
-        advanced_regex: bool,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
+        app_run_config: &AppRunConfig,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
 
@@ -417,34 +433,33 @@ impl<'a> App {
             search_field_values,
             config.search.disable_prepopulated_fields,
         )
-        .with_advanced_regex(advanced_regex);
+        .with_advanced_regex(app_run_config.advanced_regex);
 
-        Self {
+        let mut app = Self {
             current_screen: Screen::SearchFields,
             search_fields,
             directory,
-            include_hidden,
+            include_hidden: app_run_config.include_hidden,
             config,
             errors: vec![],
             popup: None,
             event_sender,
+        };
+
+        if app_run_config.immediate_search {
+            app.perform_search_if_valid();
         }
+
+        app
     }
 
     pub fn new_with_receiver(
         directory: Option<PathBuf>,
-        include_hidden: bool,
-        advanced_regex: bool,
         search_field_values: &SearchFieldValues<'a>,
+        app_run_config: &AppRunConfig,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(
-            directory,
-            include_hidden,
-            advanced_regex,
-            search_field_values,
-            event_sender,
-        );
+        let app = Self::new(directory, search_field_values, event_sender, app_run_config);
         (app, app_event_receiver)
     }
 
@@ -477,10 +492,13 @@ impl<'a> App {
         self.cancel_in_progress_tasks();
         *self = Self::new(
             Some(self.directory.clone()),
-            self.include_hidden,
-            self.search_fields.advanced_regex,
             &SearchFieldValues::default(),
             self.event_sender.clone(),
+            &AppRunConfig {
+                include_hidden: self.include_hidden,
+                advanced_regex: self.search_fields.advanced_regex,
+                immediate_search: false,
+            }, // Don't trigger immediate search on reset
         );
     }
 
@@ -1235,10 +1253,9 @@ mod tests {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(
             None,
-            false,
-            false,
             &SearchFieldValues::default(),
             event_sender,
+            &AppRunConfig::default(),
         );
         app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
             build_test_search_state_with_results(results),

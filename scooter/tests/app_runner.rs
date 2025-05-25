@@ -172,10 +172,11 @@ fn build_test_runner_with_config(
     let backend = TestBackend::new(80, 24);
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
-        hidden: false,
+        include_hidden: false,
         advanced_regex,
         search_field_values,
         log_level: LevelFilter::Warn,
+        immediate_search: false,
     };
 
     let (event_sender, event_stream) = TestEventStream::new();

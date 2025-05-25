@@ -71,6 +71,10 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
+
+    /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
+    #[arg(short = 'S', long)]
+    immediate_search: bool,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
@@ -104,10 +108,11 @@ impl<'a> From<&'a Args> for AppConfig<'a> {
 
         Self {
             directory: args.directory.clone(),
-            hidden: args.hidden,
+            include_hidden: args.hidden,
             advanced_regex: args.advanced_regex,
             log_level: args.log_level,
             search_field_values,
+            immediate_search: args.immediate_search,
         }
     }
 }

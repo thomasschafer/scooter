@@ -1,11 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
-use scooter::{
-    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
-    search::SearchResult,
-    test_with_both_regex_modes, App, AppError, EventHandlingResult, FieldValue, Popup, Screen,
-    SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState, SearchState,
-};
 use serial_test::serial;
 use std::fs;
 use std::io;
@@ -17,6 +11,14 @@ use std::time::{Duration, Instant};
 use std::{cmp::max, sync::atomic::AtomicUsize};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
+
+use scooter::{
+    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
+    search::SearchResult,
+    test_with_both_regex_modes, App, AppError, AppRunConfig, EventHandlingResult, FieldValue,
+    Popup, Screen, SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState,
+    SearchState,
+};
 
 mod utils;
 
@@ -50,8 +52,11 @@ async fn test_replace_state() {
 
 #[tokio::test]
 async fn test_app_reset() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -66,8 +71,11 @@ async fn test_app_reset() {
 
 #[tokio::test]
 async fn test_back_from_results() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
     let (_sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
         SearchState::new(receiver),
@@ -102,8 +110,11 @@ async fn test_back_from_results() {
 }
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
     app.current_screen = Screen::SearchFields;
     app.search_fields = SearchFields::with_values(search_fields, true);
 
@@ -170,8 +181,11 @@ async fn test_error_popup_invalid_exclude_files() {
 }
 
 fn test_help_popup_on_screen(initial_screen: Screen) {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
     let screen_variant = std::mem::discriminant(&initial_screen);
     app.current_screen = initial_screen;
 
@@ -298,22 +312,24 @@ macro_rules! wait_for_screen {
     };
 }
 
-fn setup_app(temp_dir: &TempDir, search_fields: SearchFields, include_hidden: bool) -> App {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+fn setup_app(
+    temp_dir: &TempDir,
+    search_field_values: &SearchFieldValues<'_>,
+    app_run_config: &AppRunConfig,
+) -> App {
+    let (app, _app_event_receiver) = App::new_with_receiver(
         Some(temp_dir.path().to_path_buf()),
-        include_hidden,
-        false,
-        &SearchFieldValues::default(),
+        search_field_values,
+        app_run_config,
     );
-    app.search_fields = search_fields;
     app
 }
 
 // TODO: simplify this test - it is somewhat tied to the current implementation
 async fn search_and_replace_test(
     temp_dir: &TempDir,
-    search_fields: SearchFields,
-    include_hidden: bool,
+    search_field_values: &SearchFieldValues<'_>,
+    app_run_config: &AppRunConfig,
     expected_matches: Vec<(&Path, usize)>,
 ) {
     let total_num_expected_matches = expected_matches
@@ -321,7 +337,7 @@ async fn search_and_replace_test(
         .map(|(_, count)| count)
         .sum::<usize>();
 
-    let mut app = setup_app(temp_dir, search_fields, include_hidden);
+    let mut app = setup_app(temp_dir, search_field_values, app_run_config);
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit);
 
@@ -372,74 +388,77 @@ async fn search_and_replace_test(
     }
 }
 
-#[tokio::test]
-#[serial]
-async fn test_search_replace_defaults() {
-    let temp_dir = create_test_files!(
-        "file1.txt" => {
-            "This is a test file",
-            "It contains some test content",
-            "For TESTING purposes",
-            "Test TEST tEsT tesT test",
-            "TestbTESTctEsTdtesTetest",
-            " test ",
-        },
-        "file2.txt" => {
-            "Another test file",
-            "With different content",
-            "Also for testing",
-        },
-        "file3.txt" => {
-            "something",
-            "123 bar[a-b]+.*bar)(baz 456",
-            "test-TEST-tESt",
-            "something",
-        }
-    );
+test_with_both_regex_modes!(
+    test_search_replace_defaults,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => {
+                "This is a test file",
+                "It contains some test content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT test",
+                "TestbTESTctEsTdtesTetest",
+                " test ",
+            },
+            "file2.txt" => {
+                "Another test file",
+                "With different content",
+                "Also for testing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "test-TEST-tESt",
+                "something",
+            }
+        );
 
-    let search_fields = SearchFields::with_values(
-        &SearchFieldValues {
+        let search_field_values = SearchFieldValues {
             search: FieldValue::new("t[esES]+t", false),
             replace: FieldValue::new("123,", false),
             ..SearchFieldValues::default()
-        },
-        true,
-    );
-    search_and_replace_test(
-        &temp_dir,
-        search_fields,
-        false,
-        vec![
-            (Path::new("file1.txt"), 5),
-            (Path::new("file2.txt"), 2),
-            (Path::new("file3.txt"), 1),
-        ],
-    )
-    .await;
+        };
+        search_and_replace_test(
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                include_hidden: false,
+                advanced_regex,
+                immediate_search: false,
+            },
+            vec![
+                (Path::new("file1.txt"), 5),
+                (Path::new("file2.txt"), 2),
+                (Path::new("file3.txt"), 1),
+            ],
+        )
+        .await;
 
-    assert_test_files!(
-        &temp_dir,
-        "file1.txt" => {
-            "This is a 123, file",
-            "It contains some 123, content",
-            "For TESTING purposes",
-            "Test TEST tEsT tesT 123,",
-            "TestbTESTctEsTdtesTe123,",
-            " 123, ",
-        },
-        "file2.txt" => {
-            "Another 123, file",
-            "With different content",
-            "Also for 123,ing",
-        },
-        "file3.txt" => {
-            "something",
-            "123 bar[a-b]+.*bar)(baz 456",
-            "123,-TEST-123,",
-            "something",
-        }
-    );
-}
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "This is a 123, file",
+                "It contains some 123, content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT 123,",
+                "TestbTESTctEsTdtesTe123,",
+                " 123, ",
+            },
+            "file2.txt" => {
+                "Another 123, file",
+                "With different content",
+                "Also for 123,ing",
+            },
+            "file3.txt" => {
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "123,-TEST-123,",
+                "something",
+            }
+        );
+        Ok(())
+    }
+);
 
 test_with_both_regex_modes!(
     test_search_replace_fixed_string,
@@ -462,23 +481,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new(".*", false),
-                replace: FieldValue::new("example", false),
-                fixed_strings: FieldValue::new(true, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new(".*", false),
+            replace: FieldValue::new("example", false),
+            fixed_strings: FieldValue::new(true, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
             &temp_dir,
-            search_fields,
-            false,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (Path::new("file1.txt"), 0),
                 (Path::new("file2.txt"), 0),
@@ -534,23 +554,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("test", false),
-                replace: FieldValue::new("REPLACEMENT", false),
-                fixed_strings: FieldValue::new(true, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("test", false),
+            replace: FieldValue::new("REPLACEMENT", false),
+            fixed_strings: FieldValue::new(true, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
             &temp_dir,
-            search_fields,
-            false,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (Path::new("file1.txt"), 5),
                 (Path::new("file2.txt"), 2),
@@ -610,23 +631,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("test", false),
-                replace: FieldValue::new("REPLACEMENT", false),
-                fixed_strings: FieldValue::new(true, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(false, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("test", false),
+            replace: FieldValue::new("REPLACEMENT", false),
+            fixed_strings: FieldValue::new(true, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(false, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
             &temp_dir,
-            search_fields,
-            false,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (Path::new("file1.txt"), 6),
                 (Path::new("file2.txt"), 2),
@@ -664,7 +686,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -682,23 +704,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new(r"\b\w+ing\b", false),
-                replace: FieldValue::new("VERB", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new(r"\b\w+ing\b", false),
+            replace: FieldValue::new("VERB", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (Path::new("file1.txt"), 1),
                 (Path::new("file2.txt"), 1),
@@ -732,7 +755,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_no_matches,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -750,23 +773,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("nonexistent-string", false),
-                replace: FieldValue::new("replacement", false),
-                fixed_strings: FieldValue::new(true, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("nonexistent-string", false),
+            replace: FieldValue::new("replacement", false),
+            fixed_strings: FieldValue::new(true, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (Path::new("file1.txt"), 0),
                 (Path::new("file2.txt"), 0),
@@ -800,7 +824,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_invalid_regex,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -818,20 +842,25 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("[invalid regex", false),
-                replace: FieldValue::new("replacement", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("[invalid regex", false),
+            replace: FieldValue::new("replacement", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
+        let mut app = setup_app(
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
             },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
-        let mut app = setup_app(temp_dir, search_fields, false);
+        );
 
         let res = app.perform_search_if_valid();
         assert!(res != EventHandlingResult::Exit);
@@ -864,23 +893,24 @@ async fn test_advanced_regex_negative_lookahead() {
         }
     );
 
-    let search_fields = SearchFields::with_values(
-        &SearchFieldValues {
-            search: FieldValue::new("(test)(?!ing)", false),
-            replace: FieldValue::new("BAR", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        },
-        true,
-    )
-    .with_advanced_regex(true);
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new("(test)(?!ing)", false),
+        replace: FieldValue::new("BAR", false),
+        fixed_strings: FieldValue::new(false, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("", false),
+        exclude_files: FieldValue::new("", false),
+    };
+
     search_and_replace_test(
         temp_dir,
-        search_fields,
-        false,
+        &search_field_values,
+        &AppRunConfig {
+            advanced_regex: true,
+            include_hidden: false,
+            immediate_search: false,
+        },
         vec![
             (Path::new("file1.txt"), 2),
             (Path::new("file2.txt"), 1),
@@ -912,7 +942,7 @@ async fn test_advanced_regex_negative_lookahead() {
 test_with_both_regex_modes!(
     test_update_search_results_include_dir,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -942,23 +972,24 @@ test_with_both_regex_modes!(
             },
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("testing", false),
-                replace: FieldValue::new("f", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("dir2/*, dir3/**, */subdir3/*", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("testing", false),
+            replace: FieldValue::new("f", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("dir2/*, dir3/**, */subdir3/*", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 0),
                 (&Path::new("dir2").join("file2.txt"), 1),
@@ -1008,7 +1039,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_exclude_dir,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -1036,23 +1067,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("testing", false),
-                replace: FieldValue::new("REPL", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("dir1", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("testing", false),
+            replace: FieldValue::new("REPL", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("dir1", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 0),
                 (&Path::new("dir1").join("file1.rs"), 0),
@@ -1098,7 +1130,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_multiple_includes_and_excludes,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -1131,23 +1163,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("testing", false),
-                replace: FieldValue::new("REPL", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("dir1/*, *.rs", false),
-                exclude_files: FieldValue::new("**/file2.rs", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("testing", false),
+            replace: FieldValue::new("REPL", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("dir1/*, *.rs", false),
+            exclude_files: FieldValue::new("**/file2.rs", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
                 (&Path::new("dir1").join("file1.rs"), 2),
@@ -1199,7 +1232,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_update_search_results_multiple_includes_and_excludes_additional_spacing,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a test file",
                 "It contains some test content",
@@ -1241,23 +1274,24 @@ test_with_both_regex_modes!(
             },
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("testing", false),
-                replace: FieldValue::new("REPL", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new(" dir1/*,*.rs   ,  *.py", false),
-                exclude_files: FieldValue::new("  **/file2.rs ", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("testing", false),
+            replace: FieldValue::new("REPL", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new(" dir1/*,*.rs   ,  *.py", false),
+            exclude_files: FieldValue::new("  **/file2.rs ", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
                 (&Path::new("dir1").join("file1.rs"), 2),
@@ -1336,23 +1370,24 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         }
     );
 
-    let search_fields = SearchFields::with_values(
-        &SearchFieldValues {
-            search: FieldValue::new("is", false),
-            replace: FieldValue::new("", false),
-            fixed_strings: FieldValue::new(false, false),
-            match_whole_word: FieldValue::new(false, false),
-            match_case: FieldValue::new(true, false),
-            include_files: FieldValue::new("", false),
-            exclude_files: FieldValue::new("", false),
-        },
-        true,
-    )
-    .with_advanced_regex(advanced_regex);
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new("is", false),
+        replace: FieldValue::new("", false),
+        fixed_strings: FieldValue::new(false, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("", false),
+        exclude_files: FieldValue::new("", false),
+    };
+
     search_and_replace_test(
         temp_dir,
-        search_fields,
-        false,
+        &search_field_values,
+        &AppRunConfig {
+            advanced_regex,
+            include_hidden: false,
+            immediate_search: false,
+        },
         vec![
             (&Path::new("dir1").join("file1.txt"), 1),
             (&Path::new("dir2").join("file2.gif"), 0),
@@ -1379,7 +1414,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
 test_with_both_regex_modes!(
     test_ignores_hidden_files_by_default,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -1391,23 +1426,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new(r"\bis\b", false),
-                replace: FieldValue::new("REPLACED", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new(r"\bis\b", false),
+            replace: FieldValue::new("REPLACED", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            false,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
                 (&Path::new(".dir2").join("file2.rs"), 0),
@@ -1435,7 +1471,7 @@ test_with_both_regex_modes!(
 test_with_both_regex_modes!(
     test_includes_hidden_files_with_flag,
     |advanced_regex: bool| async move {
-        let temp_dir = &create_test_files!(
+        let temp_dir = create_test_files!(
             "dir1/file1.txt" => {
                 "This is a text file",
             },
@@ -1447,23 +1483,24 @@ test_with_both_regex_modes!(
             }
         );
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new(r"\bis\b", false),
-                replace: FieldValue::new("REPLACED", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new(r"\bis\b", false),
+            replace: FieldValue::new("REPLACED", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
+
         search_and_replace_test(
-            temp_dir,
-            search_fields,
-            true,
+            &temp_dir,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: true,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
                 (&Path::new(".dir2").join("file2.rs"), 1),
@@ -1516,24 +1553,24 @@ test_with_both_regex_modes!(
         let fixtures_dir = "tests/fixtures/binary_test";
         copy_dir_all(format!("{fixtures_dir}/initial"), temp_dir.path())?;
 
-        let search_fields = SearchFields::with_values(
-            &SearchFieldValues {
-                search: FieldValue::new("sample", false),
-                replace: FieldValue::new("REPLACED", false),
-                fixed_strings: FieldValue::new(false, false),
-                match_whole_word: FieldValue::new(false, false),
-                match_case: FieldValue::new(true, false),
-                include_files: FieldValue::new("", false),
-                exclude_files: FieldValue::new("", false),
-            },
-            true,
-        )
-        .with_advanced_regex(advanced_regex);
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("sample", false),
+            replace: FieldValue::new("REPLACED", false),
+            fixed_strings: FieldValue::new(false, false),
+            match_whole_word: FieldValue::new(false, false),
+            match_case: FieldValue::new(true, false),
+            include_files: FieldValue::new("", false),
+            exclude_files: FieldValue::new("", false),
+        };
 
         search_and_replace_test(
             &temp_dir,
-            search_fields,
-            false,
+            &search_field_values,
+            &AppRunConfig {
+                advanced_regex,
+                include_hidden: false,
+                immediate_search: false,
+            },
             vec![
                 (&Path::new("textfiles").join("code.rs"), 1),
                 (&Path::new("textfiles").join("config.json"), 1),
@@ -1589,8 +1626,11 @@ test_with_both_regex_modes!(
 
 #[tokio::test]
 async fn test_keymaps_search_fields() {
-    let (app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
 
     assert!(matches!(app.current_screen, Screen::SearchFields));
 
@@ -1600,8 +1640,11 @@ async fn test_keymaps_search_fields() {
 
 #[tokio::test]
 async fn test_keymaps_search_complete() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
@@ -1615,8 +1658,11 @@ async fn test_keymaps_search_complete() {
 
 #[tokio::test]
 async fn test_keymaps_search_progressing() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -1632,8 +1678,11 @@ async fn test_keymaps_search_progressing() {
 
 #[tokio::test]
 async fn test_keymaps_performing_replacement() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
 
     let (sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -1655,8 +1704,11 @@ async fn test_keymaps_performing_replacement() {
 
 #[tokio::test]
 async fn test_keymaps_results() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
 
     let replace_state_with_errors = ReplaceState {
         num_successes: 5,
@@ -1693,8 +1745,11 @@ async fn test_keymaps_results() {
 
 #[tokio::test]
 async fn test_keymaps_popup() {
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &SearchFieldValues::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        None,
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+    );
     app.add_error(AppError {
         name: "Test".to_string(),
         long: "Test error".to_string(),
@@ -1717,7 +1772,7 @@ async fn test_unlock_prepopulated_fields_via_ctrl_u() {
     };
 
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &search_field_values);
+        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
 
     assert_eq!(
         app.search_fields
@@ -1756,7 +1811,7 @@ async fn test_keybinding_integration_with_disabled_fields() {
     };
 
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &search_field_values);
+        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
 
     assert_eq!(app.search_fields.highlighted, 2);
 
@@ -1799,7 +1854,7 @@ async fn test_ctrl_u_unlocks_all_fields() {
     };
 
     let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, false, false, &search_field_values);
+        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
 
     for field in &app.search_fields.fields {
         assert!(field.set_by_cli);
