@@ -161,23 +161,19 @@ type TestRunner = (
 );
 
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
-    build_test_runner_with_config(directory, advanced_regex, SearchFieldValues::default())
-}
-
-fn build_test_runner_with_config(
-    directory: Option<&Path>,
-    advanced_regex: bool,
-    search_field_values: SearchFieldValues<'_>,
-) -> anyhow::Result<TestRunner> {
-    let backend = TestBackend::new(80, 24);
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
         include_hidden: false,
         advanced_regex,
-        search_field_values,
+        search_field_values: SearchFieldValues::default(),
         log_level: LevelFilter::Warn,
         immediate_search: false,
     };
+    build_test_runner_with_config(config)
+}
+
+fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
+    let backend = TestBackend::new(80, 24);
 
     let (event_sender, event_stream) = TestEventStream::new();
     let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel();
@@ -1168,8 +1164,15 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
         },
     };
 
-    let (run_handle, event_sender, mut snapshot_rx) =
-        build_test_runner_with_config(Some(temp_dir.path()), false, search_field_values)?;
+    let config = AppConfig {
+        directory: Some(temp_dir.path().to_string_lossy().into_owned()),
+        include_hidden: false,
+        advanced_regex: false,
+        search_field_values,
+        log_level: LevelFilter::Warn,
+        immediate_search: false,
+    };
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
     wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
 
@@ -1249,7 +1252,7 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
     )
     .await?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1271,3 +1274,62 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
 
     shutdown(event_sender, run_handle).await
 }
+
+test_with_both_regex_modes!(
+    test_immediate_search_flag_skips_search_screen,
+    |advanced_regex| async move {
+        let temp_dir = &create_test_files!(
+            "file1.txt" => {
+                "This is some test content with SEARCH",
+                "Another line with SEARCH here",
+                "No match on this line",
+            },
+            "file2.txt" => {
+                "Start of file",
+                "SEARCH appears here too",
+                "End of file",
+            },
+        );
+
+        let search_field_values = SearchFieldValues {
+            search: FieldValue::new("SEARCH", false),
+            replace: FieldValue::new("REPLACED", false),
+            ..SearchFieldValues::default()
+        };
+        let config = AppConfig {
+            directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
+            include_hidden: false,
+            advanced_regex,
+            search_field_values,
+            log_level: LevelFilter::Warn,
+            immediate_search: true,
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 100).await?;
+        let snapshot =
+            wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 500).await?;
+        assert!(Regex::new(r"file1\.txt").unwrap().is_match(&snapshot),);
+        assert!(Regex::new(r"file2\.txt").unwrap().is_match(&snapshot),);
+
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
+
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "This is some test content with REPLACED",
+                "Another line with REPLACED here",
+                "No match on this line",
+            },
+            "file2.txt" => {
+                "Start of file",
+                "REPLACED appears here too",
+                "End of file",
+            },
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
