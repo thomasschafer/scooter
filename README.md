@@ -84,14 +84,20 @@ You can pre-populate the search fields using command-line flags, for instance:
 
 ```sh
 scooter \
-  --search-text "old_function" \
-  --replace-text "new_function" \
+  --search-text "old" \
+  --replace-text "new" \
   --fixed-strings \
   --files-to-include "*.rs,*.py"
 ```
 
 Note that, by default, pre-populated fields are disabled in the UI. To make these fields editable by default, you can set `search.disable_prepopulated_fields` to `false` in your config - see [here](#disable_prepopulated_fields).
 You can also temporarily unlock the pre-populated fields with `ctrl+u`.
+
+When pre-populating the fields in this way, you can skip the initial search screen entirely and jump straight to searching with the `--immediate-search` flag, e.g.:
+
+```sh
+scooter --search-text "old" --replace-text "new" --immediate-search
+```
 
 Run `scooter --help` to see the full list of command-line args that can be used to pre-populate fields.
 
