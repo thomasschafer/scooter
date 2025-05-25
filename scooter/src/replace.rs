@@ -5,9 +5,10 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 use tempfile::NamedTempFile;
 use tokio::{
@@ -21,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{BackgroundProcessingEvent, EventHandlingResult},
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
     search::SearchResult,
 };
 
@@ -78,75 +79,103 @@ impl ReplaceState {
 
 #[derive(Debug)]
 pub struct PerformingReplacementState {
-    pub handle: Option<JoinHandle<()>>,
+    pub handle: JoinHandle<()>,
     #[allow(dead_code)]
     pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     pub cancelled: Arc<AtomicBool>,
+    pub replacement_started: Instant,
+    pub num_replacements_completed: Arc<AtomicUsize>,
+    pub total_replacements: usize,
 }
 
 impl PerformingReplacementState {
     pub fn new(
-        handle: Option<JoinHandle<()>>,
+        handle: JoinHandle<()>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
         cancelled: Arc<AtomicBool>,
+        num_replacements_completed: Arc<AtomicUsize>,
+        total_replacements: usize,
     ) -> Self {
         Self {
             handle,
             processing_sender,
             processing_receiver,
             cancelled,
+            replacement_started: Instant::now(),
+            num_replacements_completed,
+            total_replacements,
         }
-    }
-
-    pub fn set_handle(&mut self, handle: JoinHandle<()>) {
-        self.handle = Some(handle);
     }
 }
 
 pub fn perform_replacement(
-    search_state: crate::app::SearchState,
+    search_state: SearchState,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     cancelled: Arc<AtomicBool>,
+    replacements_completed: Arc<AtomicUsize>,
+    event_sender: UnboundedSender<Event>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         cancelled.store(false, Ordering::Relaxed);
 
-        let mut path_groups: HashMap<PathBuf, Vec<SearchResult>> = HashMap::new();
         let (included, num_ignored) = split_results(search_state.results);
-        for res in included {
-            path_groups.entry(res.path.clone()).or_default().push(res);
-        }
 
-        let semaphore = Arc::new(Semaphore::new(8));
-        let mut file_tasks = vec![];
-
-        for (path, mut results) in path_groups {
-            if cancelled.load(Ordering::Relaxed) {
-                break;
+        let mut replacements_handle = tokio::spawn(async move {
+            let mut path_groups = HashMap::<PathBuf, Vec<SearchResult>>::new();
+            for res in included {
+                path_groups.entry(res.path.clone()).or_default().push(res);
             }
 
-            let semaphore = semaphore.clone();
-            let task = tokio::spawn(async move {
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
-                if let Err(file_err) = replace_in_file(path, &mut results).await {
-                    for res in &mut results {
-                        res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
-                    }
+            let semaphore = Arc::new(Semaphore::new(8));
+            let mut file_tasks = vec![];
+
+            for (path, mut results) in path_groups {
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
                 }
-                drop(permit);
-                results
-            });
-            file_tasks.push(task);
-        }
 
-        let replacement_results = future::join_all(file_tasks)
-            .await
-            .into_iter()
-            .flat_map(Result::unwrap);
+                let semaphore = semaphore.clone();
+                let replacements_completed_clone = replacements_completed.clone();
+                let task = tokio::spawn(async move {
+                    let permit = semaphore.clone().acquire_owned().await.unwrap();
+                    if let Err(file_err) = replace_in_file(path, &mut results).await {
+                        for res in &mut results {
+                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+                        }
+                    }
+                    replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
+
+                    drop(permit);
+                    results
+                });
+                file_tasks.push(task);
+            }
+
+            future::join_all(file_tasks)
+                .await
+                .into_iter()
+                .flat_map(Result::unwrap)
+                .collect::<Vec<_>>()
+        });
+
+        let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
+
+        let replacement_results = loop {
+            tokio::select! {
+                res = &mut replacements_handle => {
+                    break res.unwrap();
+                },
+                _ = rerender_interval.tick() => {
+                    let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                }
+            }
+        };
+
+        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+
         let replace_state = calculate_statistics(replacement_results, num_ignored);
-
         // Ignore error: we may have gone back to the previous screen
         let _ = background_processing_sender.send(BackgroundProcessingEvent::ReplacementCompleted(
             replace_state,

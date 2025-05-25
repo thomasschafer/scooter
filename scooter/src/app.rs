@@ -7,7 +7,7 @@ use std::{
     cmp::{max, min},
     iter::Iterator,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -460,9 +460,7 @@ impl<'a> App {
 
     fn cancel_replacement(&mut self) {
         if let Screen::PerformingReplacement(PerformingReplacementState {
-            handle: Some(ref mut handle),
-            cancelled,
-            ..
+            handle, cancelled, ..
         }) = &mut self.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
@@ -549,37 +547,36 @@ impl<'a> App {
     }
 
     pub fn trigger_replacement(&mut self) {
-        let (background_processing_sender, background_processing_receiver) =
-            mpsc::unbounded_channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-
         match mem::replace(
             &mut self.current_screen,
-            Screen::PerformingReplacement(PerformingReplacementState::new(
-                None,
-                background_processing_sender.clone(),
-                background_processing_receiver,
-                cancelled.clone(),
-            )),
+            Screen::SearchFields, // Temporary placeholder - will get reset if we are not on `SearchComplete` screen
         ) {
             Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+                let (background_processing_sender, background_processing_receiver) =
+                    mpsc::unbounded_channel();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let total_replacements = search_state.results.iter().filter(|r| r.included).count();
+                let replacements_completed = Arc::new(AtomicUsize::new(0));
+
                 let handle = replace::perform_replacement(
                     search_state,
-                    background_processing_sender,
-                    cancelled,
+                    background_processing_sender.clone(),
+                    cancelled.clone(),
+                    replacements_completed.clone(),
+                    self.event_sender.clone(),
                 );
-                if let Screen::PerformingReplacement(ref mut state) = &mut self.current_screen {
-                    state.set_handle(handle);
-                } else {
-                    panic!(
-                        "Expected screen to be PerformingReplacement, found {:?}",
-                        self.current_screen
-                    );
-                }
+
+                self.current_screen =
+                    Screen::PerformingReplacement(PerformingReplacementState::new(
+                        handle,
+                        background_processing_sender,
+                        background_processing_receiver,
+                        cancelled,
+                        replacements_completed,
+                        total_replacements,
+                    ));
             }
-            screen => {
-                self.current_screen = screen;
-            }
+            screen => self.current_screen = screen,
         }
     }
 

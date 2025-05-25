@@ -1204,3 +1204,69 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     shutdown(event_sender, run_handle).await
 }
+
+#[tokio::test]
+async fn test_replacement_progress_display() -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "file1.txt" => {
+            "This is a test file",
+            "It contains some test content",
+            "For testing purposes",
+        },
+        "file2.txt" => {
+            "Another test file here",
+            "Also with test content",
+            "test test test",
+        },
+        "file3.txt" => {
+            "Third file for testing",
+            "More test data",
+        },
+    );
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    send_chars("test", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("TEST", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_text(
+        &mut snapshot_rx,
+        Pattern::regex_must_compile(
+            r"Performing replacement\.\.\.\s*\n\s*Completed: \d+/8 \(\d+\.\d{2}%\)\s*\n\s*Time: \d+\.\d{3}s",
+        ),
+        1000,
+    )
+    .await?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+    assert_test_files!(
+        &temp_dir,
+        "file1.txt" => {
+            "This is a TEST file",
+            "It contains some TEST content",
+            "For TESTing purposes",
+        },
+        "file2.txt" => {
+            "Another TEST file here",
+            "Also with TEST content",
+            "TEST TEST TEST",
+        },
+        "file3.txt" => {
+            "Third file for TESTing",
+            "More TEST data",
+        },
+    );
+
+    shutdown(event_sender, run_handle).await
+}
