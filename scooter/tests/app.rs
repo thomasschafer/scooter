@@ -7,7 +7,6 @@ use scooter::{
     SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState, SearchState,
 };
 use serial_test::serial;
-use std::cmp::max;
 use std::fs;
 use std::io;
 use std::mem;
@@ -15,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicBool, Arc};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use std::{cmp::max, sync::atomic::AtomicUsize};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 
@@ -243,7 +243,12 @@ async fn test_help_popup_on_performing_replacement() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let initial_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
-        None, sender, receiver, cancelled,
+        tokio::spawn(async {}),
+        sender,
+        receiver,
+        cancelled,
+        Arc::new(AtomicUsize::new(0)),
+        0,
     ));
     test_help_popup_on_screen(initial_screen);
 }
@@ -1633,7 +1638,12 @@ async fn test_keymaps_performing_replacement() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     app.current_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
-        None, sender, receiver, cancelled,
+        tokio::spawn(async {}),
+        sender,
+        receiver,
+        cancelled,
+        Arc::new(AtomicUsize::new(0)),
+        0,
     ));
 
     assert_debug_snapshot!(

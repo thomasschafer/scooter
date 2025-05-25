@@ -1204,6 +1204,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     shutdown(event_sender, run_handle).await
 }
+
 #[tokio::test]
 async fn test_replacement_progress_display() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(

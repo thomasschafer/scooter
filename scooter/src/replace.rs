@@ -22,7 +22,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
     search::SearchResult,
 };
 
@@ -79,7 +79,7 @@ impl ReplaceState {
 
 #[derive(Debug)]
 pub struct PerformingReplacementState {
-    pub handle: Option<JoinHandle<()>>,
+    pub handle: JoinHandle<()>,
     #[allow(dead_code)]
     pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
@@ -91,10 +91,12 @@ pub struct PerformingReplacementState {
 
 impl PerformingReplacementState {
     pub fn new(
-        handle: Option<JoinHandle<()>>,
+        handle: JoinHandle<()>,
         processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
         cancelled: Arc<AtomicBool>,
+        num_replacements_completed: Arc<AtomicUsize>,
+        total_replacements: usize,
     ) -> Self {
         Self {
             handle,
@@ -102,18 +104,14 @@ impl PerformingReplacementState {
             processing_receiver,
             cancelled,
             replacement_started: Instant::now(),
-            num_replacements_completed: Arc::new(AtomicUsize::new(0)),
-            total_replacements: 0,
+            num_replacements_completed,
+            total_replacements,
         }
-    }
-
-    pub fn set_handle(&mut self, handle: JoinHandle<()>) {
-        self.handle = Some(handle);
     }
 }
 
 pub fn perform_replacement(
-    search_state: crate::app::SearchState,
+    search_state: SearchState,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
