@@ -17,7 +17,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{App, AppError, Event, EventHandlingResult},
+    app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
     logging::setup_logging,
     tui::Tui,
@@ -27,10 +27,11 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppConfig<'a> {
     pub directory: Option<String>,
-    pub hidden: bool,
+    pub include_hidden: bool,
     pub advanced_regex: bool,
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
+    pub immediate_search: bool,
 }
 
 pub trait EventStream:
@@ -87,9 +88,12 @@ where
 
         let (app, event_receiver) = App::new_with_receiver(
             directory,
-            config.hidden,
-            config.advanced_regex,
             &config.search_field_values,
+            &AppRunConfig {
+                include_hidden: config.include_hidden,
+                advanced_regex: config.advanced_regex,
+                immediate_search: config.immediate_search,
+            },
         );
 
         let terminal = Terminal::new(backend)?;

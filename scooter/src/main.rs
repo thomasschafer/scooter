@@ -1,3 +1,4 @@
+use anyhow::bail;
 use clap::Parser;
 use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
@@ -71,17 +72,23 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
+
+    /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
+    #[arg(short = 'S', long)]
+    immediate_search: bool,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
     LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {s}"))
 }
 
-impl<'a> From<&'a Args> for AppConfig<'a> {
-    fn from(args: &'a Args) -> Self {
+impl<'a> AppConfig<'a> {
+    fn from(args: &'a Args) -> anyhow::Result<Self> {
         let mut search_field_values = SearchFieldValues::default();
         if let Some(ref search_text) = args.search_text {
             search_field_values.search = FieldValue::new(search_text, true);
+        } else if args.immediate_search {
+            bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
         }
         if let Some(ref replace_text) = args.replace_text {
             search_field_values.replace = FieldValue::new(replace_text, true);
@@ -102,19 +109,20 @@ impl<'a> From<&'a Args> for AppConfig<'a> {
             search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
         }
 
-        Self {
+        Ok(Self {
             directory: args.directory.clone(),
-            hidden: args.hidden,
+            include_hidden: args.hidden,
             advanced_regex: args.advanced_regex,
             log_level: args.log_level,
             search_field_values,
-        }
+            immediate_search: args.immediate_search,
+        })
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config = AppConfig::from(&args);
+    let config = AppConfig::from(&args)?;
     run_app(config).await
 }
