@@ -2,7 +2,6 @@ use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
 use insta::assert_snapshot;
-use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use std::{io, path::Path, pin::Pin, task::Poll};
@@ -163,11 +162,8 @@ type TestRunner = (
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
-        include_hidden: false,
         advanced_regex,
-        search_field_values: SearchFieldValues::default(),
-        log_level: LevelFilter::Warn,
-        immediate_search: false,
+        ..AppConfig::default()
     };
     build_test_runner_with_config(config)
 }
@@ -1166,11 +1162,8 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     let config = AppConfig {
         directory: Some(temp_dir.path().to_string_lossy().into_owned()),
-        include_hidden: false,
-        advanced_regex: false,
         search_field_values,
-        log_level: LevelFilter::Warn,
-        immediate_search: false,
+        ..AppConfig::default()
     };
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
@@ -1298,11 +1291,10 @@ test_with_both_regex_modes!(
         };
         let config = AppConfig {
             directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
-            include_hidden: false,
             advanced_regex,
             search_field_values,
-            log_level: LevelFilter::Warn,
             immediate_search: true,
+            ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
@@ -1327,6 +1319,67 @@ test_with_both_regex_modes!(
                 "Start of file",
                 "REPLACED appears here too",
                 "End of file",
+            },
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_immediate_replace_flag_skips_confirmation,
+    |advanced_regex| async move {
+        let temp_dir = &create_test_files!(
+            "file1.txt" => {
+                "Beautiful is better than ugly.",
+                "Explicit is better than implicit.",
+                "Simple is better than complex.",
+                "Complex is better than complicated.",
+            },
+            "file2.txt" => {
+                "Flat is better than nested.",
+                "Sparse is better than dense.",
+                "Readability counts.",
+                "Special cases aren't special enough to break the rules.",
+                "Although practicality beats purity.",
+                "Errors should never pass silently.",
+            },
+        );
+
+        let config = AppConfig {
+            directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
+            advanced_regex,
+            immediate_replace: true,
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars("is", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACEMENT", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        // Replacement should happen without confirmation
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "Beautiful REPLACEMENT better than ugly.",
+                "Explicit REPLACEMENT better than implicit.",
+                "Simple REPLACEMENT better than complex.",
+                "Complex REPLACEMENT better than complicated.",
+            },
+            "file2.txt" => {
+                "Flat REPLACEMENT better than nested.",
+                "Sparse REPLACEMENT better than dense.",
+                "Readability counts.",
+                "Special cases aren't special enough to break the rules.",
+                "Although practicality beats purity.",
+                "Errors should never pass silently.",
             },
         );
 
