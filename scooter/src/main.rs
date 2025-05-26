@@ -43,6 +43,14 @@ struct Args {
     #[arg(short = 'a', long, default_value = "false")]
     advanced_regex: bool,
 
+    /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
+    #[arg(short = 'S', long)]
+    immediate_search: bool,
+
+    /// Replace immediately once search completes, without waiting for confirmation
+    #[arg(short = 'R', long)]
+    immediate_replace: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -72,10 +80,6 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
-
-    /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
-    #[arg(short = 'S', long)]
-    immediate_search: bool,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
@@ -116,6 +120,7 @@ impl<'a> AppConfig<'a> {
             log_level: args.log_level,
             search_field_values,
             immediate_search: args.immediate_search,
+            immediate_replace: args.immediate_replace,
         })
     }
 }

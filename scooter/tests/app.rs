@@ -422,9 +422,8 @@ test_with_both_regex_modes!(
             &temp_dir,
             &search_field_values,
             &AppRunConfig {
-                include_hidden: false,
                 advanced_regex,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 5),
@@ -496,8 +495,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 0),
@@ -569,8 +567,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 5),
@@ -646,8 +643,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 6),
@@ -719,8 +715,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 1),
@@ -788,8 +783,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (Path::new("file1.txt"), 0),
@@ -857,8 +851,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
         );
 
@@ -908,8 +901,7 @@ async fn test_advanced_regex_negative_lookahead() {
         &search_field_values,
         &AppRunConfig {
             advanced_regex: true,
-            include_hidden: false,
-            immediate_search: false,
+            ..AppRunConfig::default()
         },
         vec![
             (Path::new("file1.txt"), 2),
@@ -987,8 +979,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 0),
@@ -1082,8 +1073,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 0),
@@ -1178,8 +1168,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
@@ -1289,8 +1278,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
@@ -1385,8 +1373,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         &search_field_values,
         &AppRunConfig {
             advanced_regex,
-            include_hidden: false,
-            immediate_search: false,
+            ..AppRunConfig::default()
         },
         vec![
             (&Path::new("dir1").join("file1.txt"), 1),
@@ -1441,8 +1428,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
@@ -1499,7 +1485,7 @@ test_with_both_regex_modes!(
             &AppRunConfig {
                 advanced_regex,
                 include_hidden: true,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("dir1").join("file1.txt"), 1),
@@ -1568,8 +1554,7 @@ test_with_both_regex_modes!(
             &search_field_values,
             &AppRunConfig {
                 advanced_regex,
-                include_hidden: false,
-                immediate_search: false,
+                ..AppRunConfig::default()
             },
             vec![
                 (&Path::new("textfiles").join("code.rs"), 1),

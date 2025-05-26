@@ -13,9 +13,11 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::str::FromStr;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::logging::DEFAULT_LOG_LEVEL;
 use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
@@ -25,6 +27,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct AppConfig<'a> {
     pub directory: Option<String>,
     pub include_hidden: bool,
@@ -32,6 +35,21 @@ pub struct AppConfig<'a> {
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub immediate_search: bool,
+    pub immediate_replace: bool,
+}
+
+impl Default for AppConfig<'_> {
+    fn default() -> Self {
+        Self {
+            directory: None,
+            include_hidden: false,
+            advanced_regex: false,
+            log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
+            search_field_values: SearchFieldValues::default(),
+            immediate_search: false,
+            immediate_replace: false,
+        }
+    }
 }
 
 pub trait EventStream:
@@ -93,6 +111,7 @@ where
                 include_hidden: config.include_hidden,
                 advanced_regex: config.advanced_regex,
                 immediate_search: config.immediate_search,
+                immediate_replace: config.immediate_replace,
             },
         );
 

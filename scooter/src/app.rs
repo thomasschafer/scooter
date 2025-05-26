@@ -387,10 +387,12 @@ pub enum Popup {
     Text { title: String, body: String },
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct AppRunConfig {
     pub include_hidden: bool,
     pub advanced_regex: bool,
     pub immediate_search: bool,
+    pub immediate_replace: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -400,6 +402,7 @@ impl Default for AppRunConfig {
             include_hidden: false,
             advanced_regex: false,
             immediate_search: false,
+            immediate_replace: false,
         }
     }
 }
@@ -412,6 +415,7 @@ pub struct App {
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
+    immediate_replace: bool,
     popup: Option<Popup>,
 }
 
@@ -444,6 +448,7 @@ impl<'a> App {
             errors: vec![],
             popup: None,
             event_sender,
+            immediate_replace: app_run_config.immediate_replace,
         };
 
         if app_run_config.immediate_search {
@@ -498,6 +503,7 @@ impl<'a> App {
                 include_hidden: self.include_hidden,
                 advanced_regex: self.search_fields.advanced_regex,
                 immediate_search: false,
+                immediate_replace: self.immediate_replace,
             },
         );
     }
@@ -636,6 +642,9 @@ impl<'a> App {
                         search_state,
                         search_started,
                     ));
+                    if self.immediate_replace {
+                        self.trigger_replacement();
+                    }
                 }
                 EventHandlingResult::Rerender
             }

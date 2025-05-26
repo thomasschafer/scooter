@@ -2,7 +2,6 @@ use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
 use insta::assert_snapshot;
-use log::LevelFilter;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use std::{io, path::Path, pin::Pin, task::Poll};
@@ -163,11 +162,8 @@ type TestRunner = (
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
-        include_hidden: false,
         advanced_regex,
-        search_field_values: SearchFieldValues::default(),
-        log_level: LevelFilter::Warn,
-        immediate_search: false,
+        ..AppConfig::default()
     };
     build_test_runner_with_config(config)
 }
@@ -1166,11 +1162,8 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     let config = AppConfig {
         directory: Some(temp_dir.path().to_string_lossy().into_owned()),
-        include_hidden: false,
-        advanced_regex: false,
         search_field_values,
-        log_level: LevelFilter::Warn,
-        immediate_search: false,
+        ..AppConfig::default()
     };
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
@@ -1298,11 +1291,10 @@ test_with_both_regex_modes!(
         };
         let config = AppConfig {
             directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
-            include_hidden: false,
             advanced_regex,
             search_field_values,
-            log_level: LevelFilter::Warn,
             immediate_search: true,
+            ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
