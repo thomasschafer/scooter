@@ -1,4 +1,5 @@
 use anyhow::bail;
+use app::AppRunConfig;
 use clap::Parser;
 use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
@@ -50,6 +51,10 @@ struct Args {
     /// Replace immediately once search completes, without waiting for confirmation
     #[arg(short = 'R', long)]
     immediate_replace: bool,
+
+    /// Print results to stdout, rather than displaying them as a final screen
+    #[arg(short = 'P', long)]
+    print_results: bool,
 
     // --- Initial values for fields ---
     //
@@ -115,12 +120,15 @@ impl<'a> AppConfig<'a> {
 
         Ok(Self {
             directory: args.directory.clone(),
-            include_hidden: args.hidden,
-            advanced_regex: args.advanced_regex,
             log_level: args.log_level,
             search_field_values,
-            immediate_search: args.immediate_search,
-            immediate_replace: args.immediate_replace,
+            app_run_config: AppRunConfig {
+                include_hidden: args.hidden,
+                advanced_regex: args.advanced_regex,
+                immediate_search: args.immediate_search,
+                immediate_replace: args.immediate_replace,
+                print_results: args.print_results,
+            },
         })
     }
 }

@@ -14,7 +14,7 @@ use tokio::{
 use scooter::{
     app_runner::{AppConfig, AppRunner},
     fields::{FieldValue, SearchFieldValues},
-    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
+    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings, AppRunConfig,
 };
 
 mod utils;
@@ -162,7 +162,10 @@ type TestRunner = (
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
     let config = AppConfig {
         directory: directory.map(|d| d.to_str().unwrap().to_owned()),
-        advanced_regex,
+        app_run_config: AppRunConfig {
+            advanced_regex,
+            ..AppRunConfig::default()
+        },
         ..AppConfig::default()
     };
     build_test_runner_with_config(config)
@@ -1291,9 +1294,12 @@ test_with_both_regex_modes!(
         };
         let config = AppConfig {
             directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
-            advanced_regex,
             search_field_values,
-            immediate_search: true,
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                immediate_search: true,
+                ..AppRunConfig::default()
+            },
             ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
@@ -1348,8 +1354,11 @@ test_with_both_regex_modes!(
 
         let config = AppConfig {
             directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
-            advanced_regex,
-            immediate_replace: true,
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                immediate_replace: true,
+                ..AppRunConfig::default()
+            },
             ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;

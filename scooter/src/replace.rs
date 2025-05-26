@@ -55,7 +55,7 @@ impl ReplaceState {
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit,
+            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit(None),
             _ => return EventHandlingResult::None,
         }
         EventHandlingResult::Rerender
@@ -434,12 +434,12 @@ mod tests {
         // Test exit with Enter
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let result = state.handle_key_results(&key);
-        assert_eq!(result, EventHandlingResult::Exit);
+        assert_eq!(result, EventHandlingResult::Exit(None));
 
         // Test exit with 'q'
         let key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         let result = state.handle_key_results(&key);
-        assert_eq!(result, EventHandlingResult::Exit);
+        assert_eq!(result, EventHandlingResult::Exit(None));
 
         // Test unhandled key
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);

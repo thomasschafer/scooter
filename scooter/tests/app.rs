@@ -100,7 +100,7 @@ async fn test_back_from_results() {
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     });
-    assert!(res != EventHandlingResult::Exit);
+    assert!(res != EventHandlingResult::Exit(None));
     assert_eq!(app.search_fields.search().text, "foo");
     assert_eq!(app.search_fields.replace().text, "bar");
     assert!(app.search_fields.fixed_strings().checked);
@@ -119,7 +119,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     app.search_fields = SearchFields::with_values(search_fields, true);
 
     let res = app.perform_search_if_valid();
-    assert!(res != EventHandlingResult::Exit);
+    assert!(res != EventHandlingResult::Exit(None));
     assert!(matches!(app.current_screen, Screen::SearchFields));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
@@ -129,7 +129,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     });
-    assert!(res != EventHandlingResult::Exit);
+    assert!(res != EventHandlingResult::Exit(None));
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(&KeyEvent {
@@ -138,7 +138,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     });
-    assert_eq!(res, EventHandlingResult::Exit);
+    assert_eq!(res, EventHandlingResult::Exit(None));
 }
 
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn search_and_replace_test(
 
     let mut app = setup_app(temp_dir, search_field_values, app_run_config);
     let res = app.perform_search_if_valid();
-    assert!(res != EventHandlingResult::Exit);
+    assert!(res != EventHandlingResult::Exit(None));
 
     process_bp_events(&mut app).await;
     assert!(wait_for_screen!(&app, Screen::SearchComplete));
@@ -856,7 +856,7 @@ test_with_both_regex_modes!(
         );
 
         let res = app.perform_search_if_valid();
-        assert!(res != EventHandlingResult::Exit);
+        assert!(res != EventHandlingResult::Exit(None));
         assert!(matches!(app.current_screen, Screen::SearchFields));
         process_bp_events(&mut app).await;
         assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there
