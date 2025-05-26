@@ -180,3 +180,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release edit "v${{ needs.prepare-release.outputs.version }}" --draft=false
+
+  publish-to-winget:
+    needs: [prepare-release, publish]
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish to WinGet
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: thomasschafer.scooter
+          version: ${{ needs.prepare-release.outputs.version }}
+          installers-regex: "scooter-v.*-x86_64-pc-windows-msvc\\.zip$"
+          token: ${{ secrets.WINGET_TOKEN }}
+          release-tag: v${{ needs.prepare-release.outputs.version }}
