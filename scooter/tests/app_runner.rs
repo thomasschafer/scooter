@@ -1325,3 +1325,64 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+test_with_both_regex_modes!(
+    test_immediate_replace_flag_skips_confirmation,
+    |advanced_regex| async move {
+        let temp_dir = &create_test_files!(
+            "file1.txt" => {
+                "Beautiful is better than ugly.",
+                "Explicit is better than implicit.",
+                "Simple is better than complex.",
+                "Complex is better than complicated.",
+            },
+            "file2.txt" => {
+                "Flat is better than nested.",
+                "Sparse is better than dense.",
+                "Readability counts.",
+                "Special cases aren't special enough to break the rules.",
+                "Although practicality beats purity.",
+                "Errors should never pass silently.",
+            },
+        );
+
+        let config = AppConfig {
+            directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
+            advanced_regex,
+            immediate_replace: true,
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars("is", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACEMENT", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        // Replacement should happen without confirmation
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => {
+                "Beautiful REPLACEMENT better than ugly.",
+                "Explicit REPLACEMENT better than implicit.",
+                "Simple REPLACEMENT better than complex.",
+                "Complex REPLACEMENT better than complicated.",
+            },
+            "file2.txt" => {
+                "Flat REPLACEMENT better than nested.",
+                "Sparse REPLACEMENT better than dense.",
+                "Readability counts.",
+                "Special cases aren't special enough to break the rules.",
+                "Although practicality beats purity.",
+                "Errors should never pass silently.",
+            },
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
