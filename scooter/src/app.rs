@@ -1,5 +1,5 @@
 use anyhow::Error;
-use crossterm::event::KeyEvent;
+use crossterm::{event::KeyEvent, style::Stylize};
 use ignore::overrides::{Override, OverrideBuilder};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
@@ -657,12 +657,19 @@ impl<'a> App {
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
                     #[allow(clippy::format_collect)]
+                    let errors = replace_state
+                        .errors
+                        .iter()
+                        .map(|error| {
+                            let (path, error) = error.display_error();
+                            format!("\n{path}:\n  {}", error.red())
+                        })
+                        .collect::<String>();
                     let results = format!(
                         "Successful replacements: {replacements}\nIgnored: {ignored}\nErrors: {num_errors}{errors}",
                         replacements = replace_state.num_successes,
                         ignored = replace_state.num_ignored,
                         num_errors = replace_state.errors.len(),
-                        errors = replace_state.errors.iter().map(|r| format!("\n{:?}", r.path)).collect::<String>(), // TODO: use `error_result` for inspiration
                     );
                     EventHandlingResult::Exit(Some(results))
                 } else {

@@ -216,7 +216,7 @@ where
 
             match event_handling_result {
                 EventHandlingResult::Rerender => self.draw()?,
-                EventHandlingResult::Exit(results) => return Ok(results), // TODO: print search text
+                EventHandlingResult::Exit(results) => return Ok(results),
                 EventHandlingResult::None => {}
             }
         }

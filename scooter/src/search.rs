@@ -31,6 +31,30 @@ pub struct SearchResult {
     pub replace_result: Option<ReplaceResult>,
 }
 
+impl SearchResult {
+    pub fn display_error(&self) -> (String, &str) {
+        let error = match &self.replace_result {
+            Some(ReplaceResult::Error(error)) => error,
+            None => panic!("Found error result with no error message"),
+            Some(ReplaceResult::Success) => {
+                panic!("Found successful result in errors: {self:?}")
+            }
+        };
+
+        let path_display = format!(
+            "{}:{}",
+            self.path
+                .clone()
+                .into_os_string()
+                .into_string()
+                .expect("Failed to display path"),
+            self.line_number
+        );
+
+        (path_display, error)
+    }
+}
+
 fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {
         return None;
