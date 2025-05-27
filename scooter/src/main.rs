@@ -56,6 +56,10 @@ struct Args {
     #[arg(short = 'P', long)]
     print_results: bool,
 
+    /// Combines `immediate_search`, `immediate_replace` and `print_results`
+    #[arg(short = 'X', long)]
+    immediate: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -93,7 +97,13 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 
 impl<'a> AppConfig<'a> {
     fn from(args: &'a Args) -> anyhow::Result<Self> {
+        if args.immediate && (args.immediate_search || args.immediate_replace || args.print_results)
+        {
+            bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
+        }
+
         let mut search_field_values = SearchFieldValues::default();
+
         if let Some(ref search_text) = args.search_text {
             search_field_values.search = FieldValue::new(search_text, true);
         } else if args.immediate_search {
@@ -125,9 +135,9 @@ impl<'a> AppConfig<'a> {
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
                 advanced_regex: args.advanced_regex,
-                immediate_search: args.immediate_search,
-                immediate_replace: args.immediate_replace,
-                print_results: args.print_results,
+                immediate_search: args.immediate_search || args.immediate,
+                immediate_replace: args.immediate_replace || args.immediate,
+                print_results: args.print_results || args.immediate,
             },
         })
     }
