@@ -655,8 +655,7 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
-                if self.immediate_replace {
-                    // TODO: print results?
+                if self.print_results {
                     #[allow(clippy::format_collect)]
                     let results = format!(
                         "Successful replacements: {replacements}\nIgnored: {ignored}\nErrors: {num_errors}{errors}",
