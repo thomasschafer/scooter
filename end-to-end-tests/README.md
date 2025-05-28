@@ -1,0 +1,32 @@
+# End-to-end tests
+
+This directory contains end-to-end tests for Scooter that compare its behavior against other find and replace tools.
+
+## Prerequisites
+
+### Installing Nix
+
+Install Nix - the Determinate Systems installer can be found [here](https://determinate.systems/nix-installer/), but other methods are available.
+
+### Enabling flakes
+
+If you haven't enabled flakes yet, add this to `~/.config/nix/nix.conf`:
+```
+experimental-features = nix-command flakes
+```
+
+## Running Tests
+
+From the project root, run:
+
+```bash
+nix run .#end-to-end-test
+```
+
+## Test Structure
+
+The `compare-tools.nu` test:
+1. Creates a `test-input/` directory with a number of test files
+1. Runs Scooter and other tools on copies of this directory
+1. Compares the outputs to ensure Scooter produces identical results
+1. Cleans up all test directories

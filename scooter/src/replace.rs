@@ -245,7 +245,8 @@ async fn replace_in_file(file_path: PathBuf, results: &mut [SearchResult]) -> an
         let mut lines = reader.lines();
         let mut line_number = 0;
         while let Some(mut line) = lines.next_line().await? {
-            if let Some(res) = line_map.get_mut(&(line_number + 1)) {
+            line_number += 1;
+            if let Some(res) = line_map.get_mut(&line_number) {
                 if line == res.line {
                     line.clone_from(&res.replacement);
                     res.replace_result = Some(ReplaceResult::Success);
@@ -257,7 +258,6 @@ async fn replace_in_file(file_path: PathBuf, results: &mut [SearchResult]) -> an
             }
             line.push('\n');
             writer.write_all(line.as_bytes()).await?;
-            line_number += 1;
         }
 
         writer.flush().await?;
