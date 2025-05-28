@@ -43,7 +43,7 @@
             echo "Building scooter..."
             cargo build --release --locked
             echo "Running scooter end-to-end tests..."
-            nu end-to-end-tests/compare-tools.nu
+            nu tests/compare-tools.nu
           '';
         };
 

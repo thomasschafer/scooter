@@ -10,12 +10,12 @@ Install Nix - the Determinate Systems installer can be found [here](https://dete
 
 ### Enabling flakes
 
-If you haven't enabled flakes yet, add this to `~/.config/nix/nix.conf`:
+If you haven't enabled flakes yet, add this to your `~/.config/nix/nix.conf`:
 ```
 experimental-features = nix-command flakes
 ```
 
-## Running Tests
+## Running tests
 
 From the project root, run:
 
@@ -23,7 +23,7 @@ From the project root, run:
 nix run .#end-to-end-test
 ```
 
-## Test Structure
+## Test structure
 
 The `compare-tools.nu` test:
 1. Creates a `test-input/` directory with a number of test files
