@@ -25,42 +25,39 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" ];
         };
+
+        testDeps = with pkgs; [
+          diffutils
+          expect
+          nushell
+          ripgrep
+          rustToolchain
+          sd
+        ];
       in
       {
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            # Rust toolchain
-            rustToolchain
-            cargo-nextest
-
-            # Build dependencies
-            pkg-config
-
-            # Tools for end-to-end tests
-            nushell
-            ripgrep
-            sd
-            fd
-            diffutils
-            findutils
-            gnused
-
-            # Additional dev tools
-            rust-analyzer
-          ];
-
-          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
-        };
-
-        apps.end-to-end-test = {
-          type = "app";
-          program = "${pkgs.writeShellScript "run-end-to-end-test" ''
+        apps.end-to-end-test = flake-utils.lib.mkApp {
+          drv = pkgs.writeShellScriptBin "run-end-to-end-test" ''
+            export PATH="${pkgs.lib.makeBinPath testDeps}:$PATH"
             set -e
             echo "Building scooter..."
             cargo build --release --locked
             echo "Running scooter end-to-end tests..."
-            ${pkgs.nushell}/bin/nu end-to-end-tests/compare-tools.nu
-          ''}";
+            nu end-to-end-tests/compare-tools.nu
+          '';
+        };
+
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = with pkgs; [
+            rustToolchain
+            rust-analyzer
+            cargo-watch
+            pkg-config
+          ];
+
+          shellHook = ''
+            export RUST_BACKTRACE=1
+          '';
         };
       }
     );

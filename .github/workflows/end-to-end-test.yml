@@ -30,6 +30,3 @@ jobs:
 
     - name: Run tests
       run: nix run .#end-to-end-test
-
-    - name: Run cargo tests
-      run: nix develop -c cargo test

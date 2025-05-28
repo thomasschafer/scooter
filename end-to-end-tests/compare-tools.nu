@@ -42,10 +42,11 @@ def run_tool [tool: record, base_dir: string, search_term: string, replace_term:
     let tool_dir = (tool_to_dirname $tool.name)
 
     print $"\n=== Running ($tool.name) ==="
+
     cp -r $base_dir $tool_dir
 
     cd $tool_dir
-    ^bash -c $tool.command
+    ^expect -c $"spawn bash -c \"($tool.command)\"; expect eof"
 
     return $tool_dir
 }
@@ -71,7 +72,7 @@ def get_tools [scooter_binary: string] {
     return [
         {
             name: "scooter",
-            command: $"script -q /dev/null ($scooter_binary) -X -s ($TEST_CONFIG.search_term) -r ($TEST_CONFIG.replace_term)"
+            command: $"($scooter_binary) -X -s ($TEST_CONFIG.search_term) -r ($TEST_CONFIG.replace_term)"
         },
         {
             name: "rg + sd",
@@ -82,7 +83,7 @@ def get_tools [scooter_binary: string] {
 
 def run_all_tools [tools: list, project_dir: string] {
     $tools | each {|tool|
-        let tool_dir = run_tool $tool $BASE_DIR $TEST_CONFIG.search_term $TEST_CONFIG.replace_term
+        let tool_dir = (run_tool $tool $BASE_DIR $TEST_CONFIG.search_term $TEST_CONFIG.replace_term)
         cd $project_dir
         {name: $tool.name, dir: $tool_dir}
     }
