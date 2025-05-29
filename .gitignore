@@ -1,3 +1,7 @@
 /target
 
 .DS_Store
+
+# End-to-end test directories
+test-input/
+output-*/

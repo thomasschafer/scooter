@@ -1,4 +1,5 @@
 use anyhow::bail;
+use app::AppRunConfig;
 use clap::Parser;
 use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
@@ -51,6 +52,14 @@ struct Args {
     #[arg(short = 'R', long)]
     immediate_replace: bool,
 
+    /// Print results to stdout, rather than displaying them as a final screen
+    #[arg(short = 'P', long)]
+    print_results: bool,
+
+    /// Combines `immediate_search`, `immediate_replace` and `print_results`
+    #[arg(short = 'X', long)]
+    immediate: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -88,12 +97,21 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 
 impl<'a> AppConfig<'a> {
     fn from(args: &'a Args) -> anyhow::Result<Self> {
+        if args.immediate && (args.immediate_search || args.immediate_replace || args.print_results)
+        {
+            bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
+        }
+
         let mut search_field_values = SearchFieldValues::default();
+
         if let Some(ref search_text) = args.search_text {
             search_field_values.search = FieldValue::new(search_text, true);
         } else if args.immediate_search {
             bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
+        } else if args.immediate {
+            bail!("Cannot run with `--immediate` unless a value has been provided for `--search-text`");
         }
+
         if let Some(ref replace_text) = args.replace_text {
             search_field_values.replace = FieldValue::new(replace_text, true);
         }
@@ -115,12 +133,15 @@ impl<'a> AppConfig<'a> {
 
         Ok(Self {
             directory: args.directory.clone(),
-            include_hidden: args.hidden,
-            advanced_regex: args.advanced_regex,
             log_level: args.log_level,
             search_field_values,
-            immediate_search: args.immediate_search,
-            immediate_replace: args.immediate_replace,
+            app_run_config: AppRunConfig {
+                include_hidden: args.hidden,
+                advanced_regex: args.advanced_regex,
+                immediate_search: args.immediate_search || args.immediate,
+                immediate_replace: args.immediate_replace || args.immediate,
+                print_results: args.print_results || args.immediate,
+            },
         })
     }
 }

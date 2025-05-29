@@ -54,3 +54,31 @@ jobs:
 
       - name: Run all tests
         run: cargo test --workspace --verbose
+
+  end-to-end-test:
+    name: End-to-end test (${{ matrix.os }})
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO: add Windows via WSL
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v24
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Setup Nix cache
+      uses: cachix/cachix-action@v13
+      with:
+        name: nix-community
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+    - name: Run tests
+      run: nix run .#end-to-end-test

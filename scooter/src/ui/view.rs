@@ -26,7 +26,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
-    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
+    replace::{PerformingReplacementState, ReplaceState},
     search::SearchResult,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
@@ -763,20 +763,9 @@ fn render_results_errors(area: Rect, replace_state: &ReplaceState, frame: &mut F
     let errors = replace_state
         .errors
         .iter()
-        .map(|res| {
-            error_result(
-                res,
-                match &res.replace_result {
-                    Some(ReplaceResult::Error(error)) => error,
-                    None => panic!("Found error result with no error message"),
-                    Some(ReplaceResult::Success) => {
-                        panic!("Found successful result in errors: {res:?}")
-                    }
-                },
-            )
-        })
         .skip(replace_state.replacement_errors_pos)
-        .take(list_area.height as usize / 3 + 1); // TODO: don't hardcode height
+        .take(list_area.height as usize / 3 + 1) // TODO: don't hardcode height
+        .map(error_result);
 
     render_results_tallies(results_area, frame, replace_state);
 
@@ -862,22 +851,12 @@ fn render_performing_replacement_view(
     );
 }
 
-fn error_result(result: &SearchResult, error: &str) -> [ratatui::widgets::ListItem<'static>; 3] {
+fn error_result(result: &SearchResult) -> [ratatui::widgets::ListItem<'static>; 3] {
+    let (path_display, error) = result.display_error();
+
     [
         ("".to_owned(), Style::default()),
-        (
-            format!(
-                "{}:{}",
-                result
-                    .path
-                    .clone()
-                    .into_os_string()
-                    .into_string()
-                    .expect("Failed to display path"),
-                result.line_number
-            ),
-            Style::default(),
-        ),
+        (path_display, Style::default()),
         (error.to_owned(), Style::default().fg(Color::Red)),
     ]
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))

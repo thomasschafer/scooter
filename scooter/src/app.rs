@@ -1,5 +1,5 @@
 use anyhow::Error;
-use crossterm::event::KeyEvent;
+use crossterm::{event::KeyEvent, style::Stylize};
 use ignore::overrides::{Override, OverrideBuilder};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
@@ -52,7 +52,7 @@ pub enum BackgroundProcessingEvent {
 #[derive(Debug, PartialEq, Eq)]
 pub enum EventHandlingResult {
     Rerender,
-    Exit,
+    Exit(Option<String>),
     None,
 }
 
@@ -387,12 +387,14 @@ pub enum Popup {
     Text { title: String, body: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppRunConfig {
     pub include_hidden: bool,
     pub advanced_regex: bool,
     pub immediate_search: bool,
     pub immediate_replace: bool,
+    pub print_results: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -403,6 +405,7 @@ impl Default for AppRunConfig {
             advanced_regex: false,
             immediate_search: false,
             immediate_replace: false,
+            print_results: false,
         }
     }
 }
@@ -416,6 +419,7 @@ pub struct App {
     errors: Vec<AppError>,
     include_hidden: bool,
     immediate_replace: bool,
+    print_results: bool,
     popup: Option<Popup>,
 }
 
@@ -449,6 +453,7 @@ impl<'a> App {
             popup: None,
             event_sender,
             immediate_replace: app_run_config.immediate_replace,
+            print_results: app_run_config.print_results,
         };
 
         if app_run_config.immediate_search {
@@ -504,6 +509,7 @@ impl<'a> App {
                 advanced_regex: self.search_fields.advanced_regex,
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
+                print_results: self.print_results,
             },
         );
     }
@@ -649,8 +655,27 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
-                self.current_screen = Screen::Results(replace_state);
-                EventHandlingResult::Rerender
+                if self.print_results {
+                    #[allow(clippy::format_collect)]
+                    let errors = replace_state
+                        .errors
+                        .iter()
+                        .map(|error| {
+                            let (path, error) = error.display_error();
+                            format!("\n{path}:\n  {}", error.red())
+                        })
+                        .collect::<String>();
+                    let results = format!(
+                        "Successful replacements: {replacements}\nIgnored: {ignored}\nErrors: {num_errors}{errors}",
+                        replacements = replace_state.num_successes,
+                        ignored = replace_state.num_ignored,
+                        num_errors = replace_state.errors.len(),
+                    );
+                    EventHandlingResult::Exit(Some(results))
+                } else {
+                    self.current_screen = Screen::Results(replace_state);
+                    EventHandlingResult::Rerender
+                }
             }
         }
     }
@@ -744,7 +769,7 @@ impl<'a> App {
 
         if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return EventHandlingResult::Exit;
+            return EventHandlingResult::Exit(None);
         }
 
         if self.popup.is_some() {
@@ -759,7 +784,7 @@ impl<'a> App {
                     return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return EventHandlingResult::Exit;
+                    return EventHandlingResult::Exit(None);
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {

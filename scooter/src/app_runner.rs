@@ -30,24 +30,18 @@ use crate::{
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppConfig<'a> {
     pub directory: Option<String>,
-    pub include_hidden: bool,
-    pub advanced_regex: bool,
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
-    pub immediate_search: bool,
-    pub immediate_replace: bool,
+    pub app_run_config: AppRunConfig,
 }
 
 impl Default for AppConfig<'_> {
     fn default() -> Self {
         Self {
             directory: None,
-            include_hidden: false,
-            advanced_regex: false,
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
-            immediate_search: false,
-            immediate_replace: false,
+            app_run_config: AppRunConfig::default(),
         }
     }
 }
@@ -107,12 +101,7 @@ where
         let (app, event_receiver) = App::new_with_receiver(
             directory,
             &config.search_field_values,
-            &AppRunConfig {
-                include_hidden: config.include_hidden,
-                advanced_regex: config.advanced_regex,
-                immediate_search: config.immediate_search,
-                immediate_replace: config.immediate_replace,
-            },
+            &config.app_run_config,
         );
 
         let terminal = Terminal::new(backend)?;
@@ -175,7 +164,7 @@ where
         }
     }
 
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<()> {
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<String>> {
         loop {
             let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
@@ -195,7 +184,7 @@ where
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
                                     if self.app.config.editor_open.exit {
-                                        res = EventHandlingResult::Exit;
+                                        res = EventHandlingResult::Exit(None);
                                     }
                                 }
                                 Err(e) => {
@@ -221,18 +210,16 @@ where
                     self.app.handle_background_processing_event(event)
                 }
                 else => {
-                    break;
+                    return Ok(None);
                 }
             };
 
             match event_handling_result {
                 EventHandlingResult::Rerender => self.draw()?,
-                EventHandlingResult::Exit => break,
+                EventHandlingResult::Exit(results) => return Ok(results),
                 EventHandlingResult::None => {}
             }
         }
-
-        Ok(())
     }
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
@@ -344,7 +331,10 @@ where
 pub async fn run_app(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let mut runner = AppRunner::new_terminal(app_config)?;
     runner.init()?;
-    runner.run_event_loop().await?;
+    let res = runner.run_event_loop().await?;
     runner.cleanup()?;
+    if let Some(res) = res {
+        println!("{res}");
+    }
     Ok(())
 }
