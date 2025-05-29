@@ -108,7 +108,10 @@ impl<'a> AppConfig<'a> {
             search_field_values.search = FieldValue::new(search_text, true);
         } else if args.immediate_search {
             bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
+        } else if args.immediate {
+            bail!("Cannot run with `--immediate` unless a value has been provided for `--search-text`");
         }
+
         if let Some(ref replace_text) = args.replace_text {
             search_field_values.replace = FieldValue::new(replace_text, true);
         }

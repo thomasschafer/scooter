@@ -8,14 +8,6 @@ This directory contains end-to-end tests for Scooter that compare its behavior a
 
 Install Nix - the Determinate Systems installer can be found [here](https://determinate.systems/nix-installer/), but other methods are available.
 
-### Enabling flakes
-
-If you haven't enabled flakes yet, add this to your `~/.config/nix/nix.conf`:
-
-```conf
-experimental-features = nix-command flakes
-```
-
 ## Running tests
 
 From the project root, run:

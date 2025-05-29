@@ -143,7 +143,6 @@ def main [] {
             print "\n❌ SOME TESTS FAILED"
             exit 1
         }
-
     } catch { |err|
         print "\nCleaning up after error..."
         cd $project_dir
