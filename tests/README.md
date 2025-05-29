@@ -11,7 +11,8 @@ Install Nix - the Determinate Systems installer can be found [here](https://dete
 ### Enabling flakes
 
 If you haven't enabled flakes yet, add this to your `~/.config/nix/nix.conf`:
-```
+
+```conf
 experimental-features = nix-command flakes
 ```
 
