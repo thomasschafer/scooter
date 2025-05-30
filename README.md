@@ -18,6 +18,7 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 - [Features](#features)
 - [Usage](#usage)
   - [Search fields](#search-fields)
+- [Performance](#performance)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
   - [Nix](#nix)
@@ -100,6 +101,22 @@ scooter --search-text "old" --replace-text "new" --immediate-search
 ```
 
 Run `scooter --help` to see the full list of command-line args that can be used to pre-populate fields.
+
+
+## Performance
+
+Below is a comparison of Scooter against other find-and-replace tools, on a reasonably large directory:
+
+<!-- BENCHMARK START -->
+| Command | Mean [s] | Min [s] | Max [s] | Relative |
+|:---|---:|---:|---:|---:|
+| `scooter` | 2.513 ± 0.028 | 2.485 | 2.561 | 1.29 ± 0.06 |
+| `rg + sd` | 1.945 ± 0.083 | 1.876 | 2.067 | 1.00 |
+
+
+Tested on a directory containing 12000 files and 4524000 lines of code.
+<!-- BENCHMARK END -->
+
 
 ## Installation
 
@@ -291,7 +308,6 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
   desc = "Toggle Scooter"
 })
 ```
-
 
 ## Contributing
 
