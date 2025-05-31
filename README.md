@@ -105,16 +105,14 @@ Run `scooter --help` to see the full list of command-line args that can be used 
 
 ## Performance
 
-Below is a comparison of Scooter against other find-and-replace tools, on a reasonably large directory:
+Below is a comparison of Scooter against other find-and-replace tools, running on the entire [Linux kernel repo](https://github.com/torvalds/linux):
 
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
-| `scooter` | 2.513 ± 0.028 | 2.485 | 2.561 | 1.29 ± 0.06 |
-| `rg + sd` | 1.945 ± 0.083 | 1.876 | 2.067 | 1.00 |
+| `scooter` | 4.849 ± 0.098 | 4.719 | 4.969 | 1.23 ± 0.13 |
+| `rg + sd` | 3.947 ± 0.409 | 3.283 | 4.312 | 1.00 |
 
-
-Tested on a directory containing 12000 files and 4524000 lines of code.
 <!-- BENCHMARK END -->
 
 

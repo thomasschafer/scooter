@@ -23,3 +23,9 @@ Benchmarks are run with [hyperfine](https://github.com/sharkdp/hyperfine). To ru
 ```sh
 nix run .#benchmark
 ```
+
+To update the readme with the benchmark results:
+
+```sh
+nix run .#benchmark -- --update-readme
+```

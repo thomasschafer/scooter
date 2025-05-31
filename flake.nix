@@ -69,7 +69,7 @@
             echo "Building..."
             cargo build --release --locked
             echo "Running benchmarks..."
-            nu tests/compare-tools.nu benchmark
+            nu tests/compare-tools.nu benchmark "$@"
           '';
         };
 

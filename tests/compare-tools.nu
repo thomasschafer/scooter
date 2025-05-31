@@ -1,10 +1,7 @@
 #!/usr/bin/env nu
 
 # TODO:
-# - add other tools
-# - use temp dirs
-# - make generated files more random and realistic - include binary files etc.
-# - update formatting in readme
+# - optionally run end-to-end tests on linux kernel
 # - run on schedule, bump rg + sd versions
 
 const TEST_CONFIG = {
@@ -103,63 +100,32 @@ def compare_results [tool_results: list] {
     $all_tests_passed
 }
 
-def create_benchmark_files [dir: string] {
-    mkdir $dir
+def get_benchmark_repo_path [] {
+    let cache_dir = ($nu.home-path | path join ".cache" "scooter-benchmark")
+    let repo_name = "linux"
+    let repo_url = $"https://github.com/torvalds/($repo_name).git"
 
-    let search_words = ["before", "old", "previous", "legacy", "deprecated"]
-    let filler_words = ["function", "variable", "class", "method", "struct", "enum", "const", "let", "var", "def"]
-    let file_types = ["rs", "py", "js", "ts", "go", "java", "cpp", "c", "h", "hpp"]
+    let repo_path = ($cache_dir | path join $repo_name)
 
-    # Create files of varying sizes
-    let file_configs = [
-        {count: 1000, min_lines: 10, max_lines: 50, description: "small"},
-        {count: 10000, min_lines: 100, max_lines: 500, description: "medium"},
-        {count: 1000, min_lines: 1000, max_lines: 2000, description: "large"}
-    ]
-
-    mut file_counter = 0
-    mut total_lines = 0
-
-    for config in $file_configs {
-        for i in 0..<$config.count {
-            let file_type = ($file_types | get ($file_counter mod ($file_types | length)))
-            let filename = $"($dir)/file_($config.description)_($i).($file_type)"
-            let lines_count = ($config.min_lines + ($file_counter * 47) mod ($config.max_lines - $config.min_lines))
-
-            mut content = ""
-            for line_num in 0..<$lines_count {
-                let search_word = ($search_words | get (($line_num * 7 + $file_counter * 3) mod ($search_words | length)))
-                let filler_word = ($filler_words | get (($line_num * 5 + $file_counter * 2) mod ($filler_words | length)))
-
-                if ($line_num mod 4) == 0 {
-                    $content = $content + $"// This line contains ($search_word) for replacement\n"
-                } else if ($line_num mod 4) == 1 {
-                    $content = $content + $"fn ($filler_word)_($search_word)\() \{ println!\(\"($search_word)\"\); \}\n"
-                } else if ($line_num mod 4) == 2 {
-                    $content = $content + $"let ($filler_word) = \"some text with ($search_word) in it\";\n"
-                } else {
-                    $content = $content + $"// Regular code line with some ($search_word) content here\n"
-                }
-            }
-
-            $content | save -f $filename
-            $file_counter += 1
-            $total_lines += $lines_count
-        }
+    if not ($cache_dir | path exists) {
+        mkdir $cache_dir
     }
 
-    let formatted_lines = ($total_lines | into string | str replace --regex '(\d)(?=(\d{3})+$)' '${1},')
-    print $"Created ($file_counter) files with ($formatted_lines) total lines of code"
+    if not ($repo_path | path exists) {
+        print $"Downloading ($repo_name) to cache..."
+        ^git clone --depth 1 $repo_url $repo_path
+    } else {
+        print $"Using cached ($repo_name)"
+    }
 
-    {files: $file_counter, lines: $total_lines}
+    $repo_path
 }
 
-def update_readme_benchmark [project_dir: string, benchmark_file: string, files: int, lines: int] {
+def update_readme_benchmark [project_dir: string, benchmark_file: string] {
     let benchmark_table = (open $benchmark_file)
     let readme_path = ($project_dir | path join "README.md")
     let readme_content = (open $readme_path)
 
-    # Find the start and end markers for the benchmark section
     let start_marker = "<!-- BENCHMARK START -->"
     let end_marker = "<!-- BENCHMARK END -->"
 
@@ -177,22 +143,21 @@ def update_readme_benchmark [project_dir: string, benchmark_file: string, files:
     }
 
     if $start_idx >= 0 and $end_idx >= 0 {
-        let stats_line = $"Tested on a directory containing ($files) files and ($lines) lines of code"
-
         let before_lines = ($lines_content | take ($start_idx + 1))
         let after_lines = ($lines_content | skip $end_idx)
-        let new_content = ($before_lines | append $benchmark_table | append "" | append $stats_line | append $after_lines | str join "\n")
+        let new_content = ($before_lines | append $benchmark_table | append $after_lines | append "" | str join "\n")
 
         $new_content | save -f $readme_path
-        rm $benchmark_file
 
+        print "Results embedded in README.md"
         true
     } else {
+        print "❌ Could not find benchmark markers in README.md"
         false
     }
 }
 
-def main [mode: string] {
+def main [mode: string, --update-readme] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
         print $"❌ ERROR: invalid mode ($mode), must be one of ($valid_modes | str join ', ')"
@@ -208,14 +173,6 @@ def main [mode: string] {
         exit 1
     }
 
-    if $mode == "benchmark" {
-        if (which hyperfine | is-empty) {
-            print "❌ ERROR: hyperfine is required for benchmarking but not found in PATH"
-            print "Install with: cargo install hyperfine"
-            exit 1
-        }
-    }
-
     let all_tools = get_tools $scooter_binary $TEST_CONFIG.search_term $TEST_CONFIG.replace_term
 
     let tool_directories = $all_tools | each {|tool| tool_to_dirname $tool.name}
@@ -228,20 +185,17 @@ def main [mode: string] {
         if $mode == "benchmark" {
             print "Running benchmark..."
 
-            # Setup: create source of truth directory with lots of files
-            const benchmark_source = "benchmark-source"
-            const benchmark_dir = "benchmark-temp"
-
-            print "Creating benchmark files..."
-            let benchmark_stats = (create_benchmark_files $benchmark_source)
+            let benchmark_source = get_benchmark_repo_path
+            let benchmark_dir = ($project_dir | path join "benchmark-temp")
 
             let benchmark_tools = get_tools $scooter_binary "before" "after"
 
+            const benchmark_file = "benchmark-results.md"
             mut hyperfine_args = [
-                "--prepare" $"cp -r ($benchmark_source) ($benchmark_dir)"
+                "--prepare" $"rm -rf ($benchmark_dir); cp -r ($benchmark_source) ($benchmark_dir)"
                 "--cleanup" $"rm -rf ($benchmark_dir)"
-                "--export-markdown" "benchmark-results.md"
-                "--warmup" "2"
+                "--export-markdown" $benchmark_file
+                "--warmup" "1"
                 "--min-runs" "5"
             ]
 
@@ -257,19 +211,18 @@ def main [mode: string] {
             ^hyperfine ...$hyperfine_args
             let benchmark_exit_code = $env.LAST_EXIT_CODE
 
-            if $benchmark_exit_code == 0 and ("benchmark-results.md" | path exists) {
-                if (update_readme_benchmark $project_dir "benchmark-results.md" $benchmark_stats.files $benchmark_stats.lines) {
-                    print "✅ Benchmark completed successfully"
-                    print "Results embedded in README.md"
-                } else {
-                    print "❌ Could not find benchmark markers in README.md"
+            if $benchmark_exit_code == 0 and ($benchmark_file | path exists) {
+                print "✅ Benchmark completed successfully"
+                if $update_readme {
+                    update_readme_benchmark $project_dir "benchmark-results.md"
                 }
+                rm $benchmark_file
             } else {
                 print "❌ Benchmark failed"
             }
 
             # Cleanup
-            cleanup_directories [$benchmark_source, $benchmark_dir, $replacement_dir] | append $tool_directories
+            cleanup_directories [$benchmark_dir]
 
             exit $benchmark_exit_code
 
