@@ -1,22 +1,14 @@
 #!/usr/bin/env nu
 
-# TODO:
-# - optionally run end-to-end tests on linux kernel
-# - run on schedule, bump rg + sd versions
-
-const TEST_CONFIG = {
-    search_term: "before",
-    replace_term: "after",
-    test_files: [
+def create_test_files [dir: string] {
+    let files = [
         {path: "file1.txt", content: "This is before text in file1\nAnother line with before\n"},
         {path: "file2.txt", content: "No match here\nJust some text\n"},
         {path: "file3.rs", content: "fn before() {\n    println!(\"before\");\n}\n\n\n"},
         # {path: "subdir/file4.txt", content: "before at start\nMiddle before text\nbefore at end"}, # TODO: fix this - if there is no newline at the end, Scooter adds one
         {path: "subdir/file5.txt", content: "Nothing to replace here"},
     ]
-}
 
-def create_test_files [dir: string, files: list] {
     for file in $files {
         let filepath = ($dir | path join $file.path)
         let parent_dir = ($filepath | path dirname)
@@ -42,7 +34,7 @@ def tool_to_dirname [name: string] {
 def run_tool [base_dir: string, name: string, command: string] {
     let tool_dir = tool_to_dirname $name
 
-    print $"\n=== Running ($name) ==="
+    print $"Running ($name)"
 
     cp -r $base_dir $tool_dir
 
@@ -57,7 +49,7 @@ def run_tool [base_dir: string, name: string, command: string] {
 }
 
 def compare_directories [dir1: string, dir2: string, name1: string, name2: string] {
-    print $"\n=== Comparing ($name1) vs ($name2) ==="
+    print $"Comparing ($name1) vs ($name2)"
 
     let diff_result = (^diff -r $dir1 $dir2 | complete)
     let directories_match = ($diff_result.exit_code == 0)
@@ -66,7 +58,7 @@ def compare_directories [dir1: string, dir2: string, name1: string, name2: strin
         print $"✅ PASSED: ($name1) and ($name2) produced identical results"
     } else {
         print $"❌ FAILED: ($name1) and ($name2) produced different results"
-        print "\nDifferences found:"
+        print "Differences found:"
         print $diff_result.stdout
     }
 
@@ -121,6 +113,16 @@ def get_benchmark_repo_path [] {
     $repo_path
 }
 
+def setup_test_data [test_dir: string, use_linux: bool] {
+    if $use_linux {
+        get_benchmark_repo_path
+    } else {
+        mkdir $test_dir
+        create_test_files $test_dir
+        $test_dir
+    }
+}
+
 def update_readme_benchmark [project_dir: string, benchmark_file: string] {
     let benchmark_table = (open $benchmark_file)
     let readme_path = ($project_dir | path join "README.md")
@@ -157,7 +159,7 @@ def update_readme_benchmark [project_dir: string, benchmark_file: string] {
     }
 }
 
-def main [mode: string, --update-readme] {
+def main [mode: string, --update-readme, --use-linux] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
         print $"❌ ERROR: invalid mode ($mode), must be one of ($valid_modes | str join ', ')"
@@ -173,14 +175,19 @@ def main [mode: string, --update-readme] {
         exit 1
     }
 
-    let all_tools = get_tools $scooter_binary $TEST_CONFIG.search_term $TEST_CONFIG.replace_term
+    let search_term = if $use_linux { "static" } else { "before" }
+    let replace_term = if $use_linux { "STATIC" } else { "after" }
+    let all_tools = get_tools $scooter_binary $search_term $replace_term
 
     let tool_directories = $all_tools | each {|tool| tool_to_dirname $tool.name}
-    let all_test_directories = [$replacement_dir] | append $tool_directories
+    let cleanup_dirs = if $use_linux {
+        $tool_directories
+    } else {
+        [$replacement_dir] | append $tool_directories
+    }
 
     try {
-        cleanup_directories $all_test_directories
-        mkdir $replacement_dir
+        cleanup_directories $cleanup_dirs
 
         if $mode == "benchmark" {
             print "Running benchmark..."
@@ -221,45 +228,40 @@ def main [mode: string, --update-readme] {
                 print "❌ Benchmark failed"
             }
 
-            # Cleanup
-            cleanup_directories [$benchmark_dir]
-
             exit $benchmark_exit_code
-
         } else if $mode == "test" {
             print "Running end-to-end tests..."
 
-            # Setup
-            create_test_files $replacement_dir $TEST_CONFIG.test_files
+            let test_source_dir = setup_test_data $replacement_dir $use_linux
 
-            # Run
             let tool_results = $all_tools | each {|tool|
                 {
                     name: $tool.name,
-                    dir: (run_tool $replacement_dir $tool.name $tool.command),
+                    dir: (run_tool $test_source_dir $tool.name $tool.command),
                 }
             }
             let all_tests_passed = compare_results $tool_results
 
             # Cleanup
-            print "\nCleaning up test directories..."
+            print "Cleaning up test directories..."
             cd $project_dir
-            cleanup_directories $all_test_directories
+            cleanup_directories $cleanup_dirs
 
             # Report results
             if $all_tests_passed {
-                print "\n✅ ALL TESTS PASSED"
+                print "✅ ALL TESTS PASSED"
                 exit 0
             } else {
-                print "\n❌ SOME TESTS FAILED"
+                print "❌ SOME TESTS FAILED"
                 exit 1
             }
         }
     } catch { |err|
-        print "\nCleaning up after error..."
+        print "Cleaning up after error..."
         cd $project_dir
-        cleanup_directories $all_test_directories
+        cleanup_directories $cleanup_dirs
         print $"❌ TEST FAILED: ($err)"
         exit 1
     }
 }
+

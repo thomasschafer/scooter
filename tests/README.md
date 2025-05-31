@@ -1,6 +1,6 @@
 # End-to-end tests
 
-This directory contains end-to-end tests and benchmarks for Scooter, that compare its behavior against other find and replace tools.
+This directory contains end-to-end tests and benchmarks for Scooter that compare its behavior against other find and replace tools.
 
 ## Prerequisites
 
@@ -14,6 +14,11 @@ From the project root, run:
 
 ```bash
 nix run .#end-to-end-test
+
+To run tests against the Linux kernel instead of small test files:
+
+```sh
+nix run .#end-to-end-test -- --use-linux
 ```
 
 ## Benchmarks
