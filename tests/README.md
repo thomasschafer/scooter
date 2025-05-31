@@ -15,7 +15,7 @@ From the project root, run:
 ```bash
 nix run .#end-to-end-test
 
-To run tests against the Linux kernel instead of small test files:
+To run tests against the Linux kernel instead of test files:
 
 ```sh
 nix run .#end-to-end-test -- --use-linux
@@ -23,7 +23,7 @@ nix run .#end-to-end-test -- --use-linux
 
 ## Benchmarks
 
-Benchmarks are run with [hyperfine](https://github.com/sharkdp/hyperfine). To run them yourself:
+Benchmarks are run with [hyperfine](https://github.com/sharkdp/hyperfine). To run them:
 
 ```sh
 nix run .#benchmark

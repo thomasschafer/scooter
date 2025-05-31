@@ -105,7 +105,7 @@ Run `scooter --help` to see the full list of command-line args that can be used 
 
 ## Performance
 
-Below is a comparison of Scooter against other find-and-replace tools, running on the entire [Linux kernel repo](https://github.com/torvalds/linux):
+Scooter is fast. While it will never be as performant as tools that don't spin up a TUI, such as [ripgrep](https://github.com/BurntSushi/ripgrep) piped into [sd](https://github.com/chmln/sd) (`rg -l <search> | xargs sd <search> <replace>`), it should still perform well. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux):
 
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
