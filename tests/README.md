@@ -1,6 +1,6 @@
 # End-to-end tests
 
-This directory contains end-to-end tests for Scooter that compare its behavior against other find and replace tools.
+This directory contains end-to-end tests and benchmarks for Scooter that compare its behavior against other find and replace tools.
 
 ## Prerequisites
 
@@ -14,12 +14,23 @@ From the project root, run:
 
 ```bash
 nix run .#end-to-end-test
+
+To run tests against the Linux kernel instead of test files:
+
+```sh
+nix run .#end-to-end-test -- --use-linux
 ```
 
-## Test structure
+## Benchmarks
 
-The `compare-tools.nu` test:
-1. Creates a `test-input/` directory with a number of test files
-1. Runs Scooter and other tools on copies of this directory
-1. Compares the outputs to ensure Scooter produces identical results
-1. Cleans up all test directories
+Benchmarks are run with [hyperfine](https://github.com/sharkdp/hyperfine). To run them:
+
+```sh
+nix run .#benchmark
+```
+
+To update the readme with the benchmark results:
+
+```sh
+nix run .#benchmark -- --update-readme
+```
