@@ -18,6 +18,7 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 - [Features](#features)
 - [Usage](#usage)
   - [Search fields](#search-fields)
+- [Performance](#performance)
 - [Installation](#installation)
   - [Homebrew](#homebrew)
   - [Nix](#nix)
@@ -100,6 +101,21 @@ scooter --search-text "old" --replace-text "new" --immediate-search
 ```
 
 Run `scooter --help` to see the full list of command-line args that can be used to pre-populate fields.
+
+
+## Performance
+
+Scooter is fast. While it will never be as performant as tools that don't spin up a TUI, such as [ripgrep](https://github.com/BurntSushi/ripgrep) piped into [sd](https://github.com/chmln/sd) (`rg -l <search> | xargs sd <search> <replace>`), it still performs well. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "before" with "after":
+
+<!-- BENCHMARK START -->
+| Command | Mean [s] | Min [s] | Max [s] | Relative |
+|:---|---:|---:|---:|---:|
+| `scooter` | 5.169 ± 0.673 | 4.697 | 6.343 | 1.53 ± 0.22 |
+| `rg + sd` | 3.369 ± 0.214 | 3.201 | 3.705 | 1.00 |
+| `fd + sd` | 10.046 ± 0.003 | 10.043 | 10.049 | 2.98 ± 0.19 |
+
+<!-- BENCHMARK END -->
+
 
 ## Installation
 
@@ -291,7 +307,6 @@ vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
   desc = "Toggle Scooter"
 })
 ```
-
 
 ## Contributing
 
