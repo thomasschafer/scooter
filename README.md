@@ -105,13 +105,14 @@ Run `scooter --help` to see the full list of command-line args that can be used 
 
 ## Performance
 
-Scooter is fast. While it will never be as performant as tools that don't spin up a TUI, such as [ripgrep](https://github.com/BurntSushi/ripgrep) piped into [sd](https://github.com/chmln/sd) (`rg -l <search> | xargs sd <search> <replace>`), it should still perform well. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux):
+Scooter is fast. While it will never be as performant as tools that don't spin up a TUI, such as [ripgrep](https://github.com/BurntSushi/ripgrep) piped into [sd](https://github.com/chmln/sd) (`rg -l <search> | xargs sd <search> <replace>`), it still performs well. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "limited":
 
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
-| `scooter` | 4.849 ± 0.098 | 4.719 | 4.969 | 1.23 ± 0.13 |
-| `rg + sd` | 3.947 ± 0.409 | 3.283 | 4.312 | 1.00 |
+| `scooter` | 5.169 ± 0.673 | 4.697 | 6.343 | 1.53 ± 0.22 |
+| `rg + sd` | 3.369 ± 0.214 | 3.201 | 3.705 | 1.00 |
+| `fd + sd` | 10.046 ± 0.003 | 10.043 | 10.049 | 2.98 ± 0.19 |
 
 <!-- BENCHMARK END -->
 

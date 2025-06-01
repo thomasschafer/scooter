@@ -80,5 +80,9 @@ jobs:
         name: nix-community
         authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-    - name: Run tests
+    - name: Run tests (small test files)
       run: nix run .#end-to-end-test
+
+    # TODO: uncomment when newline bug fixed
+    # - name: Run tests (large repo)
+    #   run: nix run .#end-to-end-test --use-linux

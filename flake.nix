@@ -29,6 +29,7 @@
         testDeps = with pkgs; [
           diffutils
           expect
+          fd
           nushell
           ripgrep
           rustToolchain

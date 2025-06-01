@@ -69,11 +69,15 @@ def get_tools [scooter_binary: string, search_term: string, replace_term: string
     return [
         {
             name: "scooter",
-            command: $"($scooter_binary) -X -s ($search_term) -r ($replace_term)"
+            command: $"($scooter_binary) -X -s '($search_term)' -r '($replace_term)'",
         },
         {
             name: "rg + sd",
-            command: $"rg -l ($search_term) | xargs sd ($search_term) ($replace_term)"
+            command: $"rg -l ($search_term) | xargs sd '($search_term)' '($replace_term)'",
+        },
+        {
+            name: "fd + sd",
+            command: $"fd --type file --exec sd '($search_term)' '($replace_term)'",
         },
     ]
 }
@@ -175,8 +179,8 @@ def main [mode: string, --update-readme, --use-linux] {
         exit 1
     }
 
-    let search_term = if $use_linux { "static" } else { "before" }
-    let replace_term = if $use_linux { "STATIC" } else { "after" }
+    let search_term = if $use_linux { "limited" } else { "before" }
+    let replace_term = if $use_linux { "constrained" } else { "after" }
     let all_tools = get_tools $scooter_binary $search_term $replace_term
 
     let tool_directories = $all_tools | each {|tool| tool_to_dirname $tool.name}
