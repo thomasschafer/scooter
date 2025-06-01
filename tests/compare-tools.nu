@@ -66,7 +66,7 @@ def compare_directories [dir1: string, dir2: string, name1: string, name2: strin
 }
 
 def get_tools [scooter_binary: string, search_term: string, replace_term: string] {
-    return [
+    [
         {
             name: "scooter",
             command: $"($scooter_binary) -X -s '($search_term)' -r '($replace_term)'",
@@ -97,7 +97,7 @@ def compare_results [tool_results: list] {
 }
 
 def get_benchmark_repo_path [] {
-    let cache_dir = ($nu.home-path | path join ".cache" "scooter-benchmark")
+    let cache_dir = ($nu.home-path | path join ".cache" "scooter" "benchmark")
     let repo_name = "linux"
     let repo_url = $"https://github.com/torvalds/($repo_name).git"
 
@@ -163,6 +163,69 @@ def update_readme_benchmark [project_dir: string, benchmark_file: string] {
     }
 }
 
+def run_benchmark [project_dir: string, search: string, replace: string, scooter_binary: string, update_readme: bool] {
+    print "Running benchmark..."
+
+    let benchmark_source = get_benchmark_repo_path
+    let benchmark_dir = ($project_dir | path join "benchmark-temp")
+
+    let benchmark_tools = get_tools $scooter_binary $search $replace
+
+    const benchmark_file = "benchmark-results.md"
+    mut hyperfine_args = [
+        "--prepare" $"rm -rf ($benchmark_dir); cp -r ($benchmark_source) ($benchmark_dir)"
+        "--cleanup" $"rm -rf ($benchmark_dir)"
+        "--export-markdown" $benchmark_file
+        "--warmup" "1"
+        "--min-runs" "5"
+    ]
+
+    for tool in $benchmark_tools {
+        $hyperfine_args = ($hyperfine_args | append [
+            "--command-name" $tool.name
+            $"expect -c 'spawn bash -c \"cd ($benchmark_dir) && ($tool.command)\"; expect eof'"
+        ])
+    }
+
+    print "Running hyperfine benchmark..."
+    ^hyperfine ...$hyperfine_args
+    let benchmark_exit_code = $env.LAST_EXIT_CODE
+
+    if $benchmark_exit_code == 0 and ($benchmark_file | path exists) {
+        print "✅ Benchmark completed successfully"
+        if $update_readme {
+            update_readme_benchmark $project_dir $benchmark_file
+        }
+        rm $benchmark_file
+    } else {
+        print "❌ Benchmark failed"
+    }
+
+    $benchmark_exit_code
+}
+
+def run_e2e_tests [replacement_dir: string, all_tools: list, use_linux: bool] {
+    print "Running end-to-end tests..."
+
+    let test_source_dir = setup_test_data $replacement_dir $use_linux
+
+    let tool_results = $all_tools | each {|tool|
+        {
+            name: $tool.name,
+            dir: (run_tool $test_source_dir $tool.name $tool.command),
+        }
+    }
+    let all_tests_passed = compare_results $tool_results
+
+    if $all_tests_passed {
+        print "✅ ALL TESTS PASSED"
+        0
+    } else {
+        print "❌ SOME TESTS FAILED"
+        1
+    }
+}
+
 def main [mode: string, --update-readme, --use-linux] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
@@ -179,8 +242,8 @@ def main [mode: string, --update-readme, --use-linux] {
         exit 1
     }
 
-    let search_term = if $use_linux { "limited" } else { "before" }
-    let replace_term = if $use_linux { "constrained" } else { "after" }
+    let search_term = "before"
+    let replace_term = "after"
     let all_tools = get_tools $scooter_binary $search_term $replace_term
 
     let tool_directories = $all_tools | each {|tool| tool_to_dirname $tool.name}
@@ -191,75 +254,22 @@ def main [mode: string, --update-readme, --use-linux] {
     }
 
     try {
+        # Ensure nothing is left over from a previous test
         cleanup_directories $cleanup_dirs
 
-        if $mode == "benchmark" {
-            print "Running benchmark..."
-
-            let benchmark_source = get_benchmark_repo_path
-            let benchmark_dir = ($project_dir | path join "benchmark-temp")
-
-            let benchmark_tools = get_tools $scooter_binary "before" "after"
-
-            const benchmark_file = "benchmark-results.md"
-            mut hyperfine_args = [
-                "--prepare" $"rm -rf ($benchmark_dir); cp -r ($benchmark_source) ($benchmark_dir)"
-                "--cleanup" $"rm -rf ($benchmark_dir)"
-                "--export-markdown" $benchmark_file
-                "--warmup" "1"
-                "--min-runs" "5"
-            ]
-
-            for tool in $benchmark_tools {
-                $hyperfine_args = ($hyperfine_args | append [
-                    "--command-name" $tool.name
-                    $"expect -c 'spawn bash -c \"cd ($benchmark_dir) && ($tool.command)\"; expect eof'"
-                ])
-            }
-
-            # Run
-            print "Running hyperfine benchmark..."
-            ^hyperfine ...$hyperfine_args
-            let benchmark_exit_code = $env.LAST_EXIT_CODE
-
-            if $benchmark_exit_code == 0 and ($benchmark_file | path exists) {
-                print "✅ Benchmark completed successfully"
-                if $update_readme {
-                    update_readme_benchmark $project_dir "benchmark-results.md"
-                }
-                rm $benchmark_file
-            } else {
-                print "❌ Benchmark failed"
-            }
-
-            exit $benchmark_exit_code
+        # Run
+        let exit_code = if $mode == "benchmark" {
+            run_benchmark $project_dir $search_term $replace_term $scooter_binary $update_readme
         } else if $mode == "test" {
-            print "Running end-to-end tests..."
-
-            let test_source_dir = setup_test_data $replacement_dir $use_linux
-
-            let tool_results = $all_tools | each {|tool|
-                {
-                    name: $tool.name,
-                    dir: (run_tool $test_source_dir $tool.name $tool.command),
-                }
-            }
-            let all_tests_passed = compare_results $tool_results
-
-            # Cleanup
-            print "Cleaning up test directories..."
-            cd $project_dir
-            cleanup_directories $cleanup_dirs
-
-            # Report results
-            if $all_tests_passed {
-                print "✅ ALL TESTS PASSED"
-                exit 0
-            } else {
-                print "❌ SOME TESTS FAILED"
-                exit 1
-            }
+            run_e2e_tests $replacement_dir $all_tools $use_linux
         }
+
+        # Cleanup
+        print "Cleaning up test directories..."
+        cd $project_dir
+        cleanup_directories $cleanup_dirs
+
+        exit $exit_code
     } catch { |err|
         print "Cleaning up after error..."
         cd $project_dir
@@ -268,4 +278,3 @@ def main [mode: string, --update-readme, --use-linux] {
         exit 1
     }
 }
-
