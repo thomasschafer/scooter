@@ -57,7 +57,7 @@ pub type CrosstermEventStream = event::EventStream;
 pub struct AppRunner<B: Backend, E: EventStream> {
     app: App,
     event_receiver: UnboundedReceiver<Event>,
-    tui: Tui<B>,
+    tui: Option<Tui<B>>,
     event_stream: E,
     buffer_snapshot_sender: Option<UnboundedSender<String>>,
 }
@@ -68,21 +68,21 @@ pub trait BufferProvider {
 
 impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
     fn get_buffer(&mut self) -> &Buffer {
-        self.tui.terminal.current_buffer_mut()
+        self.tui.as_mut().unwrap().terminal.current_buffer_mut()
     }
 }
 
 impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
     fn get_buffer(&mut self) -> &Buffer {
-        self.tui.terminal.backend().buffer()
+        self.tui.as_mut().unwrap().terminal.backend().buffer()
     }
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    pub fn new_terminal(config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(config: AppConfig<'_>, tui: bool) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
-        Self::new(config, backend, event_stream)
+        Self::new(config, backend, event_stream, tui)
     }
 }
 
@@ -90,7 +90,12 @@ impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
 where
     Self: BufferProvider,
 {
-    pub fn new(config: AppConfig<'_>, backend: B, event_stream: E) -> anyhow::Result<Self> {
+    pub fn new(
+        config: AppConfig<'_>,
+        backend: B,
+        event_stream: E,
+        use_tui: bool,
+    ) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
         let directory = match config.directory {
@@ -105,7 +110,11 @@ where
         );
 
         let terminal = Terminal::new(backend)?;
-        let tui = Tui::new(terminal);
+        let tui = if use_tui {
+            Some(Tui::new(terminal))
+        } else {
+            None
+        };
 
         Ok(Self {
             app,
@@ -124,14 +133,18 @@ where
     }
 
     pub fn init(&mut self) -> anyhow::Result<()> {
-        self.tui.init()?;
+        if let Some(ref mut tui) = self.tui {
+            tui.init()?;
+        }
         self.draw()?;
 
         Ok(())
     }
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
-        self.tui.draw(&mut self.app)?;
+        if let Some(ref mut tui) = self.tui {
+            tui.draw(&mut self.app)?;
+        }
         self.send_snapshot();
         Ok(())
     }
@@ -180,7 +193,9 @@ where
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
                             let mut res = EventHandlingResult::Rerender;
-                            self.tui.show_cursor()?;
+                            if let Some(ref mut tui) = self.tui {
+                                tui.show_cursor()?;
+                            }
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
                                     if self.app.config.editor_open.exit {
@@ -197,7 +212,9 @@ where
                                     error!("Failed to open editor: {e}");
                                 }
                             }
-                            self.tui.init()?;
+                            if let Some(ref mut tui) = self.tui {
+                                tui.init()?;
+                                }
                             res
 
                         }
@@ -224,7 +241,11 @@ where
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
         self.app.cancel_in_progress_tasks();
-        self.tui.exit()
+        if let Some(ref mut tui) = self.tui {
+            tui.exit()
+        } else {
+            Ok(())
+        }
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
@@ -328,8 +349,8 @@ where
     }
 }
 
-pub async fn run_app(app_config: AppConfig<'_>) -> anyhow::Result<()> {
-    let mut runner = AppRunner::new_terminal(app_config)?;
+pub async fn run_app(app_config: AppConfig<'_>, tui: bool) -> anyhow::Result<()> {
+    let mut runner = AppRunner::new_runner(app_config, tui)?;
     runner.init()?;
     let res = runner.run_event_loop().await?;
     runner.cleanup()?;

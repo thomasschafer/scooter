@@ -61,6 +61,10 @@ struct Args {
     #[arg(short = 'X', long)]
     immediate: bool,
 
+    /// Run Scooter without a TUI. Search and replace runs immediately (as with the `--immediate` flag), but with no user interface
+    #[arg(short = 'N', long)]
+    no_tui: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -98,6 +102,14 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 
 impl<'a> AppConfig<'a> {
     fn from(args: &'a Args) -> anyhow::Result<Self> {
+        if args.no_tui
+            && (args.immediate
+                || args.immediate_search
+                || args.immediate_replace
+                || args.print_results)
+        {
+            bail!("`--no_tui` runs the search and replace immediately, and so cannot be used alongside any of `--immediate`, `--immediate-search`, `--immediate-replace` or `--print-results`.")
+        }
         if args.immediate && (args.immediate_search || args.immediate_replace || args.print_results)
         {
             bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
@@ -132,6 +144,7 @@ impl<'a> AppConfig<'a> {
             search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
         }
 
+        let immediate = args.immediate || args.no_tui;
         Ok(Self {
             directory: args.directory.clone(),
             log_level: args.log_level,
@@ -139,9 +152,9 @@ impl<'a> AppConfig<'a> {
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
                 advanced_regex: args.advanced_regex,
-                immediate_search: args.immediate_search || args.immediate,
-                immediate_replace: args.immediate_replace || args.immediate,
-                print_results: args.print_results || args.immediate,
+                immediate_search: args.immediate_search || immediate,
+                immediate_replace: args.immediate_replace || immediate,
+                print_results: args.print_results || immediate,
             },
         })
     }
@@ -151,5 +164,5 @@ impl<'a> AppConfig<'a> {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = AppConfig::from(&args)?;
-    run_app(config).await
+    run_app(config, !args.no_tui).await
 }
