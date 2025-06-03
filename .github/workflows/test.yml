@@ -83,6 +83,5 @@ jobs:
     - name: Run tests (small test files)
       run: nix run .#end-to-end-test
 
-    # TODO: uncomment when newline bug fixed
-    # - name: Run tests (large repo)
-    #   run: nix run .#end-to-end-test --use-linux
+    - name: Run tests (larger repo)
+      run: nix run .#end-to-end-test -- --repo-url https://github.com/thomasschafer/helix
