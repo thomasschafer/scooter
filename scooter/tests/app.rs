@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
+use scooter::line_reader::LineEnding;
 use serial_test::serial;
 use std::fs;
 use std::io;
@@ -32,6 +33,7 @@ async fn test_replace_state() {
                 path: PathBuf::from(format!("error-{n}.txt")),
                 line_number: 1,
                 line: format!("line {n}"),
+                line_ending: LineEnding::Lf,
                 replacement: format!("error replacement {n}"),
                 included: true,
                 replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
@@ -237,6 +239,7 @@ async fn test_help_popup_on_search_complete() {
             path: PathBuf::from(format!("test{i}.txt")),
             line_number: 1,
             line: format!("test line {i}").to_string(),
+            line_ending: LineEnding::Lf,
             replacement: format!("replacement {i}").to_string(),
             included: true,
             replace_result: None,
@@ -1704,6 +1707,7 @@ async fn test_keymaps_results() {
             path: PathBuf::from("error.txt"),
             line_number: 1,
             line: "test line".to_string(),
+            line_ending: LineEnding::Lf,
             replacement: "replacement".to_string(),
             included: true,
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),

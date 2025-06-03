@@ -12,6 +12,7 @@ mod app;
 mod app_runner;
 mod config;
 mod fields;
+mod line_reader;
 mod logging;
 mod replace;
 mod search;

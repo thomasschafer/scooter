@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -18,7 +18,12 @@ use log::{error, warn};
 use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
+use crate::{
+    app::BackgroundProcessingEvent,
+    fields::SearchFieldValues,
+    line_reader::{BufReadExt, LineEnding},
+    replace::ReplaceResult,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
@@ -26,6 +31,7 @@ pub struct SearchResult {
     pub line_number: usize,
     /// 1-indexed
     pub line: String,
+    pub line_ending: LineEnding,
     pub replacement: String,
     pub included: bool,
     pub replace_result: Option<ReplaceResult>,
@@ -294,10 +300,10 @@ impl ParsedFields {
 
         let mut read_errors = 0;
 
-        for (mut line_number, line_result) in reader.lines().enumerate() {
+        for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {
             line_number += 1; // Ensure line-number is 1-indexed
 
-            let line = match line_result {
+            let (line, line_ending) = match line_result {
                 Ok(l) => l,
                 Err(err) => {
                     read_errors += 1;
@@ -317,6 +323,7 @@ impl ParsedFields {
                     path: path.to_path_buf(),
                     line_number,
                     line,
+                    line_ending,
                     replacement,
                     included: true,
                     replace_result: None,

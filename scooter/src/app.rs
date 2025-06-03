@@ -1136,6 +1136,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();
@@ -1147,6 +1148,7 @@ mod tests {
             path: Path::new("random/file").to_path_buf(),
             line_number: random_num(),
             line: "foo".to_owned(),
+            line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included,
             replace_result: None,
@@ -1159,6 +1161,7 @@ mod tests {
                 path: PathBuf::from(format!("test{i}.txt")),
                 line_number: 1,
                 line: format!("test line {i}").to_string(),
+                line_ending: LineEnding::Lf,
                 replacement: format!("replacement {i}").to_string(),
                 included: true,
                 replace_result: None,
@@ -1255,6 +1258,7 @@ mod tests {
             path: Path::new("random/file").to_path_buf(),
             line_number: random_num(),
             line: "foo".to_owned(),
+            line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
             replace_result: Some(replace::ReplaceResult::Success),
@@ -1266,6 +1270,7 @@ mod tests {
             path: Path::new("random/file").to_path_buf(),
             line_number: random_num(),
             line: "foo".to_owned(),
+            line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: false,
             replace_result: None,
@@ -1277,6 +1282,7 @@ mod tests {
             path: Path::new("random/file").to_path_buf(),
             line_number: random_num(),
             line: "foo".to_owned(),
+            line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
             replace_result: Some(replace::ReplaceResult::Error("error".to_owned())),
