@@ -5,7 +5,7 @@ use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
 use std::str::FromStr;
 
-use app_runner::{run_app, AppConfig};
+use app_runner::{run_app_tui, AppConfig};
 use fields::{FieldValue, SearchFieldValues};
 
 mod app;
@@ -171,5 +171,9 @@ fn search_fields_from_args(args: &Args) -> anyhow::Result<SearchFieldValues<'_>>
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = AppConfig::from(&args)?;
-    run_app(config, !args.no_tui).await
+    if args.no_tui {
+        todo!()
+    } else {
+        run_app_tui(config).await
+    }
 }

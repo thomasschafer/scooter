@@ -56,20 +56,20 @@ pub type CrosstermEventStream = event::EventStream;
 pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
     event_receiver: UnboundedReceiver<Event>,
-    tui: Option<Tui<B>>,
+    tui: Tui<B>,
     event_stream: E,
     snapshot_provider: S,
 }
 
 pub trait SnapshotProvider<B: Backend> {
-    fn send_snapshot(&self, tui: Option<&Tui<B>>);
+    fn send_snapshot(&self, tui: &Tui<B>);
 }
 
 pub struct NoOpSnapshotProvider;
 
 impl<B: Backend> SnapshotProvider<B> for NoOpSnapshotProvider {
     #[inline]
-    fn send_snapshot(&self, _tui: Option<&Tui<B>>) {
+    fn send_snapshot(&self, _tui: &Tui<B>) {
         // No-op - optimized away in release builds
     }
 }
@@ -87,33 +87,31 @@ impl TestSnapshotProvider {
 }
 
 impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
-    fn send_snapshot(&self, tui: Option<&Tui<TestBackend>>) {
-        if let Some(tui) = tui {
-            let buffer = tui.terminal.backend().buffer();
-            let contents = buffer
-                .content
-                .iter()
-                .enumerate()
-                .map(|(i, cell)| {
-                    if i % buffer.area.width as usize == 0 && i > 0 {
-                        "\n"
-                    } else {
-                        cell.symbol()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            let _ = self.sender.send(contents);
-        }
+    fn send_snapshot(&self, tui: &Tui<TestBackend>) {
+        let buffer = tui.terminal.backend().buffer();
+        let contents = buffer
+            .content
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                if i % buffer.area.width as usize == 0 && i > 0 {
+                    "\n"
+                } else {
+                    cell.symbol()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let _ = self.sender.send(contents);
     }
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(config: AppConfig<'_>, tui: bool) -> anyhow::Result<Self> {
+    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
-        Self::new(config, backend, event_stream, tui, snapshot_provider)
+        Self::new(config, backend, event_stream, snapshot_provider)
     }
 }
 
@@ -124,11 +122,10 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
         config: AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
-        use_tui: bool,
         snapshot_sender: UnboundedSender<String>,
     ) -> anyhow::Result<Self> {
         let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
-        Self::new(config, backend, event_stream, use_tui, snapshot_provider)
+        Self::new(config, backend, event_stream, snapshot_provider)
     }
 }
 
@@ -137,7 +134,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         config: AppConfig<'_>,
         backend: B,
         event_stream: E,
-        use_tui: bool,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
@@ -154,11 +150,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         );
 
         let terminal = Terminal::new(backend)?;
-        let tui = if use_tui {
-            Some(Tui::new(terminal))
-        } else {
-            None
-        };
+        let tui = Tui::new(terminal);
 
         Ok(Self {
             app,
@@ -170,21 +162,15 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     pub fn init(&mut self) -> anyhow::Result<()> {
-        if let Some(ref mut tui) = self.tui {
-            tui.init()?;
-        }
+        self.tui.init()?;
         self.draw()?;
 
         Ok(())
     }
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
-        if let Some(ref mut tui) = self.tui {
-            tui.draw(&mut self.app)?;
-        }
-
-        self.snapshot_provider.send_snapshot(self.tui.as_ref());
-
+        self.tui.draw(&mut self.app)?;
+        self.snapshot_provider.send_snapshot(&self.tui);
         Ok(())
     }
 
@@ -204,9 +190,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
                             let mut res = EventHandlingResult::Rerender;
-                            if let Some(ref mut tui) = self.tui {
-                                tui.show_cursor()?;
-                            }
+                            self.tui.show_cursor()?;
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
                                     if self.app.config.editor_open.exit {
@@ -223,9 +207,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                                     error!("Failed to open editor: {e}");
                                 }
                             }
-                            if let Some(ref mut tui) = self.tui {
-                                tui.init()?;
-                            }
+                            self.tui.init()?;
                             res
 
                         }
@@ -252,11 +234,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
     pub fn cleanup(&mut self) -> anyhow::Result<()> {
         self.app.cancel_in_progress_tasks();
-        if let Some(ref mut tui) = self.tui {
-            tui.exit()
-        } else {
-            Ok(())
-        }
+        self.tui.exit()
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
@@ -360,8 +338,8 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 }
 
-pub async fn run_app(app_config: AppConfig<'_>, tui: bool) -> anyhow::Result<()> {
-    let mut runner = AppRunner::new_runner(app_config, tui)?;
+pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
+    let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
     let results_to_print = runner.run_event_loop().await?;
     runner.cleanup()?;
