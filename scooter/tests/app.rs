@@ -358,8 +358,10 @@ async fn search_and_replace_test(
                 .count();
             let num_expected_matches = *num_expected_matches;
             assert_eq!(
-                num_actual_matches, num_expected_matches,
-                "{file_path:?}: expected {num_expected_matches}, found {num_actual_matches}",
+                num_actual_matches,
+                num_expected_matches,
+                "{}: expected {num_expected_matches}, found {num_actual_matches}",
+                file_path.display(),
             );
         }
 

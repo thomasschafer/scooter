@@ -273,7 +273,7 @@ impl ParsedFields {
         let mut file = match File::open(path) {
             Ok(f) => f,
             Err(err) => {
-                warn!("Error opening file {path:?}: {err}");
+                warn!("Error opening file {}: {err}", path.display());
                 return;
             }
         };
@@ -285,7 +285,7 @@ impl ParsedFields {
             return;
         }
         if file.seek(SeekFrom::Start(0)).is_err() {
-            error!("Failed to seek file {path:?} to start");
+            error!("Failed to seek file {} to start", path.display());
             return;
         }
 
@@ -301,7 +301,10 @@ impl ParsedFields {
                 Ok(l) => l,
                 Err(err) => {
                     read_errors += 1;
-                    warn!("Error retrieving line {line_number} of {path:?}: {err}");
+                    warn!(
+                        "Error retrieving line {line_number} of {}: {err}",
+                        path.display()
+                    );
                     if read_errors >= 10 {
                         break;
                     }
