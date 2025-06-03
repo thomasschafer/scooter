@@ -102,53 +102,27 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 
 impl<'a> AppConfig<'a> {
     fn from(args: &'a Args) -> anyhow::Result<Self> {
-        if args.no_tui
-            && (args.immediate
-                || args.immediate_search
-                || args.immediate_replace
-                || args.print_results)
-        {
-            bail!("`--no_tui` runs the search and replace immediately, and so cannot be used alongside any of `--immediate`, `--immediate-search`, `--immediate-replace` or `--print-results`.")
-        }
-        if args.immediate && (args.immediate_search || args.immediate_replace || args.print_results)
-        {
-            bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
-        }
+        let immediate = {
+            if args.no_tui
+                && (args.immediate
+                    || args.immediate_search
+                    || args.immediate_replace
+                    || args.print_results)
+            {
+                bail!("`--no_tui` runs the search and replace immediately, and so cannot be used alongside any of `--immediate`, `--immediate-search`, `--immediate-replace` or `--print-results`.")
+            }
+            if args.immediate
+                && (args.immediate_search || args.immediate_replace || args.print_results)
+            {
+                bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
+            }
+            args.immediate || args.no_tui
+        };
 
-        let mut search_field_values = SearchFieldValues::default();
-
-        if let Some(ref search_text) = args.search_text {
-            search_field_values.search = FieldValue::new(search_text, true);
-        } else if args.immediate_search {
-            bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
-        } else if args.immediate {
-            bail!("Cannot run with `--immediate` unless a value has been provided for `--search-text`");
-        }
-
-        if let Some(ref replace_text) = args.replace_text {
-            search_field_values.replace = FieldValue::new(replace_text, true);
-        }
-        if args.fixed_strings {
-            search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
-        }
-        if args.match_whole_word {
-            search_field_values.match_whole_word = FieldValue::new(args.match_whole_word, true);
-        }
-        if args.case_insensitive {
-            search_field_values.match_case = FieldValue::new(!args.case_insensitive, true);
-        }
-        if let Some(ref files_to_include) = args.files_to_include {
-            search_field_values.include_files = FieldValue::new(files_to_include, true);
-        }
-        if let Some(ref files_to_exclude) = args.files_to_exclude {
-            search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
-        }
-
-        let immediate = args.immediate || args.no_tui;
         Ok(Self {
             directory: args.directory.clone(),
             log_level: args.log_level,
-            search_field_values,
+            search_field_values: search_fields_from_args(args)?,
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
                 advanced_regex: args.advanced_regex,
@@ -158,6 +132,39 @@ impl<'a> AppConfig<'a> {
             },
         })
     }
+}
+
+fn search_fields_from_args(args: &Args) -> anyhow::Result<SearchFieldValues<'_>> {
+    let mut search_field_values = SearchFieldValues::default();
+
+    if let Some(ref search_text) = args.search_text {
+        search_field_values.search = FieldValue::new(search_text, true);
+    } else if args.immediate_search {
+        bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
+    } else if args.immediate {
+        bail!("Cannot run with `--immediate` unless a value has been provided for `--search-text`");
+    }
+
+    if let Some(ref replace_text) = args.replace_text {
+        search_field_values.replace = FieldValue::new(replace_text, true);
+    }
+    if args.fixed_strings {
+        search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
+    }
+    if args.match_whole_word {
+        search_field_values.match_whole_word = FieldValue::new(args.match_whole_word, true);
+    }
+    if args.case_insensitive {
+        search_field_values.match_case = FieldValue::new(!args.case_insensitive, true);
+    }
+    if let Some(ref files_to_include) = args.files_to_include {
+        search_field_values.include_files = FieldValue::new(files_to_include, true);
+    }
+    if let Some(ref files_to_exclude) = args.files_to_exclude {
+        search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
+    }
+
+    Ok(search_field_values)
 }
 
 #[tokio::main]
