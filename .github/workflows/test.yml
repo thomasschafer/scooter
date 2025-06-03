@@ -11,8 +11,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +31,12 @@ jobs:
       - name: Run clippy on all packages
         run: cargo clippy --workspace -- -D warnings
 
+      - name: Run cargo check
+        run: cargo check
+
   test:
     name: Test (${{ matrix.os }})
-    needs: [lint]
+    needs: [check]
     strategy:
       fail-fast: false
       matrix:
@@ -49,15 +52,12 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build all packages
-        run: cargo build --workspace --verbose
-
       - name: Run all tests
         run: cargo test --workspace --verbose
 
   end-to-end-test:
     name: End-to-end test (${{ matrix.os }})
-    needs: [lint]
+    needs: [check]
     strategy:
       fail-fast: false
       matrix:
