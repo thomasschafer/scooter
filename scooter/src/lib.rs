@@ -2,6 +2,7 @@ pub mod app;
 pub mod app_runner;
 pub mod config;
 pub mod fields;
+pub mod line_reader;
 pub mod logging;
 pub mod replace;
 pub mod search;

@@ -3,7 +3,9 @@ use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    fs::File,
+    io::{BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -12,8 +14,6 @@ use std::{
 };
 use tempfile::NamedTempFile;
 use tokio::{
-    fs::File,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender},
         Semaphore,
@@ -23,6 +23,7 @@ use tokio::{
 
 use crate::{
     app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
+    line_reader::BufReadExt,
     search::SearchResult,
 };
 
@@ -140,7 +141,7 @@ pub fn perform_replacement(
                 let replacements_completed_clone = replacements_completed.clone();
                 let task = tokio::spawn(async move {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    if let Err(file_err) = replace_in_file(path, &mut results).await {
+                    if let Err(file_err) = replace_in_file(&path, &mut results) {
                         for res in &mut results {
                             res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
                         }
@@ -220,7 +221,7 @@ where
     }
 }
 
-async fn replace_in_file(file_path: PathBuf, results: &mut [SearchResult]) -> anyhow::Result<()> {
+fn replace_in_file(file_path: &Path, results: &mut [SearchResult]) -> anyhow::Result<()> {
     let mut line_map: HashMap<_, _> = results
         .iter_mut()
         .map(|res| (res.line_number, res))
@@ -236,16 +237,15 @@ async fn replace_in_file(file_path: PathBuf, results: &mut [SearchResult]) -> an
 
     // Scope the file operations so they're closed before rename
     {
-        let input = File::open(&file_path).await?;
+        let input = File::open(file_path)?;
         let reader = BufReader::new(input);
 
-        let output = File::create(temp_output_file.path()).await?;
+        let output = File::create(temp_output_file.path())?;
         let mut writer = BufWriter::new(output);
 
-        let mut lines = reader.lines();
-        let mut line_number = 0;
-        while let Some(mut line) = lines.next_line().await? {
-            line_number += 1;
+        for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {
+            let (mut line, line_ending) = line_result?;
+            line_number += 1; // Ensure line-number is 1-indexed
             if let Some(res) = line_map.get_mut(&line_number) {
                 if line == res.line {
                     line.clone_from(&res.replacement);
@@ -256,14 +256,14 @@ async fn replace_in_file(file_path: PathBuf, results: &mut [SearchResult]) -> an
                     ));
                 }
             }
-            line.push('\n');
-            writer.write_all(line.as_bytes()).await?;
+            line.push_str(line_ending.as_str());
+            writer.write_all(line.as_bytes())?;
         }
 
-        writer.flush().await?;
+        writer.flush()?;
     }
 
-    temp_output_file.persist(&file_path)?;
+    temp_output_file.persist(file_path)?;
     Ok(())
 }
 
@@ -275,6 +275,8 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
 
 #[cfg(test)]
 mod tests {
+    use crate::line_reader::LineEnding;
+
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::path::PathBuf;
@@ -293,6 +295,7 @@ mod tests {
             path: PathBuf::from(path),
             line_number,
             line: line.to_string(),
+            line_ending: LineEnding::Lf,
             replacement: replacement.to_string(),
             included,
             replace_result,
@@ -590,6 +593,49 @@ mod tests {
         let file_path = temp_dir.path().join("test.txt");
 
         // Create test file
+        let content = "line 1\nold text\nline 3\nold text\nline 5\n";
+        fs::write(&file_path, content).await.unwrap();
+
+        // Create search results
+        let mut results = vec![
+            create_search_result(
+                file_path.to_str().unwrap(),
+                2,
+                "old text",
+                "new text",
+                true,
+                None,
+            ),
+            create_search_result(
+                file_path.to_str().unwrap(),
+                4,
+                "old text",
+                "new text",
+                true,
+                None,
+            ),
+        ];
+
+        // Perform replacement
+        let result = replace_in_file(&file_path, &mut results);
+        assert!(result.is_ok());
+
+        // Verify replacements were marked as successful
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+
+        // Verify file content
+        let new_content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(new_content, "line 1\nnew text\nline 3\nnew text\nline 5\n");
+    }
+
+    #[tokio::test]
+    async fn test_replace_in_file_success_no_final_newline() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create test file
         let content = "line 1\nold text\nline 3\nold text\nline 5";
         fs::write(&file_path, content).await.unwrap();
 
@@ -614,16 +660,109 @@ mod tests {
         ];
 
         // Perform replacement
-        let result = replace_in_file(file_path.clone(), &mut results).await;
+        let result = replace_in_file(&file_path, &mut results);
         assert!(result.is_ok());
 
         // Verify replacements were marked as successful
+        assert_eq!(results.len(), 2);
         assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
         assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
 
         // Verify file content
         let new_content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(new_content, "line 1\nnew text\nline 3\nnew text\nline 5\n");
+        assert_eq!(new_content, "line 1\nnew text\nline 3\nnew text\nline 5");
+    }
+
+    #[tokio::test]
+    async fn test_replace_in_file_success_windows_newlines() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create test file
+        let content = "line 1\r\nold text\r\nline 3\r\nold text\r\nline 5\r\n";
+        fs::write(&file_path, content).await.unwrap();
+
+        // Create search results
+        let mut results = vec![
+            create_search_result(
+                file_path.to_str().unwrap(),
+                2,
+                "old text",
+                "new text",
+                true,
+                None,
+            ),
+            create_search_result(
+                file_path.to_str().unwrap(),
+                4,
+                "old text",
+                "new text",
+                true,
+                None,
+            ),
+        ];
+
+        // Perform replacement
+        let result = replace_in_file(&file_path, &mut results);
+        assert!(result.is_ok());
+
+        // Verify replacements were marked as successful
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+
+        // Verify file content
+        let new_content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(
+            new_content,
+            "line 1\r\nnew text\r\nline 3\r\nnew text\r\nline 5\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_replace_in_file_success_mixed_newlines() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+
+        // Create test file
+        let content = "\n\r\nline 1\nold text\r\nline 3\nline 4\r\nline 5\r\n\n\n";
+        fs::write(&file_path, content).await.unwrap();
+
+        // Create search results
+        let mut results = vec![
+            create_search_result(
+                file_path.to_str().unwrap(),
+                4,
+                "old text",
+                "new text",
+                true,
+                None,
+            ),
+            create_search_result(
+                file_path.to_str().unwrap(),
+                7,
+                "line 5",
+                "updated line 5",
+                true,
+                None,
+            ),
+        ];
+
+        // Perform replacement
+        let result = replace_in_file(&file_path, &mut results);
+        assert!(result.is_ok());
+
+        // Verify replacements were marked as successful
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+
+        // Verify file content
+        let new_content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(
+            new_content,
+            "\n\r\nline 1\nnew text\r\nline 3\nline 4\r\nupdated line 5\r\n\n\n"
+        );
     }
 
     #[tokio::test]
@@ -632,7 +771,7 @@ mod tests {
         let file_path = temp_dir.path().join("test.txt");
 
         // Create test file
-        let content = "line 1\nactual text\nline 3";
+        let content = "line 1\nactual text\nline 3\n";
         fs::write(&file_path, content).await.unwrap();
 
         // Create search result with mismatching line
@@ -646,7 +785,7 @@ mod tests {
         )];
 
         // Perform replacement
-        let result = replace_in_file(file_path.clone(), &mut results).await;
+        let result = replace_in_file(&file_path, &mut results);
         assert!(result.is_ok());
 
         // Verify replacement was marked as error
@@ -673,8 +812,7 @@ mod tests {
             None,
         )];
 
-        let result =
-            replace_in_file(PathBuf::from("/nonexistent/path/file.txt"), &mut results).await;
+        let result = replace_in_file(&PathBuf::from("/nonexistent/path/file.txt"), &mut results);
         assert!(result.is_err());
     }
 
@@ -683,7 +821,7 @@ mod tests {
         let mut results = vec![];
 
         // PathBuf::from("/") has no parent
-        let result = replace_in_file(PathBuf::from("/"), &mut results).await;
+        let result = replace_in_file(&PathBuf::from("/"), &mut results);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("no parent directory"));

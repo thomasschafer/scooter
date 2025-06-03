@@ -5,8 +5,12 @@ def create_test_files [dir: string] {
         {path: "file1.txt", content: "This is before text in file1\nAnother line with before\n"},
         {path: "file2.txt", content: "No match here\nJust some text\n"},
         {path: "file3.rs", content: "fn before() {\n    println!(\"before\");\n}\n\n\n"},
-        # {path: "subdir/file4.txt", content: "before at start\nMiddle before text\nbefore at end"}, # TODO: fix this - if there is no newline at the end, Scooter adds one
+        {path: "subdir/file4.txt", content: "before at start\nMiddle before text\nbefore at end"},
         {path: "subdir/file5.txt", content: "Nothing to replace here"},
+        {path: "subdir/file6.txt", content: ""},
+        {path: "subdir/subsubdir/file7.txt", content: "\n\r\n"},
+        {path: "file8.txt", content: "Some before text\r\nMore text   \r\n   foo bar baz   \r\n  \rbeforeafter\n "},
+        {path: "file9.txt", content: "foo\r\nbefore\r\nbaz\r\n"},
     ]
 
     for file in $files {
@@ -96,10 +100,9 @@ def compare_results [tool_results: list] {
     $all_tests_passed
 }
 
-def get_benchmark_repo_path [] {
+def get_benchmark_repo_path [repo_url: string] {
     let cache_dir = ($nu.home-path | path join ".cache" "scooter" "benchmark")
-    let repo_name = "linux"
-    let repo_url = $"https://github.com/torvalds/($repo_name).git"
+    let repo_name = $repo_url | path basename | str replace ".git" ""
 
     let repo_path = ($cache_dir | path join $repo_name)
 
@@ -117,9 +120,9 @@ def get_benchmark_repo_path [] {
     $repo_path
 }
 
-def setup_test_data [test_dir: string, use_linux: bool] {
-    if $use_linux {
-        get_benchmark_repo_path
+def setup_test_data [test_dir: string, repo_url: string = ""] {
+    if ($repo_url | is-not-empty) {
+        get_benchmark_repo_path $repo_url
     } else {
         mkdir $test_dir
         create_test_files $test_dir
@@ -163,10 +166,11 @@ def update_readme_benchmark [project_dir: string, benchmark_file: string] {
     }
 }
 
-def run_benchmark [project_dir: string, search: string, replace: string, scooter_binary: string, update_readme: bool] {
+def run_benchmark [project_dir: string, search: string, replace: string, scooter_binary: string, update_readme: bool, repo_url: string = ""] {
     print "Running benchmark..."
 
-    let benchmark_source = get_benchmark_repo_path
+    let actual_repo_url = if ($repo_url | is-not-empty) { $repo_url } else { "https://github.com/torvalds/linux.git" }
+    let benchmark_source = get_benchmark_repo_path $actual_repo_url
     let benchmark_dir = ($project_dir | path join "benchmark-temp")
 
     let benchmark_tools = get_tools $scooter_binary $search $replace
@@ -204,10 +208,10 @@ def run_benchmark [project_dir: string, search: string, replace: string, scooter
     $benchmark_exit_code
 }
 
-def run_e2e_tests [replacement_dir: string, all_tools: list, use_linux: bool] {
+def run_e2e_tests [replacement_dir: string, all_tools: list, repo_url: string = ""] {
     print "Running end-to-end tests..."
 
-    let test_source_dir = setup_test_data $replacement_dir $use_linux
+    let test_source_dir = setup_test_data $replacement_dir $repo_url
 
     let tool_results = $all_tools | each {|tool|
         {
@@ -226,7 +230,7 @@ def run_e2e_tests [replacement_dir: string, all_tools: list, use_linux: bool] {
     }
 }
 
-def main [mode: string, --update-readme, --use-linux] {
+def main [mode: string, --update-readme, --repo-url: string = ""] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
         print $"❌ ERROR: invalid mode ($mode), must be one of ($valid_modes | str join ', ')"
@@ -247,7 +251,7 @@ def main [mode: string, --update-readme, --use-linux] {
     let all_tools = get_tools $scooter_binary $search_term $replace_term
 
     let tool_directories = $all_tools | each {|tool| tool_to_dirname $tool.name}
-    let cleanup_dirs = if $use_linux {
+    let cleanup_dirs = if ($repo_url | is-not-empty) {
         $tool_directories
     } else {
         [$replacement_dir] | append $tool_directories
@@ -259,9 +263,9 @@ def main [mode: string, --update-readme, --use-linux] {
 
         # Run
         let exit_code = if $mode == "benchmark" {
-            run_benchmark $project_dir $search_term $replace_term $scooter_binary $update_readme
+            run_benchmark $project_dir $search_term $replace_term $scooter_binary $update_readme $repo_url
         } else if $mode == "test" {
-            run_e2e_tests $replacement_dir $all_tools $use_linux
+            run_e2e_tests $replacement_dir $all_tools $repo_url
         }
 
         # Cleanup

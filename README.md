@@ -110,9 +110,9 @@ Scooter is fast. While it will never be as performant as tools that don't spin u
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
-| `scooter` | 5.169 ± 0.673 | 4.697 | 6.343 | 1.53 ± 0.22 |
-| `rg + sd` | 3.369 ± 0.214 | 3.201 | 3.705 | 1.00 |
-| `fd + sd` | 10.046 ± 0.003 | 10.043 | 10.049 | 2.98 ± 0.19 |
+| `scooter` | 5.045 ± 0.141 | 4.845 | 5.191 | 1.47 ± 0.07 |
+| `rg + sd` | 3.435 ± 0.144 | 3.236 | 3.547 | 1.00 |
+| `fd + sd` | 10.054 ± 0.016 | 10.044 | 10.082 | 2.93 ± 0.12 |
 
 <!-- BENCHMARK END -->
 
