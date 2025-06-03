@@ -169,8 +169,7 @@ def update_readme_benchmark [project_dir: string, benchmark_file: string] {
 def run_benchmark [project_dir: string, search: string, replace: string, scooter_binary: string, update_readme: bool, repo_url: string = ""] {
     print "Running benchmark..."
 
-    let default_repo_url = "https://github.com/torvalds/linux.git"
-    let actual_repo_url = if ($repo_url | is-not-empty) { $repo_url } else { $default_repo_url }
+    let actual_repo_url = if ($repo_url | is-not-empty) { $repo_url } else { "https://github.com/torvalds/linux.git" }
     let benchmark_source = get_benchmark_repo_path $actual_repo_url
     let benchmark_dir = ($project_dir | path join "benchmark-temp")
 

@@ -237,11 +237,10 @@ fn replace_in_file(file_path: &Path, results: &mut [SearchResult]) -> anyhow::Re
 
     // Scope the file operations so they're closed before rename
     {
-        let output = File::create(temp_output_file.path())?;
-
         let input = File::open(file_path)?;
         let reader = BufReader::new(input);
 
+        let output = File::create(temp_output_file.path())?;
         let mut writer = BufWriter::new(output);
 
         for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {

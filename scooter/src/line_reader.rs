@@ -1,6 +1,5 @@
 use std::io::BufRead;
 
-/// Represents the type of line ending found in a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LineEnding {
     /// No line ending (typically the last line of a file)
@@ -12,17 +11,6 @@ pub enum LineEnding {
 }
 
 impl LineEnding {
-    /// Returns the string representation of the line ending.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use scooter::line_reader::LineEnding;
-    ///
-    /// assert_eq!(LineEnding::Lf.as_str(), "\n");
-    /// assert_eq!(LineEnding::CrLf.as_str(), "\r\n");
-    /// assert_eq!(LineEnding::None.as_str(), "");
-    /// ```
     #[inline]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -38,23 +26,6 @@ impl LineEnding {
 /// Unlike the standard library's `lines()` iterator which strips line endings,
 /// this iterator returns tuples of `(content, line_ending)` where the line ending
 /// is preserved as a separate string.
-///
-/// # Examples
-///
-/// ```
-/// use std::io::Cursor;
-/// use scooter::line_reader::LinesSplitEndings;
-///
-/// // Using a cursor for this example since we can't guarantee a file exists
-/// let cursor = Cursor::new("hello\nworld\r\n");
-/// let lines_iter = LinesSplitEndings::new(cursor);
-///
-/// for line_result in lines_iter {
-///     let (content, ending) = line_result?;
-///     println!("Content: '{}', Ending: '{:?}'", content, ending);
-/// }
-/// # Ok::<(), std::io::Error>(())
-/// ```
 pub struct LinesSplitEndings<R> {
     reader: R,
     buffer: String,
@@ -62,21 +33,6 @@ pub struct LinesSplitEndings<R> {
 
 impl<R: BufRead> LinesSplitEndings<R> {
     /// Creates a new `LinesSplitEndings` iterator from any type that implements `BufRead`.
-    ///
-    /// # Arguments
-    ///
-    /// * `reader` - A buffered reader implementing `BufRead`
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::io::Cursor;
-    /// use scooter::line_reader::LinesSplitEndings;
-    ///
-    /// let cursor = Cursor::new("hello\nworld");
-    /// let lines_iter = LinesSplitEndings::new(cursor);
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
     pub fn new(reader: R) -> Self {
         Self {
             reader,
@@ -102,9 +58,6 @@ impl<R: BufRead> Iterator for LinesSplitEndings<R> {
 }
 
 /// Extension trait that adds the `lines_with_endings()` method to any `BufRead` implementation.
-///
-/// This provides a convenient way to get a `LinesSplitEndings` iterator similar to how
-/// the standard library provides `lines()`.
 ///
 /// # Examples
 ///
@@ -149,15 +102,12 @@ impl<R: BufRead> BufReadExt for R {}
 #[inline]
 pub fn split_line_ending(line: &str) -> (&str, LineEnding) {
     let len = line.len();
-
     if len == 0 {
         return (line, LineEnding::None);
     }
 
     let bytes = line.as_bytes();
-    let last_byte = bytes[len - 1];
-
-    if last_byte == b'\n' {
+    if bytes[len - 1] == b'\n' {
         if len >= 2 && bytes[len - 2] == b'\r' {
             (&line[..len - 2], LineEnding::CrLf)
         } else {
