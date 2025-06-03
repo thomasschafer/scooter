@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
-use scooter::line_reader::LineEnding;
+use scooter_core::line_reader::LineEnding;
 use serial_test::serial;
 use std::fs;
 use std::io;

@@ -1136,7 +1136,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::line_reader::LineEnding;
+    use scooter_core::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();

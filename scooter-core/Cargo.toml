@@ -1,0 +1,18 @@
+[package]
+name = "scooter-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["thomasschafer97@gmail.com"]
+license = "MIT"
+description = "Core find-and-replace functionality"
+readme = "README.md"
+homepage = "https://github.com/thomasschafer/scooter/tree/main/scooter-core"
+repository = "https://github.com/thomasschafer/scooter/tree/main/scooter-core"
+keywords = ["find", "search", "replace"]
+
+[lib]
+name = "scooter_core"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

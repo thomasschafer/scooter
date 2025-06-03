@@ -23,9 +23,10 @@ use tokio::{
 
 use crate::{
     app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
-    line_reader::BufReadExt,
     search::SearchResult,
 };
+
+use scooter_core::line_reader::BufReadExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplaceResult {
@@ -275,7 +276,7 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
 
 #[cfg(test)]
 mod tests {
-    use crate::line_reader::LineEnding;
+    use scooter_core::line_reader::LineEnding;
 
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

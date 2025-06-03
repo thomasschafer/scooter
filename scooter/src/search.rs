@@ -18,12 +18,9 @@ use log::{error, warn};
 use regex::Regex;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    app::BackgroundProcessingEvent,
-    fields::SearchFieldValues,
-    line_reader::{BufReadExt, LineEnding},
-    replace::ReplaceResult,
-};
+use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
+
+use scooter_core::line_reader::{BufReadExt, LineEnding};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
