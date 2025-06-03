@@ -178,7 +178,7 @@ fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRu
     let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel();
 
     let mut runner =
-        AppRunner::new(config, backend, event_stream, true)?.with_snapshot_channel(snapshot_tx);
+        AppRunner::new_test_with_snapshot(config, backend, event_stream, true, snapshot_tx)?;
     runner.init()?;
 
     let run_handle = tokio::spawn(async move {

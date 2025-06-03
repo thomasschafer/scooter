@@ -5,7 +5,6 @@ use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::env;
@@ -54,47 +53,92 @@ impl<T: Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin> Ev
 
 pub type CrosstermEventStream = event::EventStream;
 
-pub struct AppRunner<B: Backend, E: EventStream> {
+pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
     event_receiver: UnboundedReceiver<Event>,
     tui: Option<Tui<B>>,
     event_stream: E,
-    buffer_snapshot_sender: Option<UnboundedSender<String>>,
+    snapshot_provider: S,
 }
 
-pub trait BufferProvider {
-    fn get_buffer(&mut self) -> &Buffer;
+pub trait SnapshotProvider<B: Backend> {
+    fn send_snapshot(&self, tui: Option<&Tui<B>>);
 }
 
-impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    fn get_buffer(&mut self) -> &Buffer {
-        self.tui.as_mut().unwrap().terminal.current_buffer_mut()
+pub struct NoOpSnapshotProvider;
+
+impl<B: Backend> SnapshotProvider<B> for NoOpSnapshotProvider {
+    #[inline]
+    fn send_snapshot(&self, _tui: Option<&Tui<B>>) {
+        // No-op - optimized away in release builds
     }
 }
 
-impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
-    fn get_buffer(&mut self) -> &Buffer {
-        self.tui.as_mut().unwrap().terminal.backend().buffer()
+pub struct TestSnapshotProvider {
+    sender: UnboundedSender<String>,
+}
+
+// Used in integration tests
+#[allow(dead_code)]
+impl TestSnapshotProvider {
+    pub fn new(sender: UnboundedSender<String>) -> Self {
+        Self { sender }
     }
 }
 
-impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
+impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
+    fn send_snapshot(&self, tui: Option<&Tui<TestBackend>>) {
+        if let Some(tui) = tui {
+            let buffer = tui.terminal.backend().buffer();
+            let contents = buffer
+                .content
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    if i % buffer.area.width as usize == 0 && i > 0 {
+                        "\n"
+                    } else {
+                        cell.symbol()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let _ = self.sender.send(contents);
+        }
+    }
+}
+
+impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
     pub fn new_runner(config: AppConfig<'_>, tui: bool) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
-        Self::new(config, backend, event_stream, tui)
+        let snapshot_provider = NoOpSnapshotProvider;
+        Self::new(config, backend, event_stream, tui, snapshot_provider)
     }
 }
 
-impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
-where
-    Self: BufferProvider,
-{
+impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
+    // Used in integration tests
+    #[allow(dead_code)]
+    pub fn new_test_with_snapshot(
+        config: AppConfig<'_>,
+        backend: TestBackend,
+        event_stream: E,
+        use_tui: bool,
+        snapshot_sender: UnboundedSender<String>,
+    ) -> anyhow::Result<Self> {
+        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
+        Self::new(config, backend, event_stream, use_tui, snapshot_provider)
+    }
+}
+
+impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
         config: AppConfig<'_>,
         backend: B,
         event_stream: E,
         use_tui: bool,
+        snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
@@ -121,15 +165,8 @@ where
             event_receiver,
             tui,
             event_stream,
-            buffer_snapshot_sender: None,
+            snapshot_provider,
         })
-    }
-
-    // Used only for testing
-    #[allow(dead_code)]
-    pub fn with_snapshot_channel(mut self, sender: UnboundedSender<String>) -> Self {
-        self.buffer_snapshot_sender = Some(sender);
-        self
     }
 
     pub fn init(&mut self) -> anyhow::Result<()> {
@@ -145,36 +182,10 @@ where
         if let Some(ref mut tui) = self.tui {
             tui.draw(&mut self.app)?;
         }
-        self.send_snapshot();
+
+        self.snapshot_provider.send_snapshot(self.tui.as_ref());
+
         Ok(())
-    }
-
-    fn buffer_contents(&mut self) -> String {
-        let buffer = self.get_buffer();
-        buffer
-            .content
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                if i % buffer.area.width as usize == 0 && i > 0 {
-                    "\n"
-                } else {
-                    cell.symbol()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("")
-    }
-
-    fn send_snapshot(&mut self) {
-        if self.buffer_snapshot_sender.is_none() {
-            return;
-        }
-
-        let contents = self.buffer_contents();
-        if let Some(sender) = &self.buffer_snapshot_sender {
-            let _ = sender.send(contents);
-        }
     }
 
     pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<String>> {
@@ -214,7 +225,7 @@ where
                             }
                             if let Some(ref mut tui) = self.tui {
                                 tui.init()?;
-                                }
+                            }
                             res
 
                         }
@@ -352,10 +363,10 @@ where
 pub async fn run_app(app_config: AppConfig<'_>, tui: bool) -> anyhow::Result<()> {
     let mut runner = AppRunner::new_runner(app_config, tui)?;
     runner.init()?;
-    let res = runner.run_event_loop().await?;
+    let results_to_print = runner.run_event_loop().await?;
     runner.cleanup()?;
-    if let Some(res) = res {
-        println!("{res}");
+    if let Some(results) = results_to_print {
+        println!("{results}");
     }
     Ok(())
 }
