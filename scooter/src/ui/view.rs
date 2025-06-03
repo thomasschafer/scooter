@@ -457,14 +457,15 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
                 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB limit
                 if metadata.len() > MAX_FILE_SIZE {
                     log::info!(
-                        "File {path:?} too large for caching ({} bytes)",
+                        "File {} too large for caching ({} bytes)",
+                        path.display(),
                         metadata.len()
                     );
                     return;
                 }
             }
             Err(e) => {
-                log::error!("Error reading file metadata for {path:?}: {e}");
+                log::error!("Error reading file metadata for {}: {e}", path.display());
             }
         }
 
@@ -472,7 +473,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
         let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
             Ok(full) => full.collect(),
             Err(e) => {
-                log::error!("Error highlighting file {path:?}: {e}");
+                log::error!("Error highlighting file {}: {e}", path.display());
                 return;
             }
         };
