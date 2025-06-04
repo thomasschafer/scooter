@@ -221,7 +221,6 @@ impl ParsedFields {
                 let walker = WalkBuilder::new(&root_dir)
                     .hidden(!include_hidden)
                     .overrides(overrides)
-                    .filter_entry(|entry| entry.file_name() != ".git")
                     .threads(num_threads)
                     .build_parallel();
 
