@@ -7,10 +7,8 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use std::time::Duration;
 
 use content_inspector::{inspect, ContentType};
-use crossbeam_channel::bounded;
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkState};
@@ -123,6 +121,8 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
     SearchType::PatternAdvanced(fancy_regex)
 }
 
+type FileVisitor = Box<dyn FnMut(PathBuf) -> WalkState + Send>;
+
 #[derive(Clone, Debug)]
 pub struct ParsedFields {
     search: SearchType,
@@ -170,100 +170,55 @@ impl ParsedFields {
     pub fn search_parallel(&self) {
         self.cancelled.store(false, Ordering::Relaxed);
 
-        let (path_tx, path_rx) = bounded::<PathBuf>(1000);
-
         let num_threads = thread::available_parallelism()
             .map(NonZero::get)
             .unwrap_or(4)
             .min(12);
 
-        let mut handles = vec![];
-
-        for _ in 0..num_threads {
-            let path_rx = path_rx.clone();
-            let sender = self.background_processing_sender.clone();
+        self.spawn_file_walker(num_threads, || {
             let search = self.search.clone();
             let replace = self.replace.clone();
-            let cancelled = self.cancelled.clone();
-
-            let handle = thread::spawn(move || {
-                loop {
-                    if cancelled.load(Ordering::Relaxed) {
-                        break;
-                    }
-
-                    match path_rx.recv_timeout(Duration::from_millis(100)) {
-                        Ok(path) => {
-                            Self::search_file(&path, &search, &replace, &sender);
-                        }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                            // Keep polling
-                        }
-                        Err(_) => {
-                            // Channel closed, exit
-                            break;
-                        }
-                    }
-                }
-            });
-
-            handles.push(handle);
-        }
-
-        let walker_handle = {
-            let root_dir = self.root_dir.clone();
-            let include_hidden = self.include_hidden;
-            let overrides = self.overrides.clone();
-            let path_tx = path_tx.clone();
-            let cancelled = self.cancelled.clone();
-
-            thread::spawn(move || {
-                let walker = WalkBuilder::new(&root_dir)
-                    .hidden(!include_hidden)
-                    .overrides(overrides)
-                    .threads(num_threads)
-                    .build_parallel();
-
-                walker.run(|| {
-                    let path_tx = path_tx.clone();
-                    let cancelled = cancelled.clone();
-                    Box::new(move |result| {
-                        if cancelled.load(Ordering::Relaxed) {
-                            return WalkState::Quit;
-                        }
-
-                        let Ok(entry) = result else {
-                            return WalkState::Continue;
-                        };
-
-                        if entry.file_type().is_some_and(|ft| ft.is_file())
-                            && !Self::is_likely_binary(entry.path())
-                            && path_tx.send(entry.path().to_owned()).is_err()
-                        {
-                            return WalkState::Quit;
-                        }
-                        WalkState::Continue
-                    })
-                });
+            let sender = self.background_processing_sender.clone();
+            Box::new(move |path| {
+                Self::search_file(&path, &search, &replace, &sender);
+                WalkState::Continue
             })
-        };
+        });
+    }
 
-        while !walker_handle.is_finished() {
-            if self.cancelled.load(Ordering::Relaxed) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
+    fn spawn_file_walker<F>(&self, num_threads: usize, mut file_handler: F)
+    where
+        F: FnMut() -> FileVisitor + Send,
+    {
+        let walker = WalkBuilder::new(&self.root_dir)
+            .hidden(!self.include_hidden)
+            .overrides(self.overrides.clone())
+            .threads(num_threads)
+            .build_parallel();
 
-        drop(path_tx);
+        std::thread::scope(|_| {
+            walker.run(|| {
+                let cancelled = self.cancelled.clone();
+                let mut on_file_found = file_handler();
+                Box::new(move |result| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return WalkState::Quit;
+                    }
 
-        if !self.cancelled.load(Ordering::Relaxed) {
-            let _ = walker_handle.join();
+                    let Ok(entry) = result else {
+                        return WalkState::Continue;
+                    };
 
-            for handle in handles {
-                let _ = handle.join();
-            }
-        }
+                    #[allow(clippy::collapsible_if)]
+                    if entry.file_type().is_some_and(|ft| ft.is_file())
+                        && !Self::is_likely_binary(entry.path())
+                    {
+                        return on_file_found(entry.path().to_owned());
+                    }
+                    WalkState::Continue
+                })
+            });
+        });
     }
 
     fn search_file(
