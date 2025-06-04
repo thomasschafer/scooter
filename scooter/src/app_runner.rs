@@ -348,3 +348,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
+    todo!()
+}

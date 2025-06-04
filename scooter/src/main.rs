@@ -5,7 +5,7 @@ use log::LevelFilter;
 use logging::DEFAULT_LOG_LEVEL;
 use std::str::FromStr;
 
-use app_runner::{run_app_tui, AppConfig};
+use app_runner::{run_app_headless, run_app_tui, AppConfig};
 use fields::{FieldValue, SearchFieldValues};
 
 mod app;
@@ -99,29 +99,51 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
     LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {s}"))
 }
 
-impl<'a> AppConfig<'a> {
-    fn from(args: &'a Args) -> anyhow::Result<Self> {
-        let immediate = {
-            if args.no_tui
-                && (args.immediate
-                    || args.immediate_search
-                    || args.immediate_replace
-                    || args.print_results)
-            {
-                bail!("`--no_tui` runs the search and replace immediately, and so cannot be used alongside any of `--immediate`, `--immediate-search`, `--immediate-replace` or `--print-results`.")
+fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
+    if args.no_tui && args.immediate {
+        bail!("--no-tui cannot be combined with --immediate");
+    }
+
+    if args.immediate_search || args.immediate_replace || args.print_results {
+        for (name, enabled) in [("--no-tui", args.no_tui), ("--immediate", args.immediate)] {
+            if enabled {
+                bail!("{name} cannot be combined with --immediate-search, --immediate-replace, or --print-results");
             }
-            if args.immediate
-                && (args.immediate_search || args.immediate_replace || args.print_results)
-            {
-                bail!("`--immediate` enables all of `--immediate-search`, `--immediate-replace` and `--print-results`. These flags should not be combined.")
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
+    if args.search_text.is_none() {
+        for (name, enabled) in [
+            ("--immediate-search", args.immediate_search),
+            ("--immediate", args.immediate),
+            ("--no-tui", args.no_tui),
+        ] {
+            if enabled {
+                bail!("{name} requires --search-text to be provided");
             }
-            args.immediate || args.no_tui
-        };
+        }
+    }
+
+    Ok(())
+}
+
+impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(args: &'a Args) -> anyhow::Result<Self> {
+        validate_flag_combinations(args)?;
+        validate_search_text_required(args)?;
+
+        let immediate = args.immediate || args.no_tui;
 
         Ok(Self {
             directory: args.directory.clone(),
             log_level: args.log_level,
-            search_field_values: search_fields_from_args(args)?,
+            search_field_values: args.into(),
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
                 advanced_regex: args.advanced_regex,
@@ -133,46 +155,309 @@ impl<'a> AppConfig<'a> {
     }
 }
 
-fn search_fields_from_args(args: &Args) -> anyhow::Result<SearchFieldValues<'_>> {
-    let mut search_field_values = SearchFieldValues::default();
+impl<'a> From<&'a Args> for SearchFieldValues<'a> {
+    fn from(args: &'a Args) -> Self {
+        let mut search_field_values = SearchFieldValues::default();
 
-    if let Some(ref search_text) = args.search_text {
-        search_field_values.search = FieldValue::new(search_text, true);
-    } else if args.immediate_search {
-        bail!("Cannot run with `--immediate-search` unless a value has been provided for `--search-text`");
-    } else if args.immediate {
-        bail!("Cannot run with `--immediate` unless a value has been provided for `--search-text`");
-    }
+        if let Some(ref search_text) = args.search_text {
+            search_field_values.search = FieldValue::new(search_text, true);
+        }
 
-    if let Some(ref replace_text) = args.replace_text {
-        search_field_values.replace = FieldValue::new(replace_text, true);
-    }
-    if args.fixed_strings {
-        search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
-    }
-    if args.match_whole_word {
-        search_field_values.match_whole_word = FieldValue::new(args.match_whole_word, true);
-    }
-    if args.case_insensitive {
-        search_field_values.match_case = FieldValue::new(!args.case_insensitive, true);
-    }
-    if let Some(ref files_to_include) = args.files_to_include {
-        search_field_values.include_files = FieldValue::new(files_to_include, true);
-    }
-    if let Some(ref files_to_exclude) = args.files_to_exclude {
-        search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
-    }
+        if let Some(ref replace_text) = args.replace_text {
+            search_field_values.replace = FieldValue::new(replace_text, true);
+        }
+        if args.fixed_strings {
+            search_field_values.fixed_strings = FieldValue::new(args.fixed_strings, true);
+        }
+        if args.match_whole_word {
+            search_field_values.match_whole_word = FieldValue::new(args.match_whole_word, true);
+        }
+        if args.case_insensitive {
+            search_field_values.match_case = FieldValue::new(!args.case_insensitive, true);
+        }
+        if let Some(ref files_to_include) = args.files_to_include {
+            search_field_values.include_files = FieldValue::new(files_to_include, true);
+        }
+        if let Some(ref files_to_exclude) = args.files_to_exclude {
+            search_field_values.exclude_files = FieldValue::new(files_to_exclude, true);
+        }
 
-    Ok(search_field_values)
+        search_field_values
+    }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config = AppConfig::from(&args)?;
+    let config = AppConfig::try_from(&args)?;
     if args.no_tui {
-        todo!()
+        run_app_headless(config).await
     } else {
         run_app_tui(config).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use log::LevelFilter;
+
+    fn default_args() -> Args {
+        Args {
+            directory: None,
+            hidden: false,
+            log_level: LevelFilter::Info,
+            advanced_regex: false,
+            immediate_search: false,
+            immediate_replace: false,
+            print_results: false,
+            immediate: false,
+            no_tui: false,
+            search_text: None,
+            replace_text: None,
+            fixed_strings: false,
+            match_whole_word: false,
+            case_insensitive: false,
+            files_to_include: None,
+            files_to_exclude: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_flag_combinations_success() {
+        let args = default_args();
+        assert!(validate_flag_combinations(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_flag_combinations_no_tui_and_immediate() {
+        let args = Args {
+            no_tui: true,
+            immediate: true,
+            ..default_args()
+        };
+        let result = validate_flag_combinations(&args);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("--no-tui cannot be combined with --immediate"));
+    }
+
+    #[test]
+    fn test_validate_flag_combinations_no_tui_with_individual_flags() {
+        let test_cases = [
+            (
+                "--immediate-search",
+                Args {
+                    no_tui: true,
+                    immediate_search: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--immediate-replace",
+                Args {
+                    no_tui: true,
+                    immediate_replace: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--print-results",
+                Args {
+                    no_tui: true,
+                    print_results: true,
+                    ..default_args()
+                },
+            ),
+        ];
+
+        for (flag_name, args) in test_cases {
+            let result = validate_flag_combinations(&args);
+            assert!(
+                result.is_err(),
+                "Expected error for --no-tui with {flag_name}"
+            );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("--no-tui cannot be combined with"));
+        }
+    }
+
+    #[test]
+    fn test_validate_flag_combinations_immediate_with_individual_flags() {
+        let test_cases = [
+            (
+                "--immediate-search",
+                Args {
+                    immediate: true,
+                    immediate_search: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--immediate-replace",
+                Args {
+                    immediate: true,
+                    immediate_replace: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--print-results",
+                Args {
+                    immediate: true,
+                    print_results: true,
+                    ..default_args()
+                },
+            ),
+        ];
+
+        for (flag_name, args) in test_cases {
+            let result = validate_flag_combinations(&args);
+            assert!(
+                result.is_err(),
+                "Expected error for --immediate with {flag_name}"
+            );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("--immediate cannot be combined with"));
+        }
+    }
+
+    #[test]
+    fn test_validate_search_text_required_success() {
+        let args = Args {
+            search_text: Some("test".to_string()),
+            immediate: true,
+            ..default_args()
+        };
+        assert!(validate_search_text_required(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_search_text_required_flags_without_text() {
+        let test_cases = [
+            (
+                "--immediate-search",
+                Args {
+                    immediate_search: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--immediate",
+                Args {
+                    immediate: true,
+                    ..default_args()
+                },
+            ),
+            (
+                "--no-tui",
+                Args {
+                    no_tui: true,
+                    ..default_args()
+                },
+            ),
+        ];
+
+        for (flag_name, args) in test_cases {
+            let result = validate_search_text_required(&args);
+            assert!(
+                result.is_err(),
+                "Expected error for {flag_name} without search text"
+            );
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains(&format!("{flag_name} requires --search-text")));
+        }
+    }
+
+    #[test]
+    fn test_app_config_try_from_success() {
+        let args = Args {
+            directory: Some("/test".to_string()),
+            search_text: Some("test".to_string()),
+            immediate: true,
+            ..default_args()
+        };
+        let config = AppConfig::try_from(&args);
+        assert!(config.is_ok());
+
+        let config = config.unwrap();
+        assert_eq!(config.directory, Some("/test".to_string()));
+        assert!(config.app_run_config.immediate_search);
+        assert!(config.app_run_config.immediate_replace);
+        assert!(config.app_run_config.print_results);
+    }
+
+    #[test]
+    #[allow(clippy::bool_assert_comparison)]
+    fn test_search_field_values_from() {
+        let args = Args {
+            search_text: Some("test_search".to_string()),
+            replace_text: Some("test_replace".to_string()),
+            fixed_strings: true,
+            match_whole_word: true,
+            case_insensitive: true,
+            files_to_include: Some("*.rs".to_string()),
+            files_to_exclude: Some("target/*".to_string()),
+            ..default_args()
+        };
+
+        let values = SearchFieldValues::from(&args);
+
+        assert_eq!(values.search.value, "test_search");
+        assert_eq!(values.search.set_by_cli, true);
+
+        assert_eq!(values.replace.value, "test_replace");
+        assert_eq!(values.replace.set_by_cli, true);
+
+        assert_eq!(values.fixed_strings.value, true);
+        assert_eq!(values.fixed_strings.set_by_cli, true);
+
+        assert_eq!(values.match_whole_word.value, true);
+        assert_eq!(values.match_whole_word.set_by_cli, true);
+
+        assert_eq!(values.match_case.value, false);
+        assert_eq!(values.match_case.set_by_cli, true);
+
+        assert_eq!(values.include_files.value, "*.rs");
+        assert_eq!(values.include_files.set_by_cli, true);
+
+        assert_eq!(values.exclude_files.value, "target/*");
+        assert_eq!(values.exclude_files.set_by_cli, true);
+    }
+
+    #[test]
+    #[allow(clippy::bool_assert_comparison)]
+    fn test_search_field_values_from_defaults() {
+        let args = default_args();
+        let values = SearchFieldValues::from(&args);
+
+        assert_eq!(values.search.value, "");
+        assert_eq!(values.search.set_by_cli, false);
+
+        assert_eq!(values.replace.value, "");
+        assert_eq!(values.replace.set_by_cli, false);
+
+        assert_eq!(values.fixed_strings.value, false);
+        assert_eq!(values.fixed_strings.set_by_cli, false);
+
+        assert_eq!(values.match_whole_word.value, false);
+        assert_eq!(values.match_whole_word.set_by_cli, false);
+
+        assert_eq!(values.match_case.value, true);
+        assert_eq!(values.match_case.set_by_cli, false);
+
+        assert_eq!(values.include_files.value, "");
+        assert_eq!(values.include_files.set_by_cli, false);
+
+        assert_eq!(values.exclude_files.value, "");
+        assert_eq!(values.exclude_files.set_by_cli, false);
     }
 }
