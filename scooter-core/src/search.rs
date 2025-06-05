@@ -13,8 +13,7 @@ use log::{error, warn};
 use regex::Regex;
 
 use crate::replace::ReplaceResult;
-
-use scooter_core::line_reader::{BufReadExt, LineEnding};
+use crate::line_reader::{BufReadExt, LineEnding};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
@@ -284,9 +283,9 @@ mod tests {
         #[test]
         fn test_basic_replacement() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "hello world",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -300,9 +299,9 @@ mod tests {
         #[test]
         fn test_multiple_replacements() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "world hello world",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -316,9 +315,9 @@ mod tests {
         #[test]
         fn test_no_match() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "worldwide",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -328,9 +327,9 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "_world_",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -344,9 +343,9 @@ mod tests {
         #[test]
         fn test_word_boundaries() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     ",world-",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -356,9 +355,9 @@ mod tests {
                 Some(",earth-".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "world-word",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -368,9 +367,9 @@ mod tests {
                 Some("earth-word".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello-world!",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -384,9 +383,9 @@ mod tests {
         #[test]
         fn test_case_sensitive() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello WORLD",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         true
@@ -396,9 +395,9 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello world",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("wOrld".to_string()),
                         true,
                         true
@@ -412,9 +411,9 @@ mod tests {
         #[test]
         fn test_empty_strings() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -424,9 +423,9 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "hello world",
-                    &ParsedFields::convert_regex(&SearchType::Fixed("".to_string()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Fixed("".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -436,9 +435,9 @@ mod tests {
         #[test]
         fn test_substring_no_match() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "worldwide web",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -448,9 +447,9 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "underworld",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world".to_string()),
                         true,
                         false
@@ -464,9 +463,9 @@ mod tests {
         #[test]
         fn test_special_regex_chars() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "hello (world)",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("(world)".to_string()),
                         true,
                         false
@@ -476,9 +475,9 @@ mod tests {
                 Some("hello earth".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "hello world.*",
-                    &ParsedFields::convert_regex(
+                    &FileSearcher::convert_regex(
                         &SearchType::Fixed("world.*".to_string()),
                         true,
                         false
@@ -493,17 +492,17 @@ mod tests {
         fn test_basic_regex_patterns() {
             let re = Regex::new(r"ax*b").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo axxxxb bar",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("foo NEW bar".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "fooaxxxxb bar",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -514,17 +513,17 @@ mod tests {
         fn test_patterns_with_spaces() {
             let re = Regex::new(r"hel+o world").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "say hello world!",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "hi earth"
                 ),
                 Some("say hi earth!".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "helloworld",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "hi earth"
                 ),
                 None
@@ -535,33 +534,33 @@ mod tests {
         fn test_multiple_matches() {
             let re = Regex::new(r"a+b+").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo aab abb",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("foo X X".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "ab abaab abb",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("X abaab X".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "ababaababb",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "ab ab aab abb",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("X X X X".to_string())
@@ -573,27 +572,27 @@ mod tests {
             let re = Regex::new(r"foo\s*bar").unwrap();
             // At start of string
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo bar baz",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("TEST baz".to_string())
             );
             // At end of string
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "baz foo bar",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("baz TEST".to_string())
             );
             // With punctuation
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "(foo bar)",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "TEST"
                 ),
                 Some("(TEST)".to_string())
@@ -604,17 +603,17 @@ mod tests {
         fn test_with_punctuation() {
             let re = Regex::new(r"a\d+b").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "(a123b)",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("(X)".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo.a123b!bar",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("foo.X!bar".to_string())
@@ -625,17 +624,17 @@ mod tests {
         fn test_complex_patterns() {
             let re = Regex::new(r"[a-z]+\d+[a-z]+").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "test9 abc123def 8xyz",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test9 NEW 8xyz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "test9abc123def8xyz",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -646,9 +645,9 @@ mod tests {
         fn test_optional_patterns() {
             let re = Regex::new(r"colou?r").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "my color and colour",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("my X and X".to_string())
@@ -659,9 +658,9 @@ mod tests {
         fn test_empty_haystack() {
             let re = Regex::new(r"test").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -672,9 +671,9 @@ mod tests {
         fn test_empty_search_regex() {
             let re = Regex::new(r"").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "search",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -685,17 +684,17 @@ mod tests {
         fn test_single_char() {
             let re = Regex::new(r"a").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "b a c",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("b X c".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "bac",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -706,9 +705,9 @@ mod tests {
         fn test_escaped_chars() {
             let re = Regex::new(r"\(\d+\)").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "test (123) foo",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("test X foo".to_string())
@@ -719,17 +718,17 @@ mod tests {
         fn test_with_unicode() {
             let re = Regex::new(r"λ\d+").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "calc λ123 β",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("calc X β".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "calcλ123",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -740,17 +739,17 @@ mod tests {
         fn test_multiline_patterns() {
             let re = Regex::new(r"foo\s*\n\s*bar").unwrap();
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "test foo\nbar end",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "test foo\n  bar end",
-                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
+                    &FileSearcher::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())
@@ -764,7 +763,7 @@ mod tests {
         #[test]
         fn test_simple_match_subword() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Fixed("bar".to_string()),
                     "REPL"
@@ -772,7 +771,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"bar").unwrap()),
                     "REPL"
@@ -780,7 +779,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"bar").unwrap()),
                     "REPL"
@@ -792,7 +791,7 @@ mod tests {
         #[test]
         fn test_no_match() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Fixed("xyz".to_string()),
                     "REPL"
@@ -800,7 +799,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"xyz").unwrap()),
                     "REPL"
@@ -808,7 +807,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"xyz").unwrap()),
                     "REPL"
@@ -820,7 +819,7 @@ mod tests {
         #[test]
         fn test_word_boundaries() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo bar baz",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -828,7 +827,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "embargo",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -836,7 +835,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo bar baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -844,7 +843,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "embargo",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -856,7 +855,7 @@ mod tests {
         #[test]
         fn test_capture_groups() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "John Doe",
                     &SearchType::Pattern(Regex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -864,7 +863,7 @@ mod tests {
                 Some("Doe, John".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "John Doe",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -876,7 +875,7 @@ mod tests {
         #[test]
         fn test_lookaround() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "123abc456",
                     &SearchType::PatternAdvanced(
                         FancyRegex::new(r"(?<=\d{3})abc(?=\d{3})").unwrap()
@@ -890,7 +889,7 @@ mod tests {
         #[test]
         fn test_quantifiers() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "aaa123456bbb",
                     &SearchType::Pattern(Regex::new(r"\d+").unwrap()),
                     "REPL"
@@ -898,7 +897,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "abc123def456",
                     &SearchType::Pattern(Regex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -906,7 +905,7 @@ mod tests {
                 Some("abcREPLdefREPL".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "aaa123456bbb",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d+").unwrap()),
                     "REPL"
@@ -914,7 +913,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "abc123def456",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -926,7 +925,7 @@ mod tests {
         #[test]
         fn test_special_characters() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::Fixed(".bar*".to_string()),
                     "REPL"
@@ -934,7 +933,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::Pattern(Regex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -942,7 +941,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -954,7 +953,7 @@ mod tests {
         #[test]
         fn test_unicode() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::Fixed("世界".to_string()),
                     "REPL"
@@ -962,7 +961,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::Pattern(Regex::new(r"世界").unwrap()),
                     "REPL"
@@ -970,7 +969,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"世界").unwrap()),
                     "REPL"
@@ -982,7 +981,7 @@ mod tests {
         #[test]
         fn test_case_insensitive() {
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "HELLO world",
                     &SearchType::Pattern(Regex::new(r"(?i)hello").unwrap()),
                     "REPL"
@@ -990,7 +989,7 @@ mod tests {
                 Some("REPL world".to_string())
             );
             assert_eq!(
-                ParsedFields::replacement_if_match(
+                FileSearcher::replacement_if_match(
                     "HELLO world",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(?i)hello").unwrap()),
                     "REPL"

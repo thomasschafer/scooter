@@ -27,12 +27,13 @@ use crate::{
     app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
-    search::SearchResult,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
     },
 };
+
+use scooter_core::search::SearchResult;
 
 use super::colour::to_ratatui_colour;
 

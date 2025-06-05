@@ -23,16 +23,14 @@ use tokio::{
 
 use crate::{
     app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
-    search::SearchResult,
 };
+
+use scooter_core::search::SearchResult;
+
+pub use scooter_core::replace::ReplaceResult;
 
 use scooter_core::line_reader::BufReadExt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReplaceResult {
-    Success,
-    Error(String),
-}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplaceState {

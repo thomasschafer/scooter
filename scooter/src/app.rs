@@ -31,9 +31,10 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
-    search::{FileSearcher, SearchResult, SearchType},
     utils::ceil_div,
 };
+
+use scooter_core::search::{FileSearcher, SearchResult, SearchType};
 
 #[derive(Debug)]
 pub enum Event {

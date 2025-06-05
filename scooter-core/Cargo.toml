@@ -10,6 +10,13 @@ homepage = "https://github.com/thomasschafer/scooter/tree/main/scooter-core"
 repository = "https://github.com/thomasschafer/scooter/tree/main/scooter-core"
 keywords = ["find", "search", "replace"]
 
+[dependencies]
+content_inspector = "0.2.4"
+fancy-regex = "0.14.0"
+ignore = "0.4.23"
+log = "0.4.27"
+regex = "1.11.1"
+
 [lib]
 name = "scooter_core"
 path = "src/lib.rs"

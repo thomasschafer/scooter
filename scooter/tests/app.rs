@@ -15,11 +15,12 @@ use tokio::sync::mpsc;
 
 use scooter::{
     replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
-    search::SearchResult,
     test_with_both_regex_modes, App, AppError, AppRunConfig, EventHandlingResult, FieldValue,
     Popup, Screen, SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState,
     SearchState,
 };
+
+use scooter_core::search::SearchResult;
 
 mod utils;
 

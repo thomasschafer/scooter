@@ -1326,7 +1326,6 @@ version = "0.5.2"
 dependencies = [
  "anyhow",
  "clap",
- "content_inspector",
  "crossbeam-channel",
  "crossterm",
  "etcetera",
@@ -1355,6 +1354,13 @@ dependencies = [
 [[package]]
 name = "scooter-core"
 version = "0.1.0"
+dependencies = [
+ "content_inspector",
+ "fancy-regex",
+ "ignore",
+ "log",
+ "regex",
+]
 
 [[package]]
 name = "scopeguard"

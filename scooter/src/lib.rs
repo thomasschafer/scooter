@@ -4,7 +4,6 @@ pub mod config;
 pub mod fields;
 pub mod logging;
 pub mod replace;
-pub mod search;
 pub mod tui;
 pub mod ui;
 pub mod utils;
