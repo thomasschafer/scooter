@@ -17,6 +17,9 @@ ignore = "0.4.23"
 log = "0.4.27"
 regex = "1.11.1"
 
+[dev-dependencies]
+tempfile = "3.20.0"
+
 [lib]
 name = "scooter_core"
 path = "src/lib.rs"

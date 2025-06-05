@@ -1360,6 +1360,7 @@ dependencies = [
  "ignore",
  "log",
  "regex",
+ "tempfile",
 ]
 
 [[package]]

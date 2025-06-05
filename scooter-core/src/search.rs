@@ -12,8 +12,8 @@ use ignore::{WalkBuilder, WalkState};
 use log::{error, warn};
 use regex::Regex;
 
-use crate::replace::ReplaceResult;
 use crate::line_reader::{BufReadExt, LineEnding};
+use crate::replace::ReplaceResult;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
@@ -276,6 +276,53 @@ impl FileSearcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Test helper functions to reduce duplication
+    mod test_helpers {
+        use super::*;
+
+        pub fn create_test_search_result(
+            path: &str,
+            line_number: usize,
+            replace_result: Option<ReplaceResult>,
+        ) -> SearchResult {
+            SearchResult {
+                path: PathBuf::from(path),
+                line_number,
+                line: "test line".to_string(),
+                line_ending: LineEnding::Lf,
+                replacement: "replacement".to_string(),
+                included: true,
+                replace_result,
+            }
+        }
+
+        pub fn create_fixed_search(term: &str) -> SearchType {
+            SearchType::Fixed(term.to_string())
+        }
+
+        pub fn create_pattern_search(pattern: &str) -> SearchType {
+            SearchType::Pattern(Regex::new(pattern).unwrap())
+        }
+
+        pub fn create_advanced_pattern_search(pattern: &str) -> SearchType {
+            SearchType::PatternAdvanced(FancyRegex::new(pattern).unwrap())
+        }
+
+        pub fn assert_pattern_contains(search_type: &SearchType, expected_parts: &[&str]) {
+            if let SearchType::PatternAdvanced(regex) = search_type {
+                let pattern = regex.as_str();
+                for part in expected_parts {
+                    assert!(
+                        pattern.contains(part),
+                        "Pattern '{pattern}' should contain '{part}'"
+                    );
+                }
+            } else {
+                panic!("Expected PatternAdvanced, got {search_type:?}");
+            }
+        }
+    }
 
     mod replace_whole_word {
         use super::*;
@@ -996,6 +1043,456 @@ mod tests {
                 ),
                 Some("REPL world".to_string())
             );
+        }
+    }
+
+    mod search_result_tests {
+        use super::*;
+
+        #[test]
+        fn test_display_error_with_error_result() {
+            let result = test_helpers::create_test_search_result(
+                "/path/to/file.txt",
+                42,
+                Some(ReplaceResult::Error("Test error message".to_string())),
+            );
+
+            let (path_display, error) = result.display_error();
+
+            assert_eq!(path_display, "/path/to/file.txt:42");
+            assert_eq!(error, "Test error message");
+        }
+
+        #[test]
+        fn test_display_error_with_unicode_path() {
+            let result = test_helpers::create_test_search_result(
+                "/path/to/файл.txt",
+                123,
+                Some(ReplaceResult::Error("Unicode test".to_string())),
+            );
+
+            let (path_display, error) = result.display_error();
+
+            assert_eq!(path_display, "/path/to/файл.txt:123");
+            assert_eq!(error, "Unicode test");
+        }
+
+        #[test]
+        fn test_display_error_with_complex_error_message() {
+            let complex_error = "Failed to write: Permission denied (os error 13)";
+            let result = test_helpers::create_test_search_result(
+                "/readonly/file.txt",
+                1,
+                Some(ReplaceResult::Error(complex_error.to_string())),
+            );
+
+            let (path_display, error) = result.display_error();
+
+            assert_eq!(path_display, "/readonly/file.txt:1");
+            assert_eq!(error, complex_error);
+        }
+
+        #[test]
+        #[should_panic(expected = "Found error result with no error message")]
+        fn test_display_error_panics_with_none_result() {
+            let result = test_helpers::create_test_search_result("/path/to/file.txt", 1, None);
+            result.display_error();
+        }
+
+        #[test]
+        #[should_panic(expected = "Found successful result in errors")]
+        fn test_display_error_panics_with_success_result() {
+            let result = test_helpers::create_test_search_result(
+                "/path/to/file.txt",
+                1,
+                Some(ReplaceResult::Success),
+            );
+            result.display_error();
+        }
+    }
+
+    mod search_type_tests {
+        use super::*;
+
+        #[test]
+        fn test_search_type_emptiness() {
+            let test_cases = [
+                (test_helpers::create_fixed_search(""), true),
+                (test_helpers::create_fixed_search("hello"), false),
+                (test_helpers::create_fixed_search("   "), false), // whitespace is not empty
+                (test_helpers::create_pattern_search(""), true),
+                (test_helpers::create_pattern_search("test"), false),
+                (test_helpers::create_pattern_search(r"\s+"), false),
+                (test_helpers::create_advanced_pattern_search(""), true),
+                (test_helpers::create_advanced_pattern_search("test"), false),
+            ];
+
+            for (search_type, expected_empty) in test_cases {
+                assert_eq!(
+                    search_type.is_empty(),
+                    expected_empty,
+                    "Emptiness test failed for: {search_type:?}"
+                );
+            }
+        }
+    }
+
+    mod file_searcher_tests {
+        use super::*;
+        use ignore::overrides::OverrideBuilder;
+
+        fn create_test_override() -> Override {
+            OverrideBuilder::new("/tmp").build().unwrap()
+        }
+
+        #[test]
+        fn test_new_no_conversion_needed() {
+            let search = test_helpers::create_fixed_search("test");
+            let searcher = FileSearcher::new(
+                search.clone(),
+                "replacement".to_string(),
+                false, // whole_word
+                true,  // match_case
+                create_test_override(),
+                PathBuf::from("/tmp"),
+                false,
+            );
+
+            // When whole_word=false and match_case=true, no conversion should happen
+            // We can't directly compare SearchType due to regex internals, but we can check the replace string
+            assert_eq!(searcher.replace, "replacement");
+            assert_eq!(searcher.root_dir, PathBuf::from("/tmp"));
+            assert!(!searcher.include_hidden);
+        }
+
+        #[test]
+        fn test_new_with_conversion() {
+            let search = test_helpers::create_fixed_search("test");
+            let searcher = FileSearcher::new(
+                search,
+                "replacement".to_string(),
+                true,  // whole_word - should trigger conversion
+                false, // match_case - should trigger conversion
+                create_test_override(),
+                PathBuf::from("/home"),
+                true, // include_hidden
+            );
+
+            assert_eq!(searcher.replace, "replacement");
+            assert_eq!(searcher.root_dir, PathBuf::from("/home"));
+            assert!(searcher.include_hidden);
+            // The search should have been converted to PatternAdvanced
+            assert!(matches!(searcher.search, SearchType::PatternAdvanced(_)));
+        }
+
+        #[test]
+        fn test_convert_regex_whole_word() {
+            let fixed_search = test_helpers::create_fixed_search("test");
+            let converted = FileSearcher::convert_regex(&fixed_search, true, true);
+
+            test_helpers::assert_pattern_contains(
+                &converted,
+                &["(?<![a-zA-Z0-9_])", "(?![a-zA-Z0-9_])", "test"],
+            );
+        }
+
+        #[test]
+        fn test_convert_regex_case_insensitive() {
+            let fixed_search = test_helpers::create_fixed_search("Test");
+            let converted = FileSearcher::convert_regex(&fixed_search, false, false);
+
+            test_helpers::assert_pattern_contains(&converted, &["(?i)", "Test"]);
+        }
+
+        #[test]
+        fn test_convert_regex_whole_word_and_case_insensitive() {
+            let fixed_search = test_helpers::create_fixed_search("Test");
+            let converted = FileSearcher::convert_regex(&fixed_search, true, false);
+
+            test_helpers::assert_pattern_contains(
+                &converted,
+                &["(?<![a-zA-Z0-9_])", "(?![a-zA-Z0-9_])", "(?i)", "Test"],
+            );
+        }
+
+        #[test]
+        fn test_convert_regex_escapes_special_chars() {
+            let fixed_search = test_helpers::create_fixed_search("test.regex*");
+            let converted = FileSearcher::convert_regex(&fixed_search, false, true);
+
+            test_helpers::assert_pattern_contains(&converted, &[r"test\.regex\*"]);
+        }
+
+        #[test]
+        fn test_convert_regex_from_existing_pattern() {
+            let pattern_search = test_helpers::create_pattern_search(r"\d+");
+            let converted = FileSearcher::convert_regex(&pattern_search, true, false);
+
+            test_helpers::assert_pattern_contains(
+                &converted,
+                &["(?<![a-zA-Z0-9_])", "(?![a-zA-Z0-9_])", "(?i)", r"\d+"],
+            );
+        }
+
+        #[test]
+        fn test_is_likely_binary_extensions() {
+            const BINARY_EXTENSIONS: &[&str] = &[
+                "image.png",
+                "document.pdf",
+                "archive.zip",
+                "program.exe",
+                "library.dll",
+                "photo.jpg",
+                "icon.ico",
+                "vector.svg",
+                "compressed.gz",
+                "backup.7z",
+                "java.class",
+                "application.jar",
+            ];
+
+            const TEXT_EXTENSIONS: &[&str] = &[
+                "code.rs",
+                "script.py",
+                "document.txt",
+                "config.json",
+                "readme.md",
+                "style.css",
+                "page.html",
+                "source.c",
+                "header.h",
+                "makefile",
+                "no_extension",
+            ];
+
+            const MIXED_CASE_BINARY: &[&str] =
+                &["IMAGE.PNG", "Document.PDF", "ARCHIVE.ZIP", "Photo.JPG"];
+
+            let test_cases = [
+                (BINARY_EXTENSIONS, true),
+                (TEXT_EXTENSIONS, false),
+                (MIXED_CASE_BINARY, true),
+            ];
+
+            for (files, expected_binary) in test_cases {
+                for file in files {
+                    assert_eq!(
+                        FileSearcher::is_likely_binary(Path::new(file)),
+                        expected_binary,
+                        "Binary detection failed for {file}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn test_is_likely_binary_no_extension() {
+            assert!(!FileSearcher::is_likely_binary(Path::new("filename")));
+            assert!(!FileSearcher::is_likely_binary(Path::new("/path/to/file")));
+        }
+
+        #[test]
+        fn test_is_likely_binary_empty_extension() {
+            assert!(!FileSearcher::is_likely_binary(Path::new("file.")));
+        }
+
+        #[test]
+        fn test_is_likely_binary_complex_paths() {
+            assert!(FileSearcher::is_likely_binary(Path::new(
+                "/complex/path/to/image.png"
+            )));
+            assert!(!FileSearcher::is_likely_binary(Path::new(
+                "/complex/path/to/source.rs"
+            )));
+        }
+
+        #[test]
+        fn test_is_likely_binary_hidden_files() {
+            assert!(FileSearcher::is_likely_binary(Path::new(".hidden.png")));
+            assert!(!FileSearcher::is_likely_binary(Path::new(".hidden.txt")));
+        }
+    }
+
+    mod search_file_tests {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn test_search_file_simple_match() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "line 1").unwrap();
+            writeln!(temp_file, "search target").unwrap();
+            writeln!(temp_file, "line 3").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = test_helpers::create_fixed_search("search");
+            let results = FileSearcher::search_file(temp_file.path(), &search, "replace").unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].line_number, 2);
+            assert_eq!(results[0].line, "search target");
+            assert_eq!(results[0].replacement, "replace target");
+            assert!(results[0].included);
+            assert!(results[0].replace_result.is_none());
+        }
+
+        #[test]
+        fn test_search_file_multiple_matches() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "test line 1").unwrap();
+            writeln!(temp_file, "test line 2").unwrap();
+            writeln!(temp_file, "no match here").unwrap();
+            writeln!(temp_file, "test line 4").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = test_helpers::create_fixed_search("test");
+            let results = FileSearcher::search_file(temp_file.path(), &search, "replaced").unwrap();
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].line_number, 1);
+            assert_eq!(results[0].replacement, "replaced line 1");
+            assert_eq!(results[1].line_number, 2);
+            assert_eq!(results[1].replacement, "replaced line 2");
+            assert_eq!(results[2].line_number, 4);
+            assert_eq!(results[2].replacement, "replaced line 4");
+        }
+
+        #[test]
+        fn test_search_file_no_matches() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "line 1").unwrap();
+            writeln!(temp_file, "line 2").unwrap();
+            writeln!(temp_file, "line 3").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Fixed("nonexistent".to_string());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "replace").unwrap();
+
+            assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_search_file_regex_pattern() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "number: 123").unwrap();
+            writeln!(temp_file, "text without numbers").unwrap();
+            writeln!(temp_file, "another number: 456").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Pattern(Regex::new(r"\d+").unwrap());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "XXX").unwrap();
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replacement, "number: XXX");
+            assert_eq!(results[1].replacement, "another number: XXX");
+        }
+
+        #[test]
+        fn test_search_file_advanced_regex_pattern() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "123abc456").unwrap();
+            writeln!(temp_file, "abc").unwrap();
+            writeln!(temp_file, "789xyz123").unwrap();
+            writeln!(temp_file, "no match").unwrap();
+            temp_file.flush().unwrap();
+
+            // Positive lookbehind and lookahead
+            let search =
+                SearchType::PatternAdvanced(FancyRegex::new(r"(?<=\d{3})abc(?=\d{3})").unwrap());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "REPLACED").unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].replacement, "123REPLACED456");
+            assert_eq!(results[0].line_number, 1);
+        }
+
+        #[test]
+        fn test_search_file_empty_search() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "some content").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Fixed("".to_string());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "replace").unwrap();
+
+            assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_search_file_preserves_line_endings() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            write!(temp_file, "line1\nline2\r\nline3").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Fixed("line".to_string());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "X").unwrap();
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].line_ending, LineEnding::Lf);
+            assert_eq!(results[1].line_ending, LineEnding::CrLf);
+            assert_eq!(results[2].line_ending, LineEnding::None);
+        }
+
+        #[test]
+        fn test_search_file_nonexistent() {
+            let nonexistent_path = PathBuf::from("/this/file/does/not/exist.txt");
+            let search = test_helpers::create_fixed_search("test");
+            let results = FileSearcher::search_file(&nonexistent_path, &search, "replace");
+
+            assert!(results.is_none());
+        }
+
+        #[test]
+        fn test_search_file_unicode_content() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "Hello 世界!").unwrap();
+            writeln!(temp_file, "Здравствуй мир!").unwrap();
+            writeln!(temp_file, "🚀 Rocket").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Fixed("世界".to_string());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "World").unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].replacement, "Hello World!");
+        }
+
+        #[test]
+        fn test_search_file_with_binary_content() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            // Write some binary data (null bytes and other control characters)
+            let binary_data = [0x00, 0x01, 0x02, 0xFF, 0xFE];
+            temp_file.write_all(&binary_data).unwrap();
+            temp_file.flush().unwrap();
+
+            let search = test_helpers::create_fixed_search("test");
+            let results = FileSearcher::search_file(temp_file.path(), &search, "replace");
+
+            assert!(results.is_none());
+        }
+
+        #[test]
+        fn test_search_file_large_content() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+
+            // Write a large file with search targets scattered throughout
+            for i in 0..1000 {
+                if i % 100 == 0 {
+                    writeln!(temp_file, "target line {i}").unwrap();
+                } else {
+                    writeln!(temp_file, "normal line {i}").unwrap();
+                }
+            }
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Fixed("target".to_string());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "found").unwrap();
+
+            assert_eq!(results.len(), 10); // Lines 0, 100, 200, ..., 900
+            assert_eq!(results[0].line_number, 1); // 1-indexed
+            assert_eq!(results[1].line_number, 101);
+            assert_eq!(results[9].line_number, 901);
         }
     }
 }
