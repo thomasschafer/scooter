@@ -31,7 +31,7 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
-    search::{ParsedFields, SearchResult, SearchType},
+    search::{FileSearcher, SearchResult, SearchType},
     utils::ceil_div,
 };
 
@@ -826,7 +826,7 @@ impl<'a> App {
             || e.downcast_ref::<fancy_regex::Error>().is_some()
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<Option<ParsedFields>> {
+    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
         let search_text = self.search_fields.search().text.clone();
 
         let search_pattern = match self.parse_search_text(&search_text) {
@@ -848,7 +848,7 @@ impl<'a> App {
         if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
             (search_pattern, overrides)
         {
-            Ok(Some(ParsedFields::new(
+            Ok(Some(FileSearcher::new(
                 search_pattern,
                 self.search_fields.replace().text().to_string(),
                 self.search_fields.whole_word().checked,
@@ -925,7 +925,7 @@ impl<'a> App {
     }
 
     pub fn spawn_update_search_results(
-        parsed_fields: ParsedFields,
+        parsed_fields: FileSearcher,
         sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,

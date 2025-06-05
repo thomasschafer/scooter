@@ -573,12 +573,4 @@ impl SearchFieldValues<'_> {
     const DEFAULT_MATCH_CASE: bool = true;
     const DEFAULT_INCLUDE_FILES: &'static str = "";
     const DEFAULT_EXCLUDE_FILES: &'static str = "";
-
-    pub fn whole_word_default() -> bool {
-        Self::DEFAULT_WHOLE_WORD
-    }
-
-    pub fn match_case_default() -> bool {
-        Self::DEFAULT_MATCH_CASE
-    }
 }

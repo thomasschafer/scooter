@@ -12,7 +12,7 @@ use ignore::{WalkBuilder, WalkState};
 use log::{error, warn};
 use regex::Regex;
 
-use crate::{fields::SearchFieldValues, replace::ReplaceResult};
+use crate::replace::ReplaceResult;
 
 use scooter_core::line_reader::{BufReadExt, LineEnding};
 
@@ -52,33 +52,6 @@ impl SearchResult {
     }
 }
 
-fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
-    if line.is_empty() || search.is_empty() {
-        return None;
-    }
-
-    match search {
-        SearchType::Fixed(ref fixed_str) => {
-            if line.contains(fixed_str) {
-                Some(line.replace(fixed_str, replace))
-            } else {
-                None
-            }
-        }
-        SearchType::Pattern(ref pattern) => {
-            if pattern.is_match(line) {
-                Some(pattern.replace_all(line, replace).to_string())
-            } else {
-                None
-            }
-        }
-        SearchType::PatternAdvanced(ref pattern) => match pattern.is_match(line) {
-            Ok(true) => Some(pattern.replace_all(line, replace).to_string()),
-            _ => None,
-        },
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum SearchType {
     Pattern(Regex),
@@ -97,30 +70,10 @@ impl SearchType {
     }
 }
 
-fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> SearchType {
-    let mut search_regex_str = match search {
-        SearchType::Fixed(ref fixed_str) => regex::escape(fixed_str),
-        SearchType::Pattern(ref pattern) => pattern.as_str().to_owned(),
-        SearchType::PatternAdvanced(ref pattern) => pattern.as_str().to_owned(),
-    };
-
-    if whole_word {
-        search_regex_str = format!(r"(?<![a-zA-Z0-9_]){search_regex_str}(?![a-zA-Z0-9_])");
-    }
-    if !match_case {
-        search_regex_str = format!(r"(?i){search_regex_str}");
-    }
-
-    // Shouldn't fail as we have already verified that `search` is valid, so `unwrap` here is fine.
-    // (Any issues will likely be with the padding we are doing in this function.)
-    let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
-    SearchType::PatternAdvanced(fancy_regex)
-}
-
 type FileVisitor = Box<dyn FnMut(Vec<SearchResult>) -> WalkState + Send>;
 
 #[derive(Clone, Debug)]
-pub struct ParsedFields {
+pub struct FileSearcher {
     pub search: SearchType,
     pub replace: String,
     pub overrides: Override,
@@ -129,7 +82,7 @@ pub struct ParsedFields {
     pub include_hidden: bool,
 }
 
-impl ParsedFields {
+impl FileSearcher {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         search: SearchType,
@@ -144,7 +97,7 @@ impl ParsedFields {
             // No conversion required
             search
         } else {
-            convert_regex(&search, whole_word, match_case)
+            Self::convert_regex(&search, whole_word, match_case)
         };
         Self {
             search,
@@ -153,6 +106,26 @@ impl ParsedFields {
             root_dir,
             include_hidden,
         }
+    }
+
+    fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> SearchType {
+        let mut search_regex_str = match search {
+            SearchType::Fixed(ref fixed_str) => regex::escape(fixed_str),
+            SearchType::Pattern(ref pattern) => pattern.as_str().to_owned(),
+            SearchType::PatternAdvanced(ref pattern) => pattern.as_str().to_owned(),
+        };
+
+        if whole_word {
+            search_regex_str = format!(r"(?<![a-zA-Z0-9_]){search_regex_str}(?![a-zA-Z0-9_])");
+        }
+        if !match_case {
+            search_regex_str = format!(r"(?i){search_regex_str}");
+        }
+
+        // Shouldn't fail as we have already verified that `search` is valid, so `unwrap` here is fine.
+        // (Any issues will likely be with the padding we are doing in this function.)
+        let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
+        SearchType::PatternAdvanced(fancy_regex)
     }
 
     pub fn walk_files<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
@@ -242,7 +215,7 @@ impl ParsedFields {
                 }
             };
 
-            if let Some(replacement) = replacement_if_match(&line, search, replace) {
+            if let Some(replacement) = Self::replacement_if_match(&line, search, replace) {
                 let result = SearchResult {
                     path: path.to_path_buf(),
                     line_number,
@@ -257,6 +230,33 @@ impl ParsedFields {
         }
 
         Some(results)
+    }
+
+    fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
+        if line.is_empty() || search.is_empty() {
+            return None;
+        }
+
+        match search {
+            SearchType::Fixed(ref fixed_str) => {
+                if line.contains(fixed_str) {
+                    Some(line.replace(fixed_str, replace))
+                } else {
+                    None
+                }
+            }
+            SearchType::Pattern(ref pattern) => {
+                if pattern.is_match(line) {
+                    Some(pattern.replace_all(line, replace).to_string())
+                } else {
+                    None
+                }
+            }
+            SearchType::PatternAdvanced(ref pattern) => match pattern.is_match(line) {
+                Ok(true) => Some(pattern.replace_all(line, replace).to_string()),
+                _ => None,
+            },
+        }
     }
 
     fn is_likely_binary(path: &Path) -> bool {
@@ -284,9 +284,13 @@ mod tests {
         #[test]
         fn test_basic_replacement() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "hello world",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some("hello earth".to_string())
@@ -296,9 +300,13 @@ mod tests {
         #[test]
         fn test_multiple_replacements() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "world hello world",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some("earth hello earth".to_string())
@@ -308,17 +316,25 @@ mod tests {
         #[test]
         fn test_no_match() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "worldwide",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "_world_",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 None
@@ -328,25 +344,37 @@ mod tests {
         #[test]
         fn test_word_boundaries() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     ",world-",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some(",earth-".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "world-word",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some("earth-word".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello-world!",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some("Hello-earth!".to_string())
@@ -356,17 +384,25 @@ mod tests {
         #[test]
         fn test_case_sensitive() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello WORLD",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, true),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        true
+                    ),
                     "earth"
                 ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello world",
-                    &convert_regex(&SearchType::Fixed("wOrld".to_string()), true, true),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("wOrld".to_string()),
+                        true,
+                        true
+                    ),
                     "earth"
                 ),
                 None
@@ -376,17 +412,21 @@ mod tests {
         #[test]
         fn test_empty_strings() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "hello world",
-                    &convert_regex(&SearchType::Fixed("".to_string()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Fixed("".to_string()), true, false),
                     "earth"
                 ),
                 None
@@ -396,17 +436,25 @@ mod tests {
         #[test]
         fn test_substring_no_match() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "worldwide web",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "underworld",
-                    &convert_regex(&SearchType::Fixed("world".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 None
@@ -416,17 +464,25 @@ mod tests {
         #[test]
         fn test_special_regex_chars() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "hello (world)",
-                    &convert_regex(&SearchType::Fixed("(world)".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("(world)".to_string()),
+                        true,
+                        false
+                    ),
                     "earth"
                 ),
                 Some("hello earth".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "hello world.*",
-                    &convert_regex(&SearchType::Fixed("world.*".to_string()), true, false),
+                    &ParsedFields::convert_regex(
+                        &SearchType::Fixed("world.*".to_string()),
+                        true,
+                        false
+                    ),
                     "ea+rth"
                 ),
                 Some("hello ea+rth".to_string())
@@ -437,17 +493,17 @@ mod tests {
         fn test_basic_regex_patterns() {
             let re = Regex::new(r"ax*b").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo axxxxb bar",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("foo NEW bar".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "fooaxxxxb bar",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -458,17 +514,17 @@ mod tests {
         fn test_patterns_with_spaces() {
             let re = Regex::new(r"hel+o world").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "say hello world!",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "hi earth"
                 ),
                 Some("say hi earth!".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "helloworld",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "hi earth"
                 ),
                 None
@@ -479,33 +535,33 @@ mod tests {
         fn test_multiple_matches() {
             let re = Regex::new(r"a+b+").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo aab abb",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("foo X X".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "ab abaab abb",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("X abaab X".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "ababaababb",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "ab ab aab abb",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("X X X X".to_string())
@@ -517,27 +573,27 @@ mod tests {
             let re = Regex::new(r"foo\s*bar").unwrap();
             // At start of string
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo bar baz",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("TEST baz".to_string())
             );
             // At end of string
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "baz foo bar",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "TEST"
                 ),
                 Some("baz TEST".to_string())
             );
             // With punctuation
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "(foo bar)",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "TEST"
                 ),
                 Some("(TEST)".to_string())
@@ -548,17 +604,17 @@ mod tests {
         fn test_with_punctuation() {
             let re = Regex::new(r"a\d+b").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "(a123b)",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("(X)".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo.a123b!bar",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("foo.X!bar".to_string())
@@ -569,17 +625,17 @@ mod tests {
         fn test_complex_patterns() {
             let re = Regex::new(r"[a-z]+\d+[a-z]+").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "test9 abc123def 8xyz",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test9 NEW 8xyz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "test9abc123def8xyz",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -590,9 +646,9 @@ mod tests {
         fn test_optional_patterns() {
             let re = Regex::new(r"colou?r").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "my color and colour",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("my X and X".to_string())
@@ -603,9 +659,9 @@ mod tests {
         fn test_empty_haystack() {
             let re = Regex::new(r"test").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -616,9 +672,9 @@ mod tests {
         fn test_empty_search_regex() {
             let re = Regex::new(r"").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "search",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 None
@@ -629,17 +685,17 @@ mod tests {
         fn test_single_char() {
             let re = Regex::new(r"a").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "b a c",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("b X c".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "bac",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -650,9 +706,9 @@ mod tests {
         fn test_escaped_chars() {
             let re = Regex::new(r"\(\d+\)").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "test (123) foo",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 Some("test X foo".to_string())
@@ -663,17 +719,17 @@ mod tests {
         fn test_with_unicode() {
             let re = Regex::new(r"λ\d+").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "calc λ123 β",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "X"
                 ),
                 Some("calc X β".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "calcλ123",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "X"
                 ),
                 None
@@ -684,17 +740,17 @@ mod tests {
         fn test_multiline_patterns() {
             let re = Regex::new(r"foo\s*\n\s*bar").unwrap();
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "test foo\nbar end",
-                    &convert_regex(&SearchType::Pattern(re.clone()), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re.clone()), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "test foo\n  bar end",
-                    &convert_regex(&SearchType::Pattern(re), true, false),
+                    &ParsedFields::convert_regex(&SearchType::Pattern(re), true, false),
                     "NEW"
                 ),
                 Some("test NEW end".to_string())
@@ -708,11 +764,15 @@ mod tests {
         #[test]
         fn test_simple_match_subword() {
             assert_eq!(
-                replacement_if_match("foobarbaz", &SearchType::Fixed("bar".to_string()), "REPL"),
+                ParsedFields::replacement_if_match(
+                    "foobarbaz",
+                    &SearchType::Fixed("bar".to_string()),
+                    "REPL"
+                ),
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"bar").unwrap()),
                     "REPL"
@@ -720,7 +780,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"bar").unwrap()),
                     "REPL"
@@ -732,11 +792,15 @@ mod tests {
         #[test]
         fn test_no_match() {
             assert_eq!(
-                replacement_if_match("foobarbaz", &SearchType::Fixed("xyz".to_string()), "REPL"),
+                ParsedFields::replacement_if_match(
+                    "foobarbaz",
+                    &SearchType::Fixed("xyz".to_string()),
+                    "REPL"
+                ),
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"xyz").unwrap()),
                     "REPL"
@@ -744,7 +808,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"xyz").unwrap()),
                     "REPL"
@@ -756,7 +820,7 @@ mod tests {
         #[test]
         fn test_word_boundaries() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo bar baz",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -764,7 +828,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "embargo",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -772,7 +836,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo bar baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -780,7 +844,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "embargo",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -792,7 +856,7 @@ mod tests {
         #[test]
         fn test_capture_groups() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "John Doe",
                     &SearchType::Pattern(Regex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -800,7 +864,7 @@ mod tests {
                 Some("Doe, John".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "John Doe",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -812,7 +876,7 @@ mod tests {
         #[test]
         fn test_lookaround() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "123abc456",
                     &SearchType::PatternAdvanced(
                         FancyRegex::new(r"(?<=\d{3})abc(?=\d{3})").unwrap()
@@ -826,7 +890,7 @@ mod tests {
         #[test]
         fn test_quantifiers() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "aaa123456bbb",
                     &SearchType::Pattern(Regex::new(r"\d+").unwrap()),
                     "REPL"
@@ -834,7 +898,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "abc123def456",
                     &SearchType::Pattern(Regex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -842,7 +906,7 @@ mod tests {
                 Some("abcREPLdefREPL".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "aaa123456bbb",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d+").unwrap()),
                     "REPL"
@@ -850,7 +914,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "abc123def456",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -862,7 +926,7 @@ mod tests {
         #[test]
         fn test_special_characters() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::Fixed(".bar*".to_string()),
                     "REPL"
@@ -870,7 +934,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::Pattern(Regex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -878,7 +942,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "foo.bar*baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -890,7 +954,7 @@ mod tests {
         #[test]
         fn test_unicode() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::Fixed("世界".to_string()),
                     "REPL"
@@ -898,7 +962,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::Pattern(Regex::new(r"世界").unwrap()),
                     "REPL"
@@ -906,7 +970,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "Hello 世界!",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"世界").unwrap()),
                     "REPL"
@@ -918,7 +982,7 @@ mod tests {
         #[test]
         fn test_case_insensitive() {
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "HELLO world",
                     &SearchType::Pattern(Regex::new(r"(?i)hello").unwrap()),
                     "REPL"
@@ -926,7 +990,7 @@ mod tests {
                 Some("REPL world".to_string())
             );
             assert_eq!(
-                replacement_if_match(
+                ParsedFields::replacement_if_match(
                     "HELLO world",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(?i)hello").unwrap()),
                     "REPL"
