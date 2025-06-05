@@ -12,6 +12,7 @@ missing_panics_doc = "allow"
 redundant_else = "allow"
 if_not_else = "allow"
 needless_raw_string_hashes = "allow"
+bool_assert_comparison = "allow"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"

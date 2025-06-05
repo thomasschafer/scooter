@@ -2,10 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use content_inspector::{inspect, ContentType};
@@ -131,9 +128,6 @@ pub struct ParsedFields {
     // TODO: `root_dir` and `include_hidden` are duplicated across this and App
     root_dir: PathBuf,
     include_hidden: bool,
-    cancelled: Arc<AtomicBool>,
-
-    background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 }
 
 impl ParsedFields {
@@ -146,12 +140,9 @@ impl ParsedFields {
         overrides: Override,
         root_dir: PathBuf,
         include_hidden: bool,
-        cancelled: Arc<AtomicBool>,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     ) -> Self {
-        let search = if whole_word == SearchFieldValues::whole_word_default()
-            && match_case == SearchFieldValues::match_case_default()
-        {
+        let search = if !whole_word && match_case {
+            // No conversion required
             search
         } else {
             convert_regex(&search, whole_word, match_case)
@@ -162,34 +153,43 @@ impl ParsedFields {
             overrides,
             root_dir,
             include_hidden,
-            cancelled,
-            background_processing_sender,
         }
     }
 
-    pub fn search_parallel(&self) {
-        self.cancelled.store(false, Ordering::Relaxed);
+    pub fn search_parallel(
+        &self,
+        sender: &UnboundedSender<BackgroundProcessingEvent>,
+        cancelled: &AtomicBool,
+    ) {
+        cancelled.store(false, Ordering::Relaxed);
 
-        let num_threads = thread::available_parallelism()
-            .map(NonZero::get)
-            .unwrap_or(4)
-            .min(12);
-
-        self.spawn_file_walker(num_threads, || {
+        self.spawn_file_walker(cancelled, || {
             let search = self.search.clone();
             let replace = self.replace.clone();
-            let sender = self.background_processing_sender.clone();
+            let sender = sender.clone();
             Box::new(move |path| {
-                Self::search_file(&path, &search, &replace, &sender);
+                let results = Self::search_file(&path, &search, &replace);
+                if let Some(results) = results {
+                    if !results.is_empty() {
+                        // Ignore error - likely state reset, thread about to be killed
+                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+                    }
+                }
+
                 WalkState::Continue
             })
         });
     }
 
-    fn spawn_file_walker<F>(&self, num_threads: usize, mut file_handler: F)
+    fn spawn_file_walker<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
     where
         F: FnMut() -> FileVisitor + Send,
     {
+        let num_threads = thread::available_parallelism()
+            .map(NonZero::get)
+            .unwrap_or(4)
+            .min(12);
+
         let walker = WalkBuilder::new(&self.root_dir)
             .hidden(!self.include_hidden)
             .overrides(self.overrides.clone())
@@ -198,7 +198,6 @@ impl ParsedFields {
 
         std::thread::scope(|_| {
             walker.run(|| {
-                let cancelled = self.cancelled.clone();
                 let mut on_file_found = file_handler();
                 Box::new(move |result| {
                     if cancelled.load(Ordering::Relaxed) {
@@ -221,17 +220,12 @@ impl ParsedFields {
         });
     }
 
-    fn search_file(
-        path: &Path,
-        search: &SearchType,
-        replace: &str,
-        sender: &UnboundedSender<BackgroundProcessingEvent>,
-    ) {
+    fn search_file(path: &Path, search: &SearchType, replace: &str) -> Option<Vec<SearchResult>> {
         let mut file = match File::open(path) {
             Ok(f) => f,
             Err(err) => {
                 warn!("Error opening file {}: {err}", path.display());
-                return;
+                return None;
             }
         };
 
@@ -239,11 +233,11 @@ impl ParsedFields {
         let mut probe = [0u8; 8192];
         let read = file.read(&mut probe).unwrap_or(0);
         if matches!(inspect(&probe[..read]), ContentType::BINARY) {
-            return;
+            return None;
         }
         if file.seek(SeekFrom::Start(0)).is_err() {
             error!("Failed to seek file {} to start", path.display());
-            return;
+            return None;
         }
 
         let reader = BufReader::with_capacity(16384, file);
@@ -283,10 +277,7 @@ impl ParsedFields {
             }
         }
 
-        if !results.is_empty() {
-            // Ignore error - likely state reset, thread about to be killed
-            let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
-        }
+        Some(results)
     }
 
     fn is_likely_binary(path: &Path) -> bool {

@@ -1,8 +1,10 @@
 use anyhow::Error;
 use crossterm::{event::KeyEvent, style::Stylize};
+use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::{Override, OverrideBuilder};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+use regex::Regex;
 use std::{
     cmp::{max, min},
     iter::Iterator,
@@ -26,7 +28,7 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
-    search::{ParsedFields, SearchResult},
+    search::{ParsedFields, SearchResult, SearchType},
     utils::ceil_div,
 };
 
@@ -552,18 +554,16 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        match self
-            .validate_fields(&background_processing_sender, cancelled.clone())
-            .unwrap()
-        {
+        match self.validate_fields().unwrap() {
             None => {
                 self.current_screen = Screen::SearchFields;
             }
             Some(parsed_fields) => {
-                let handle = Self::update_search_results(
+                let handle = Self::spawn_update_search_results(
                     parsed_fields,
-                    background_processing_sender.clone(),
+                    &background_processing_sender,
                     self.event_sender.clone(),
+                    cancelled.clone(),
                 );
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
@@ -823,12 +823,10 @@ impl<'a> App {
             || e.downcast_ref::<fancy_regex::Error>().is_some()
     }
 
-    fn validate_fields(
-        &mut self,
-        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
-        cancelled: Arc<AtomicBool>,
-    ) -> anyhow::Result<Option<ParsedFields>> {
-        let search_pattern = match self.search_fields.search_type() {
+    fn validate_fields(&mut self) -> anyhow::Result<Option<ParsedFields>> {
+        let search_text = self.search_fields.search().text.clone();
+
+        let search_pattern = match self.validate_search_text(&search_text) {
             Ok(p) => ValidatedField::Parsed(p),
             Err(e) => {
                 if Self::is_regex_error(&e) {
@@ -855,13 +853,22 @@ impl<'a> App {
                 overrides,
                 self.directory.clone(),
                 self.include_hidden,
-                cancelled,
-                background_processing_sender.clone(),
             )))
         } else {
             self.set_popup(Popup::Error);
             Ok(None)
         }
+    }
+
+    fn validate_search_text(&mut self, search_text: &str) -> Result<SearchType, Error> {
+        let result = if self.search_fields.fixed_strings().checked {
+            SearchType::Fixed(search_text.to_string())
+        } else if self.search_fields.advanced_regex {
+            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
+        } else {
+            SearchType::Pattern(Regex::new(search_text)?)
+        };
+        Ok(result)
     }
 
     fn add_overrides(
@@ -914,14 +921,17 @@ impl<'a> App {
         }
     }
 
-    pub fn update_search_results(
+    pub fn spawn_update_search_results(
         parsed_fields: ParsedFields,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
+        cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
+        let background_processing_sender = background_processing_sender.clone();
         tokio::spawn(async move {
+            let sender_clone = background_processing_sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.search_parallel();
+                parsed_fields.search_parallel(&sender_clone, &cancelled);
             });
 
             let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number

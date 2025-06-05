@@ -1,8 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::{
-    search::SearchType, CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields,
-    TextField,
-};
+use scooter::{CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields, TextField};
 
 #[test]
 fn test_text_field_operations() {
@@ -120,20 +117,15 @@ fn test_search_fields() {
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
     assert!(search_fields.fixed_strings().checked);
 
-    let search_type = search_fields.search_type().unwrap();
-    match search_type {
-        SearchType::Fixed(s) => assert_eq!(s, "test search"),
-        _ => panic!("Expected Fixed, got {search_type:?}"),
-    }
+    assert_eq!(search_fields.search().text, "test search");
+    assert_eq!(search_fields.fixed_strings().checked, true);
 
     search_fields
         .highlighted_field_mut()
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
-    let search_type = search_fields.search_type().unwrap();
-    match search_type {
-        SearchType::Pattern(_) => {}
-        _ => panic!("Expected Pattern, got {search_type:?}"),
-    }
+
+    assert_eq!(search_fields.search().text, "test search");
+    assert_eq!(search_fields.fixed_strings().checked, false);
 }
 
 #[test]

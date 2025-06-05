@@ -1,12 +1,10 @@
-use fancy_regex::Regex as FancyRegex;
 use ratatui::{
     crossterm::event::{KeyCode, KeyModifiers},
     text::Text,
 };
-use regex::Regex;
 use std::iter::Iterator;
 
-use crate::{app::AppError, search::SearchType};
+use crate::app::AppError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FieldError {
@@ -518,19 +516,6 @@ impl SearchFields {
                 })
             })
             .collect::<Vec<_>>()
-    }
-
-    pub fn search_type(&self) -> anyhow::Result<SearchType> {
-        let search = self.search();
-        let search_text = search.text();
-        let result = if self.fixed_strings().checked {
-            SearchType::Fixed(search_text.to_string())
-        } else if self.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
-        } else {
-            SearchType::Pattern(Regex::new(search_text)?)
-        };
-        Ok(result)
     }
 }
 

@@ -396,7 +396,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::bool_assert_comparison)]
     fn test_search_field_values_from() {
         let args = Args {
             search_text: Some("test_search".to_string()),
@@ -434,7 +433,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::bool_assert_comparison)]
     fn test_search_field_values_from_defaults() {
         let args = default_args();
         let values = SearchFieldValues::from(&args);
