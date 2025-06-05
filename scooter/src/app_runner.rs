@@ -1,34 +1,45 @@
 use crossterm::event::{self, Event as CrosstermEvent};
+use fancy_regex::Regex as FancyRegex;
 use futures::Stream;
 use futures::StreamExt;
+use ignore::overrides::Override;
+use ignore::overrides::OverrideBuilder;
+use ignore::WalkState;
 use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use regex::Regex;
+use scooter_core::search::FileSearcher;
+use scooter_core::search::SearchType;
 use std::env;
+use std::env::current_dir;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::logging::DEFAULT_LOG_LEVEL;
+use crate::utils;
 use crate::{
-    app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
+    app::{App, AppError, AppRunConfig, Event, EventHandlingResult, ValidatedField},
     fields::SearchFieldValues,
     logging::setup_logging,
     tui::Tui,
-    utils::validate_directory,
+    utils::validate_dir_or_default,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppConfig<'a> {
-    pub directory: Option<String>,
+    pub directory: Option<&'a str>,
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
@@ -138,13 +149,10 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     ) -> anyhow::Result<Self> {
         setup_logging(config.log_level)?;
 
-        let directory = match config.directory {
-            None => None,
-            Some(d) => Some(validate_directory(&d)?),
-        };
+        let directory = validate_dir_or_default(config.directory)?;
 
         let (app, event_receiver) = App::new_with_receiver(
-            directory,
+            &directory,
             &config.search_field_values,
             &config.app_run_config,
         );
@@ -349,6 +357,101 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn parse_search_text(
+    search_text: &str,
+    fixed_strings: bool,
+    advanced_regex: bool,
+) -> anyhow::Result<SearchType> {
+    let result = if fixed_strings {
+        SearchType::Fixed(search_text.to_string())
+    } else if advanced_regex {
+        SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
+    } else {
+        SearchType::Pattern(Regex::new(search_text)?)
+    };
+    Ok(result)
+}
+
+fn parse_overrides(
+    dir: &Path,
+    include_globs: &str,
+    exclude_globs: &str,
+) -> anyhow::Result<ValidatedField<Override>> {
+    let mut overrides = OverrideBuilder::new(dir);
+    let mut success = true;
+
+    let include_res = utils::add_overrides(&mut overrides, include_globs, "");
+    if let Err(e) = include_res {
+        // TODO(no-tui): log error
+        success = false;
+    }
+
+    let exlude_res = utils::add_overrides(&mut overrides, exclude_globs, "!");
+    if let Err(e) = exlude_res {
+        // TODO(no-tui): log error
+        success = false;
+    }
+
+    if success {
+        let overrides = overrides.build()?;
+        Ok(ValidatedField::Parsed(overrides))
+    } else {
+        Ok(ValidatedField::Error)
+    }
+}
+
 pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
+    let search_pattern = match parse_search_text(
+        &app_config.search_field_values.search.value,
+        app_config.search_field_values.fixed_strings.value,
+        app_config.app_run_config.advanced_regex,
+    ) {
+        Ok(p) => ValidatedField::Parsed(p),
+        Err(e) => {
+            if utils::is_regex_error(&e) {
+                // TODO(no-tui): exit and log error
+                ValidatedField::Error
+            } else {
+                return Err(e);
+            }
+        }
+    };
+
+    let directory = validate_dir_or_default(app_config.directory)?;
+
+    let overrides = parse_overrides(
+        &directory,
+        app_config.search_field_values.include_files.value,
+        app_config.search_field_values.exclude_files.value,
+    )?;
+
+    let searcher =
+        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
+            (search_pattern, overrides)
+        {
+            FileSearcher::new(
+                search_pattern,
+                app_config.search_field_values.replace.value.to_owned(),
+                app_config.search_field_values.match_whole_word.value,
+                app_config.search_field_values.match_case.value,
+                overrides,
+                directory,
+                app_config.app_run_config.include_hidden,
+            )
+        } else {
+            // TODO(no-tui): log error
+            todo!()
+        };
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    searcher.walk_files(&cancelled, || {
+        Box::new(move |results| {
+            // TODO(no-tui): Replace in file
+            WalkState::Continue
+        })
+    });
+
+    // TODO(no-tui): log out results
+
     todo!()
 }

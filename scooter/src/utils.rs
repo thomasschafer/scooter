@@ -1,5 +1,7 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
+use ignore::overrides::OverrideBuilder;
 use std::{
+    env::current_dir,
     fs::File,
     io::{self, BufRead, BufReader, Lines},
     num::NonZeroUsize,
@@ -50,15 +52,24 @@ where
     result
 }
 
-pub fn validate_directory(dir_str: &str) -> Result<PathBuf> {
-    let path = Path::new(dir_str);
-    if path.exists() {
-        Ok(path.to_path_buf())
-    } else {
-        Err(anyhow!(
-            "Directory '{}' does not exist. Please provide a valid directory path.",
-            dir_str
-        ))
+pub fn validate_dir_or_default(dir: Option<&str>) -> Result<PathBuf> {
+    match dir {
+        Some(dir_str) => {
+            let path = Path::new(dir_str);
+            if path.exists() {
+                Ok(path.to_path_buf())
+            } else {
+                Err(anyhow!(
+                    "Directory '{}' does not exist. Please provide a valid directory path.",
+                    dir_str
+                ))
+            }
+        }
+        None => {
+            // TODO: there must be a better way of doing this
+            let dir = current_dir()?;
+            Ok(dir)
+        }
     }
 }
 
@@ -314,6 +325,24 @@ pub fn largest_range_centered_on(
     Ok((cur_start, cur_end))
 }
 
+pub fn is_regex_error(e: &Error) -> bool {
+    e.downcast_ref::<regex::Error>().is_some() || e.downcast_ref::<fancy_regex::Error>().is_some()
+}
+
+pub fn add_overrides(
+    overrides: &mut OverrideBuilder,
+    files: &str,
+    prefix: &str,
+) -> anyhow::Result<()> {
+    for file in files.split(',') {
+        let file = file.trim();
+        if !file.is_empty() {
+            overrides.add(&format!("{prefix}{file}"))?;
+        }
+    }
+    Ok(())
+}
+
 #[macro_export]
 macro_rules! test_with_both_regex_modes {
     ($name:ident, $test_fn:expr) => {
@@ -477,7 +506,7 @@ mod tests {
         let temp_dir = setup_test_dir();
         let dir_path = temp_dir.path().to_str().unwrap();
 
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), PathBuf::from(dir_path));
     }
@@ -485,7 +514,7 @@ mod tests {
     #[test]
     fn test_validate_directory_does_not_exist() {
         let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
-        let result = validate_directory(nonexistent_path);
+        let result = validate_dir_or_default(Some(nonexistent_path));
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -500,7 +529,7 @@ mod tests {
         fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
 
         let dir_path = nested_dir.to_str().unwrap();
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), nested_dir);
@@ -513,7 +542,7 @@ mod tests {
         fs::create_dir(&special_dir).expect("Failed to create directory with special characters");
 
         let dir_path = special_dir.to_str().unwrap();
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);

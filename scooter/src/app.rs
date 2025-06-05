@@ -1,4 +1,3 @@
-use anyhow::Error;
 use crossterm::{event::KeyEvent, style::Stylize};
 use fancy_regex::Regex as FancyRegex;
 use ignore::{
@@ -31,7 +30,7 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
-    utils::ceil_div,
+    utils::{self, ceil_div},
 };
 
 use scooter_core::search::{FileSearcher, SearchResult, SearchType};
@@ -375,7 +374,8 @@ impl Screen {
     }
 }
 
-enum ValidatedField<T> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValidatedField<T> {
     Parsed(T),
     Error,
 }
@@ -431,17 +431,12 @@ pub struct App {
 
 impl<'a> App {
     fn new(
-        directory: Option<PathBuf>,
+        directory: PathBuf,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
-
-        let directory = match directory {
-            Some(d) => d,
-            None => current_dir().unwrap(),
-        };
 
         let search_fields = SearchFields::with_values(
             search_field_values,
@@ -470,7 +465,7 @@ impl<'a> App {
     }
 
     pub fn new_with_receiver(
-        directory: Option<PathBuf>,
+        directory: PathBuf,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
     ) -> (Self, UnboundedReceiver<Event>) {
@@ -507,7 +502,7 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            Some(self.directory.clone()),
+            self.directory.clone(),
             &SearchFieldValues::default(),
             self.event_sender.clone(),
             &AppRunConfig {
@@ -822,18 +817,13 @@ impl<'a> App {
         }
     }
 
-    fn is_regex_error(e: &Error) -> bool {
-        e.downcast_ref::<regex::Error>().is_some()
-            || e.downcast_ref::<fancy_regex::Error>().is_some()
-    }
-
     fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
         let search_text = self.search_fields.search().text.clone();
 
         let search_pattern = match self.parse_search_text(&search_text) {
             Ok(p) => ValidatedField::Parsed(p),
             Err(e) => {
-                if Self::is_regex_error(&e) {
+                if utils::is_regex_error(&e) {
                     self.search_fields
                         .search_mut()
                         .set_error("Couldn't parse regex".to_owned(), e.to_string());
@@ -864,7 +854,7 @@ impl<'a> App {
         }
     }
 
-    fn parse_search_text(&mut self, search_text: &str) -> Result<SearchType, Error> {
+    fn parse_search_text(&mut self, search_text: &str) -> anyhow::Result<SearchType> {
         let result = if self.search_fields.fixed_strings().checked {
             SearchType::Fixed(search_text.to_string())
         } else if self.search_fields.advanced_regex {
@@ -875,25 +865,11 @@ impl<'a> App {
         Ok(result)
     }
 
-    fn add_overrides(
-        overrides: &mut OverrideBuilder,
-        files: &str,
-        prefix: &str,
-    ) -> anyhow::Result<()> {
-        for file in files.split(',') {
-            let file = file.trim();
-            if !file.is_empty() {
-                overrides.add(&format!("{prefix}{file}"))?;
-            }
-        }
-        Ok(())
-    }
-
     fn parse_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
         let mut success = true;
 
-        let include_res = Self::add_overrides(
+        let include_res = utils::add_overrides(
             &mut overrides,
             self.search_fields.include_files().text(),
             "",
@@ -905,7 +881,7 @@ impl<'a> App {
             success = false;
         }
 
-        let exlude_res = Self::add_overrides(
+        let exlude_res = utils::add_overrides(
             &mut overrides,
             self.search_fields.exclude_files().text(),
             "!",
@@ -1312,7 +1288,7 @@ mod tests {
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(
-            None,
+            current_dir().unwrap(),
             &SearchFieldValues::default(),
             event_sender,
             &AppRunConfig::default(),

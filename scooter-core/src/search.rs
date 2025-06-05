@@ -86,6 +86,7 @@ impl FileSearcher {
     pub fn new(
         search: SearchType,
         replace: String,
+        // TODO: two bools in a row is a footgun
         whole_word: bool,
         match_case: bool,
         overrides: Override,
