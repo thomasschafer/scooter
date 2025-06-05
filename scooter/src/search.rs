@@ -3,7 +3,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
+use std::thread::{self};
 
 use content_inspector::{inspect, ContentType};
 use fancy_regex::Regex as FancyRegex;
@@ -11,9 +11,8 @@ use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkState};
 use log::{error, warn};
 use regex::Regex;
-use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{app::BackgroundProcessingEvent, fields::SearchFieldValues, replace::ReplaceResult};
+use crate::{fields::SearchFieldValues, replace::ReplaceResult};
 
 use scooter_core::line_reader::{BufReadExt, LineEnding};
 
@@ -118,16 +117,16 @@ fn convert_regex(search: &SearchType, whole_word: bool, match_case: bool) -> Sea
     SearchType::PatternAdvanced(fancy_regex)
 }
 
-type FileVisitor = Box<dyn FnMut(PathBuf) -> WalkState + Send>;
+type FileVisitor = Box<dyn FnMut(Vec<SearchResult>) -> WalkState + Send>;
 
 #[derive(Clone, Debug)]
 pub struct ParsedFields {
-    search: SearchType,
-    replace: String,
-    overrides: Override,
+    pub search: SearchType,
+    pub replace: String,
+    pub overrides: Override,
     // TODO: `root_dir` and `include_hidden` are duplicated across this and App
-    root_dir: PathBuf,
-    include_hidden: bool,
+    pub root_dir: PathBuf,
+    pub include_hidden: bool,
 }
 
 impl ParsedFields {
@@ -156,35 +155,12 @@ impl ParsedFields {
         }
     }
 
-    pub fn search_parallel(
-        &self,
-        sender: &UnboundedSender<BackgroundProcessingEvent>,
-        cancelled: &AtomicBool,
-    ) {
-        cancelled.store(false, Ordering::Relaxed);
-
-        self.spawn_file_walker(cancelled, || {
-            let search = self.search.clone();
-            let replace = self.replace.clone();
-            let sender = sender.clone();
-            Box::new(move |path| {
-                let results = Self::search_file(&path, &search, &replace);
-                if let Some(results) = results {
-                    if !results.is_empty() {
-                        // Ignore error - likely state reset, thread about to be killed
-                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
-                    }
-                }
-
-                WalkState::Continue
-            })
-        });
-    }
-
-    fn spawn_file_walker<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
+    pub fn walk_files<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
     where
         F: FnMut() -> FileVisitor + Send,
     {
+        cancelled.store(false, Ordering::Relaxed);
+
         let num_threads = thread::available_parallelism()
             .map(NonZero::get)
             .unwrap_or(4)
@@ -196,27 +172,30 @@ impl ParsedFields {
             .threads(num_threads)
             .build_parallel();
 
-        std::thread::scope(|_| {
-            walker.run(|| {
-                let mut on_file_found = file_handler();
-                Box::new(move |result| {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return WalkState::Quit;
-                    }
+        walker.run(|| {
+            let mut on_file_found = file_handler();
+            Box::new(move |result| {
+                if cancelled.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
+                }
 
-                    let Ok(entry) = result else {
-                        return WalkState::Continue;
-                    };
+                let Ok(entry) = result else {
+                    return WalkState::Continue;
+                };
 
-                    #[allow(clippy::collapsible_if)]
-                    if entry.file_type().is_some_and(|ft| ft.is_file())
-                        && !Self::is_likely_binary(entry.path())
-                    {
-                        return on_file_found(entry.path().to_owned());
+                #[allow(clippy::collapsible_if)]
+                if entry.file_type().is_some_and(|ft| ft.is_file())
+                    && !Self::is_likely_binary(entry.path())
+                {
+                    let results = Self::search_file(entry.path(), &self.search, &self.replace);
+                    if let Some(results) = results {
+                        if !results.is_empty() {
+                            return on_file_found(results);
+                        }
                     }
-                    WalkState::Continue
-                })
-            });
+                }
+                WalkState::Continue
+            })
         });
     }
 

@@ -1,7 +1,10 @@
 use anyhow::Error;
 use crossterm::{event::KeyEvent, style::Stylize};
 use fancy_regex::Regex as FancyRegex;
-use ignore::overrides::{Override, OverrideBuilder};
+use ignore::{
+    overrides::{Override, OverrideBuilder},
+    WalkState,
+};
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use regex::Regex;
@@ -826,7 +829,7 @@ impl<'a> App {
     fn validate_fields(&mut self) -> anyhow::Result<Option<ParsedFields>> {
         let search_text = self.search_fields.search().text.clone();
 
-        let search_pattern = match self.validate_search_text(&search_text) {
+        let search_pattern = match self.parse_search_text(&search_text) {
             Ok(p) => ValidatedField::Parsed(p),
             Err(e) => {
                 if Self::is_regex_error(&e) {
@@ -840,7 +843,7 @@ impl<'a> App {
             }
         };
 
-        let overrides = self.validate_overrides()?;
+        let overrides = self.parse_overrides()?;
 
         if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
             (search_pattern, overrides)
@@ -860,7 +863,7 @@ impl<'a> App {
         }
     }
 
-    fn validate_search_text(&mut self, search_text: &str) -> Result<SearchType, Error> {
+    fn parse_search_text(&mut self, search_text: &str) -> Result<SearchType, Error> {
         let result = if self.search_fields.fixed_strings().checked {
             SearchType::Fixed(search_text.to_string())
         } else if self.search_fields.advanced_regex {
@@ -885,7 +888,7 @@ impl<'a> App {
         Ok(())
     }
 
-    fn validate_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
+    fn parse_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
         let mut overrides = OverrideBuilder::new(self.directory.clone());
         let mut success = true;
 
@@ -923,15 +926,23 @@ impl<'a> App {
 
     pub fn spawn_update_search_results(
         parsed_fields: ParsedFields,
-        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
+        sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let background_processing_sender = background_processing_sender.clone();
+        let sender = sender.clone();
         tokio::spawn(async move {
-            let sender_clone = background_processing_sender.clone();
+            let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.search_parallel(&sender_clone, &cancelled);
+                parsed_fields.walk_files(&cancelled, || {
+                    let sender = sender_for_search.clone();
+                    Box::new(move |results| {
+                        // Ignore error - likely state reset, thread about to be killed
+                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+
+                        WalkState::Continue
+                    })
+                });
             });
 
             let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
@@ -951,9 +962,7 @@ impl<'a> App {
                 }
             }
 
-            if let Err(err) =
-                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
-            {
+            if let Err(err) = sender.send(BackgroundProcessingEvent::SearchCompleted) {
                 // Log and ignore error: likely have gone back to previous screen
                 warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
