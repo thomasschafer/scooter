@@ -2,16 +2,18 @@ use anyhow::bail;
 use app::AppRunConfig;
 use clap::Parser;
 use log::LevelFilter;
-use logging::DEFAULT_LOG_LEVEL;
 use std::str::FromStr;
 
-use app_runner::{run_app_headless, run_app_tui, AppConfig};
+use app_runner::{run_app_tui, AppConfig};
 use fields::{FieldValue, SearchFieldValues};
+use headless::run_headless;
+use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 
 mod app;
 mod app_runner;
 mod config;
 mod fields;
+mod headless;
 mod logging;
 mod replace;
 mod tui;
@@ -190,8 +192,9 @@ impl<'a> From<&'a Args> for SearchFieldValues<'a> {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = AppConfig::try_from(&args)?;
+    setup_logging(config.log_level)?;
     if args.no_tui {
-        run_app_headless(config)
+        run_headless(config.try_into()?)
     } else {
         run_app_tui(config).await
     }

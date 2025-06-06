@@ -202,7 +202,7 @@ impl FileSearcher {
         for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {
             line_number += 1; // Ensure line-number is 1-indexed
 
-            let (line, line_ending) = match line_result {
+            let (line_bytes, line_ending) = match line_result {
                 Ok(l) => l,
                 Err(err) => {
                     read_errors += 1;
@@ -217,17 +217,19 @@ impl FileSearcher {
                 }
             };
 
-            if let Some(replacement) = Self::replacement_if_match(&line, search, replace) {
-                let result = SearchResult {
-                    path: path.to_path_buf(),
-                    line_number,
-                    line,
-                    line_ending,
-                    replacement,
-                    included: true,
-                    replace_result: None,
-                };
-                results.push(result);
+            if let Ok(line) = String::from_utf8(line_bytes) {
+                if let Some(replacement) = Self::replacement_if_match(&line, search, replace) {
+                    let result = SearchResult {
+                        path: path.to_path_buf(),
+                        line_number,
+                        line,
+                        line_ending,
+                        replacement,
+                        included: true,
+                        replace_result: None,
+                    };
+                    results.push(result);
+                }
             }
         }
 

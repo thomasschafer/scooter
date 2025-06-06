@@ -1,4 +1,5 @@
 use crossterm::event::KeyEvent;
+use crossterm::style::Stylize as _;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use std::{
@@ -230,13 +231,9 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
 pub fn format_replacement_results(
     num_successes: usize,
     num_ignored: Option<usize>,
-    errors: &[SearchResult],
+    errors: Option<&[SearchResult]>,
 ) -> String {
-    use crossterm::style::Stylize;
-
-    let errors_display = if errors.is_empty() {
-        String::new()
-    } else {
+    let errors_display = if let Some(errors) = errors {
         #[allow(clippy::format_collect)]
         errors
             .iter()
@@ -245,17 +242,23 @@ pub fn format_replacement_results(
                 format!("\n{path}:\n  {}", error.red())
             })
             .collect::<String>()
+    } else {
+        String::new()
     };
 
     let maybe_ignored_str = match num_ignored {
-        Some(n) => format!("Ignored: {n}\n"),
+        Some(n) => format!("\nIgnored: {n}"),
+        None => "".into(),
+    };
+    let maybe_errors_str = match errors {
+        Some(errors) => format!(
+            "\nErrors: {num_errors}{errors_display}",
+            num_errors = errors.len()
+        ),
         None => "".into(),
     };
 
-    format!(
-        "Successful replacements: {num_successes}\n{maybe_ignored_str}Errors: {num_errors}{errors_display}",
-        num_errors = errors.len(),
-    )
+    format!("Successful replacements: {num_successes}{maybe_ignored_str}{maybe_errors_str}",)
 }
 
 #[cfg(test)]
@@ -566,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_format_replacement_results_no_errors() {
-        let result = format_replacement_results(5, Some(2), &[]);
+        let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(result, "Successful replacements: 5\nIgnored: 2\nErrors: 0");
     }
 
@@ -581,7 +584,7 @@ mod tests {
             Some(ReplaceResult::Error("Test error".to_string())),
         );
 
-        let result = format_replacement_results(3, Some(1), &[error_result]);
+        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
         assert!(result.contains("Successful replacements: 3"));
         assert!(result.contains("Ignored: 1"));
         assert!(result.contains("Errors: 1"));
@@ -591,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
-        let result = format_replacement_results(7, None, &[]);
+        let result = format_replacement_results(7, None, Some(&[]));
         assert_eq!(result, "Successful replacements: 7\nErrors: 0");
         assert!(!result.contains("Ignored"));
     }

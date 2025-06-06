@@ -650,7 +650,7 @@ impl<'a> App {
                     let results = format_replacement_results(
                         replace_state.num_successes,
                         Some(replace_state.num_ignored),
-                        &replace_state.errors,
+                        Some(&replace_state.errors),
                     );
                     EventHandlingResult::Exit(Some(results))
                 } else {

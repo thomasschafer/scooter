@@ -44,11 +44,11 @@ pub fn replace_in_file(results: &mut [SearchResult]) -> anyhow::Result<()> {
         let mut writer = BufWriter::new(output);
 
         for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {
-            let (mut line, line_ending) = line_result?;
             line_number += 1; // Ensure line-number is 1-indexed
+            let (mut line, line_ending) = line_result?;
             if let Some(res) = line_map.get_mut(&line_number) {
-                if line == res.line {
-                    line.clone_from(&res.replacement);
+                if line == res.line.as_bytes() {
+                    line = res.replacement.as_bytes().to_vec();
                     res.replace_result = Some(ReplaceResult::Success);
                 } else {
                     res.replace_result = Some(ReplaceResult::Error(
@@ -56,8 +56,8 @@ pub fn replace_in_file(results: &mut [SearchResult]) -> anyhow::Result<()> {
                     ));
                 }
             }
-            line.push_str(line_ending.as_str());
-            writer.write_all(line.as_bytes())?;
+            line.extend(line_ending.as_bytes());
+            writer.write_all(&line)?;
         }
 
         writer.flush()?;

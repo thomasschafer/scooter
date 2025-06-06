@@ -1,40 +1,30 @@
-use anyhow::bail;
 use crossterm::event::{self, Event as CrosstermEvent};
 use futures::Stream;
 use futures::StreamExt;
-use ignore::WalkState;
 use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
-use scooter_core::search::SearchResult;
 use std::env;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc;
-use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::logging::DEFAULT_LOG_LEVEL;
 use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
-    logging::setup_logging,
-    replace::{calculate_statistics, format_replacement_results},
+    logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
     utils::validate_dir_or_default,
 };
 
-use crate::validation::{
-    validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
-};
+use crate::validation::SearchConfiguration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -166,8 +156,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
-        setup_logging(config.log_level)?;
-
         let directory = validate_dir_or_default(config.directory)?;
 
         let (app, event_receiver) = App::new_with_receiver(
@@ -373,47 +361,5 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     if let Some(results) = results_to_print {
         println!("{results}");
     }
-    Ok(())
-}
-
-pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
-    let mut error_handler = SimpleErrorHandler::new();
-    let search_config = app_config.try_into()?;
-    let result = validate_search_configuration(search_config, &mut error_handler)?;
-    let searcher = match result {
-        ValidationResult::Success(searcher) => searcher,
-        ValidationResult::ValidationErrors => {
-            bail!("{}", error_handler.errors_str().unwrap());
-        }
-    };
-
-    let cancelled = Arc::new(AtomicBool::new(false));
-
-    let (results_sender, results_receiver) = mpsc::channel::<Vec<SearchResult>>();
-
-    let sender_clone = results_sender.clone();
-    searcher.walk_files(&cancelled, move || {
-        let sender = sender_clone.clone();
-        Box::new(move |mut results| {
-            if let Err(file_err) = scooter_core::replace_in_file(&mut results) {
-                println!("Found error when performing replacement: {file_err}");
-            }
-            if sender.send(results).is_err() {
-                // Channel closed, likely due to early termination
-                WalkState::Quit
-            } else {
-                WalkState::Continue
-            }
-        })
-    });
-
-    drop(results_sender);
-
-    let all_results = results_receiver.into_iter().flatten();
-    let stats = calculate_statistics(all_results);
-
-    let results_output = format_replacement_results(stats.num_successes, None, &stats.errors);
-    println!("{results_output}");
-
     Ok(())
 }

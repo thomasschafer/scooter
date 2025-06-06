@@ -1,5 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::{CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields, TextField};
+use scooter::fields::{
+    CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields, TextField,
+};
 
 #[test]
 fn test_text_field_operations() {

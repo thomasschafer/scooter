@@ -1,5 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
+use scooter::app::EventHandlingResult;
+use scooter::app::Popup;
+use scooter::app::Screen;
 use scooter_core::line_reader::LineEnding;
 use serial_test::serial;
 use std::env::current_dir;
@@ -15,10 +18,10 @@ use tempfile::TempDir;
 use tokio::sync::mpsc;
 
 use scooter::{
+    app::{App, AppError, AppRunConfig, SearchCompleteState, SearchInProgressState, SearchState},
+    fields::{FieldValue, SearchFieldValues, SearchFields},
     replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
-    test_with_both_regex_modes, App, AppError, AppRunConfig, EventHandlingResult, FieldValue,
-    Popup, Screen, SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState,
-    SearchState,
+    test_with_both_regex_modes,
 };
 
 use scooter_core::search::SearchResult;
