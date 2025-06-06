@@ -358,6 +358,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+// TODO: refactor with TUI parsing/validation
 fn parse_search_text(
     search_text: &str,
     fixed_strings: bool,
@@ -373,6 +374,7 @@ fn parse_search_text(
     Ok(result)
 }
 
+// TODO: refactor with TUI parsing/validation
 fn parse_overrides(
     dir: &Path,
     include_globs: &str,
@@ -389,9 +391,9 @@ fn parse_overrides(
     overrides.build().map_err(Into::into)
 }
 
-pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
+pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let search_pattern = parse_search_text(
-        &app_config.search_field_values.search.value,
+        app_config.search_field_values.search.value,
         app_config.search_field_values.fixed_strings.value,
         app_config.app_run_config.advanced_regex,
     )
@@ -424,10 +426,13 @@ pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let cancelled = Arc::new(AtomicBool::new(false));
 
     searcher.walk_files(&cancelled, || {
-        Box::new(move |results| {
-            let path = results[0].path;
-            if let Err(file_err) = scooter_core::replace_in_file(&path, &mut results) {
-                // TODO: log error
+        Box::new(move |mut results| {
+            match scooter_core::replace_in_file(&mut results) {
+                Ok(()) => {
+                    // TODO: increment
+                }
+                // TODO: test this
+                Err(file_err) => println!("Found error when performing replacement: {file_err}"),
             }
             WalkState::Continue
         })

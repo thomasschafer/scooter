@@ -1355,6 +1355,7 @@ dependencies = [
 name = "scooter-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "content_inspector",
  "fancy-regex",
  "ignore",

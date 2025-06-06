@@ -1130,6 +1130,8 @@ mod tests {
     use rand::Rng;
     use std::{env::current_dir, path::Path};
 
+    use crate::replace::ReplaceStats;
+
     use super::*;
     use scooter_core::line_reader::LineEnding;
 
@@ -1303,20 +1305,18 @@ mod tests {
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) =
+            let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results, num_ignored)
+            replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
 
         assert_eq!(
             stats,
-            ReplaceState {
+            ReplaceStats {
                 num_successes: 3,
-                num_ignored: 0,
                 errors: vec![],
-                replacement_errors_pos: 0,
             }
         );
     }
@@ -1332,20 +1332,18 @@ mod tests {
             ignored_result(),
         ]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) =
+            let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results, num_ignored)
+            replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
 
         assert_eq!(
             stats,
-            ReplaceState {
+            ReplaceStats {
                 num_successes: 2,
-                num_ignored: 2,
                 errors: vec![error_result],
-                replacement_errors_pos: 0,
             }
         );
     }

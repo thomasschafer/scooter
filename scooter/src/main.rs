@@ -190,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = AppConfig::try_from(&args)?;
     if args.no_tui {
-        run_app_headless(config).await
+        run_app_headless(config)
     } else {
         run_app_tui(config).await
     }
