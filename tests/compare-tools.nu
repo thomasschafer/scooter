@@ -80,7 +80,7 @@ def get_tools [scooter_binary: string, search_term: string, replace_term: string
             command: $"($scooter_binary) -N -s '($search_term)' -r '($replace_term)'",
         },
         {
-            name: "rg + sd",
+            name: "ripgrep + sd",
             command: $"rg -l ($search_term) | xargs sd '($search_term)' '($replace_term)'",
         },
         {
