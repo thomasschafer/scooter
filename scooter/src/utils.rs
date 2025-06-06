@@ -3,7 +3,7 @@ use ignore::overrides::OverrideBuilder;
 use std::{
     env::current_dir,
     fs::File,
-    io::{self, BufRead, BufReader, Lines},
+    io::{self, BufReader},
     num::NonZeroUsize,
     ops::{Add, Div, Mul, Rem},
     path::{Path, PathBuf},
@@ -13,6 +13,8 @@ use syntect::{
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
 };
+
+use scooter_core::line_reader::{BufReadExt, LinesSplitEndings};
 
 pub fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
@@ -96,21 +98,43 @@ pub fn read_lines_range(
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
+    let mut lines = reader.lines_with_endings();
 
-    let lines = reader
-        .lines()
-        .enumerate()
-        .skip(start)
-        .take(end - start + 1)
-        .map(|(idx, line)| (idx, line.unwrap()));
+    // Skip lines before the start index
+    let mut current_idx = 0;
+    while current_idx < start {
+        if lines.next().is_none() {
+            // EOF, return empty iterator
+            return Ok(Vec::new().into_iter());
+        }
+        current_idx += 1;
+    }
 
-    Ok(lines)
+    // Read lines from start to end (inclusive)
+    let mut result = Vec::new();
+    while current_idx <= end {
+        match lines.next() {
+            Some(Ok((content, _ending))) => {
+                let line = String::from_utf8_lossy(&content).into_owned();
+                result.push((current_idx, line));
+                current_idx += 1;
+            }
+            Some(Err(e)) => {
+                return Err(e);
+            }
+            None => {
+                break; // EOF
+            }
+        }
+    }
+
+    Ok(result.into_iter())
 }
 
 pub type HighlightedLine = Vec<(Option<Style>, String)>;
 
 struct HighlightedLinesIterator<'a> {
-    lines: Lines<BufReader<File>>,
+    lines: LinesSplitEndings<BufReader<File>>,
     highlighter: HighlightLines<'a>,
     syntax_set: &'a SyntaxSet,
     current_idx: usize,
@@ -138,8 +162,9 @@ impl<'a> HighlightedLinesIterator<'a> {
 
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let mut lines = reader.lines();
+        let mut lines = reader.lines_with_endings();
 
+        // Skip lines if we're not doing full highlighting
         if !full_highlighting {
             for _ in 0..start_idx {
                 if lines.next().is_none() {
@@ -174,7 +199,7 @@ impl Iterator for HighlightedLinesIterator<'_> {
             }
         }
 
-        for line_result in self.lines.by_ref() {
+        loop {
             let idx = self.current_idx;
             self.current_idx += 1;
 
@@ -183,8 +208,11 @@ impl Iterator for HighlightedLinesIterator<'_> {
                 "Should have skipped early lines before iteration"
             );
 
-            match line_result {
-                Ok(line) => {
+            match self.lines.next() {
+                Some(Ok((content, _ending))) => {
+                    // Convert to UTF-8 lossy, which replaces invalid sequences with the � character
+                    let line = String::from_utf8_lossy(&content).into_owned();
+
                     let highlighted_res = self.highlighter.highlight_line(&line, self.syntax_set);
                     if let Err(ref e) = highlighted_res {
                         log::error!("Highlighting error at line {idx}: {e}");
@@ -205,13 +233,13 @@ impl Iterator for HighlightedLinesIterator<'_> {
                     };
                     return Some((idx, highlighted));
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     log::error!("Error reading line {}: {e}", self.current_idx);
                     return None;
                 }
+                None => return None, // EOF
             }
         }
-        None
     }
 }
 

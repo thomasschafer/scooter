@@ -30,7 +30,6 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<()> {
     searcher.walk_files(&cancelled, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
-            log::error!("results: {results:?}");
             if let Err(file_err) = scooter_core::replace_in_file(&mut results) {
                 log::error!("Found error when performing replacement: {file_err}");
             }
