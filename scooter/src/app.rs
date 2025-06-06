@@ -16,7 +16,6 @@ use std::{
     },
 };
 use std::{
-    env::current_dir,
     mem,
     path::PathBuf,
     time::{Duration, Instant},
@@ -1129,7 +1128,7 @@ impl<'a> App {
 #[cfg(test)]
 mod tests {
     use rand::Rng;
-    use std::path::Path;
+    use std::{env::current_dir, path::Path};
 
     use super::*;
     use scooter_core::line_reader::LineEnding;

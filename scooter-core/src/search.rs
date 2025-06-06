@@ -128,6 +128,7 @@ impl FileSearcher {
         SearchType::PatternAdvanced(fancy_regex)
     }
 
+    // TODO: document
     pub fn walk_files<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
     where
         F: FnMut() -> FileVisitor + Send,
@@ -172,6 +173,7 @@ impl FileSearcher {
         });
     }
 
+    // TODO: return result, not option
     fn search_file(path: &Path, search: &SearchType, replace: &str) -> Option<Vec<SearchResult>> {
         let mut file = match File::open(path) {
             Ok(f) => f,

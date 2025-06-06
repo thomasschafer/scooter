@@ -52,24 +52,19 @@ where
     result
 }
 
-pub fn validate_dir_or_default(dir: Option<&str>) -> Result<PathBuf> {
+pub fn validate_dir_or_default(dir: Option<String>) -> Result<PathBuf> {
     match dir {
         Some(dir_str) => {
-            let path = Path::new(dir_str);
+            let path = Path::new(&dir_str);
             if path.exists() {
                 Ok(path.to_path_buf())
             } else {
                 Err(anyhow!(
-                    "Directory '{}' does not exist. Please provide a valid directory path.",
-                    dir_str
+                    "Directory '{dir_str}' does not exist. Please provide a valid directory path.",
                 ))
             }
         }
-        None => {
-            // TODO: there must be a better way of doing this
-            let dir = current_dir()?;
-            Ok(dir)
-        }
+        None => Ok(current_dir()?),
     }
 }
 
@@ -506,7 +501,7 @@ mod tests {
         let temp_dir = setup_test_dir();
         let dir_path = temp_dir.path().to_str().unwrap();
 
-        let result = validate_dir_or_default(Some(dir_path));
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), PathBuf::from(dir_path));
     }
@@ -514,7 +509,7 @@ mod tests {
     #[test]
     fn test_validate_directory_does_not_exist() {
         let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
-        let result = validate_dir_or_default(Some(nonexistent_path));
+        let result = validate_dir_or_default(Some(nonexistent_path.to_owned()));
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -529,7 +524,7 @@ mod tests {
         fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
 
         let dir_path = nested_dir.to_str().unwrap();
-        let result = validate_dir_or_default(Some(dir_path));
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), nested_dir);
@@ -542,7 +537,7 @@ mod tests {
         fs::create_dir(&special_dir).expect("Failed to create directory with special characters");
 
         let dir_path = special_dir.to_str().unwrap();
-        let result = validate_dir_or_default(Some(dir_path));
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);

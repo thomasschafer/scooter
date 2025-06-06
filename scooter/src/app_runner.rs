@@ -15,7 +15,6 @@ use regex::Regex;
 use scooter_core::search::FileSearcher;
 use scooter_core::search::SearchType;
 use std::env;
-use std::env::current_dir;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -26,10 +25,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
+use anyhow::Context;
+
 use crate::logging::DEFAULT_LOG_LEVEL;
 use crate::utils;
 use crate::{
-    app::{App, AppError, AppRunConfig, Event, EventHandlingResult, ValidatedField},
+    app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
     logging::setup_logging,
     tui::Tui,
@@ -39,7 +40,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppConfig<'a> {
-    pub directory: Option<&'a str>,
+    pub directory: Option<String>,
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
@@ -152,7 +153,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         let directory = validate_dir_or_default(config.directory)?;
 
         let (app, event_receiver) = App::new_with_receiver(
-            &directory,
+            directory,
             &config.search_field_values,
             &config.app_run_config,
         );
@@ -376,46 +377,31 @@ fn parse_overrides(
     dir: &Path,
     include_globs: &str,
     exclude_globs: &str,
-) -> anyhow::Result<ValidatedField<Override>> {
+) -> anyhow::Result<Override> {
     let mut overrides = OverrideBuilder::new(dir);
-    let mut success = true;
 
-    let include_res = utils::add_overrides(&mut overrides, include_globs, "");
-    if let Err(e) = include_res {
-        // TODO(no-tui): log error
-        success = false;
-    }
+    utils::add_overrides(&mut overrides, include_globs, "")
+        .context("Failed to parse include globs")?;
 
-    let exlude_res = utils::add_overrides(&mut overrides, exclude_globs, "!");
-    if let Err(e) = exlude_res {
-        // TODO(no-tui): log error
-        success = false;
-    }
+    utils::add_overrides(&mut overrides, exclude_globs, "!")
+        .context("Failed to parse exclude globs")?;
 
-    if success {
-        let overrides = overrides.build()?;
-        Ok(ValidatedField::Parsed(overrides))
-    } else {
-        Ok(ValidatedField::Error)
-    }
+    overrides.build().map_err(Into::into)
 }
 
 pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
-    let search_pattern = match parse_search_text(
+    let search_pattern = parse_search_text(
         &app_config.search_field_values.search.value,
         app_config.search_field_values.fixed_strings.value,
         app_config.app_run_config.advanced_regex,
-    ) {
-        Ok(p) => ValidatedField::Parsed(p),
-        Err(e) => {
-            if utils::is_regex_error(&e) {
-                // TODO(no-tui): exit and log error
-                ValidatedField::Error
-            } else {
-                return Err(e);
-            }
+    )
+    .map_err(|e| {
+        if utils::is_regex_error(&e) {
+            e.context("Failed to parse search text")
+        } else {
+            e
         }
-    };
+    })?;
 
     let directory = validate_dir_or_default(app_config.directory)?;
 
@@ -425,28 +411,24 @@ pub async fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
         app_config.search_field_values.exclude_files.value,
     )?;
 
-    let searcher =
-        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
-            (search_pattern, overrides)
-        {
-            FileSearcher::new(
-                search_pattern,
-                app_config.search_field_values.replace.value.to_owned(),
-                app_config.search_field_values.match_whole_word.value,
-                app_config.search_field_values.match_case.value,
-                overrides,
-                directory,
-                app_config.app_run_config.include_hidden,
-            )
-        } else {
-            // TODO(no-tui): log error
-            todo!()
-        };
+    let searcher = FileSearcher::new(
+        search_pattern,
+        app_config.search_field_values.replace.value.to_owned(),
+        app_config.search_field_values.match_whole_word.value,
+        app_config.search_field_values.match_case.value,
+        overrides,
+        directory,
+        app_config.app_run_config.include_hidden,
+    );
 
     let cancelled = Arc::new(AtomicBool::new(false));
+
     searcher.walk_files(&cancelled, || {
         Box::new(move |results| {
-            // TODO(no-tui): Replace in file
+            let path = results[0].path;
+            if let Err(file_err) = scooter_core::replace_in_file(&path, &mut results) {
+                // TODO: log error
+            }
             WalkState::Continue
         })
     });
