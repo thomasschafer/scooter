@@ -247,7 +247,7 @@ pub fn format_replacement_results(
     };
 
     let maybe_ignored_str = match num_ignored {
-        Some(n) => format!("\nIgnored: {n}"),
+        Some(n) => format!("\nIgnored (lines): {n}"),
         None => "".into(),
     };
     let maybe_errors_str = match errors {
@@ -258,7 +258,7 @@ pub fn format_replacement_results(
         None => "".into(),
     };
 
-    format!("Successful replacements: {num_successes}{maybe_ignored_str}{maybe_errors_str}",)
+    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
 }
 
 #[cfg(test)]
@@ -570,7 +570,10 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_errors() {
         let result = format_replacement_results(5, Some(2), Some(&[]));
-        assert_eq!(result, "Successful replacements: 5\nIgnored: 2\nErrors: 0");
+        assert_eq!(
+            result,
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+        );
     }
 
     #[test]
@@ -585,8 +588,8 @@ mod tests {
         );
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements: 3"));
-        assert!(result.contains("Ignored: 1"));
+        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
         assert!(result.contains("Test error"));
@@ -595,7 +598,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements: 7\nErrors: 0");
-        assert!(!result.contains("Ignored"));
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert!(!result.contains("Ignored (lines):"));
     }
 }

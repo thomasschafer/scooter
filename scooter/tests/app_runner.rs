@@ -64,7 +64,7 @@ impl Pattern {
         num_errors: usize,
     ) -> Pattern {
         let s = format!(
-            "{}Successful replacements:.*\n.*{num_success} (.|\n)*Ignored:.*\n.*{num_ignored} (.|\n)*Errors:.*\n.*{num_errors} (.|\n)*{}",
+            "{}Successful replacements \\(lines\\):.*\n.*{num_success} (.|\n)*Ignored \\(lines\\):.*\n.*{num_ignored} (.|\n)*Errors:.*\n.*{num_errors} (.|\n)*{}",
             if success { "Success!(.|\n)*" } else { "" },
             if success { "" } else { "Errors:" },
         );
