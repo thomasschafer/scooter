@@ -1,4 +1,4 @@
-use crossterm::{event::KeyEvent, style::Stylize};
+use crossterm::event::KeyEvent;
 use fancy_regex::Regex as FancyRegex;
 use ignore::{
     overrides::{Override, OverrideBuilder},
@@ -28,7 +28,7 @@ use tokio::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, PerformingReplacementState, ReplaceState},
+    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
     utils::{self, ceil_div},
 };
 
@@ -654,20 +654,10 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    #[allow(clippy::format_collect)]
-                    let errors = replace_state
-                        .errors
-                        .iter()
-                        .map(|error| {
-                            let (path, error) = error.display_error();
-                            format!("\n{path}:\n  {}", error.red())
-                        })
-                        .collect::<String>();
-                    let results = format!(
-                        "Successful replacements: {replacements}\nIgnored: {ignored}\nErrors: {num_errors}{errors}",
-                        replacements = replace_state.num_successes,
-                        ignored = replace_state.num_ignored,
-                        num_errors = replace_state.errors.len(),
+                    let results = format_replacement_results(
+                        replace_state.num_successes,
+                        Some(replace_state.num_ignored),
+                        &replace_state.errors,
                     );
                     EventHandlingResult::Exit(Some(results))
                 } else {

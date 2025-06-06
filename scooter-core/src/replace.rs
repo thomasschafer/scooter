@@ -325,9 +325,16 @@ mod tests {
 
     #[test]
     fn test_replace_in_file_no_parent_directory() {
-        let mut results = vec![];
+        let mut results = vec![SearchResult {
+            path: PathBuf::from("/"),
+            line_number: 0,
+            line: "foo".into(),
+            line_ending: LineEnding::Lf,
+            replacement: "bar".into(),
+            included: true,
+            replace_result: None,
+        }];
 
-        // PathBuf::from("/") has no parent
         let result = replace_in_file(&mut results);
         assert!(result.is_err());
         if let Err(e) = result {

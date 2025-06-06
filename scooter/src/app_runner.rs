@@ -33,7 +33,7 @@ use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
     logging::setup_logging,
-    replace::calculate_statistics,
+    replace::{calculate_statistics, format_replacement_results},
     tui::Tui,
     utils::validate_dir_or_default,
 };
@@ -432,14 +432,8 @@ pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     searcher.walk_files(&cancelled, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
-            match scooter_core::replace_in_file(&mut results) {
-                Ok(()) => {
-                    // Send results into channel
-                }
-                // TODO: test this
-                Err(file_err) => {
-                    println!("Found error when performing replacement: {file_err}");
-                }
+            if let Err(file_err) = scooter_core::replace_in_file(&mut results) {
+                println!("Found error when performing replacement: {file_err}");
             }
             if sender.send(results).is_err() {
                 // Channel closed, likely due to early termination
@@ -455,24 +449,8 @@ pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     let all_results = results_receiver.into_iter().flatten();
     let stats = calculate_statistics(all_results);
 
-    // TODO(no-tui): log out results
-    println!("Replacement completed:");
-    println!("  Successful replacements: {}", stats.num_successes);
-    println!("  Errors: {}", stats.errors.len());
-
-    if !stats.errors.is_empty() {
-        println!("\nErrors encountered:");
-        for error in &stats.errors {
-            println!(
-                "  {}:{} - {:?}",
-                error.path.display(),
-                error.line_number,
-                error.replace_result.as_ref().unwrap_or(
-                    &scooter_core::replace::ReplaceResult::Error("Unknown error".to_string())
-                )
-            );
-        }
-    }
+    let results_output = format_replacement_results(stats.num_successes, None, &stats.errors);
+    println!("{results_output}");
 
     Ok(())
 }

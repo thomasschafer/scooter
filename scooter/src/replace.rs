@@ -227,6 +227,37 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
     (included, num_ignored)
 }
 
+pub fn format_replacement_results(
+    num_successes: usize,
+    num_ignored: Option<usize>,
+    errors: &[SearchResult],
+) -> String {
+    use crossterm::style::Stylize;
+
+    let errors_display = if errors.is_empty() {
+        String::new()
+    } else {
+        #[allow(clippy::format_collect)]
+        errors
+            .iter()
+            .map(|error| {
+                let (path, error) = error.display_error();
+                format!("\n{path}:\n  {}", error.red())
+            })
+            .collect::<String>()
+    };
+
+    let maybe_ignored_str = match num_ignored {
+        Some(n) => format!("Ignored: {n}\n"),
+        None => "".into(),
+    };
+
+    format!(
+        "Successful replacements: {num_successes}\n{maybe_ignored_str}Errors: {num_errors}{errors_display}",
+        num_errors = errors.len(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +562,37 @@ mod tests {
                 "Failed to find search result in file".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_errors() {
+        let result = format_replacement_results(5, Some(2), &[]);
+        assert_eq!(result, "Successful replacements: 5\nIgnored: 2\nErrors: 0");
+    }
+
+    #[test]
+    fn test_format_replacement_results_with_errors() {
+        let error_result = create_search_result(
+            "file.txt",
+            10,
+            "line",
+            "replacement",
+            true,
+            Some(ReplaceResult::Error("Test error".to_string())),
+        );
+
+        let result = format_replacement_results(3, Some(1), &[error_result]);
+        assert!(result.contains("Successful replacements: 3"));
+        assert!(result.contains("Ignored: 1"));
+        assert!(result.contains("Errors: 1"));
+        assert!(result.contains("file.txt:10"));
+        assert!(result.contains("Test error"));
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_ignored_count() {
+        let result = format_replacement_results(7, None, &[]);
+        assert_eq!(result, "Successful replacements: 7\nErrors: 0");
+        assert!(!result.contains("Ignored"));
     }
 }
