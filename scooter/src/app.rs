@@ -25,7 +25,10 @@ use crate::{
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
-    validation::{validate_search_configuration, SearchConfiguration, ValidationErrorHandler, ValidationResult},
+    validation::{
+        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        ValidationResult,
+    },
 };
 
 use scooter_core::search::{FileSearcher, SearchResult};

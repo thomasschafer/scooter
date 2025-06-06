@@ -1116,6 +1116,37 @@ async fn test_help_screen_keymaps() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn test_validation_errors() -> anyhow::Result<()> {
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
+
+    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    // Invalid regex in search
+    send_key(KeyCode::Char('('), &event_sender);
+    send_key(KeyCode::BackTab, &event_sender);
+    // Invalid glob in files to exclude
+    send_chars("{{", &event_sender);
+    send_key(KeyCode::BackTab, &event_sender);
+    // Invalid glob in files to include
+    send_chars("*, {", &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_validation_errors_before_enter", snapshot);
+
+    send_key(KeyCode::Enter, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_validation_errors_shown", snapshot);
+
+    send_key(KeyCode::Esc, &event_sender);
+
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+    assert_snapshot!("search_fields_validation_errors_closed", snapshot);
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
 async fn test_prepopulated_fields() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => {

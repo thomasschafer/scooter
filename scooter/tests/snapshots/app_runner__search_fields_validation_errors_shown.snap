@@ -1,0 +1,28 @@
+---
+source: scooter/tests/app_runner.rs
+expression: snapshot
+---
+                                     Scooter                                    
+                                                                               
+       ┌Search text (Error: Couldn't parse regex)─────────────────────┐        
+       │(                                                             │        
+       └──────────────────────────────────────────────────────────────┘        
+       ┌Replace text──────────────────────────────────────────────────┐        
+       │ ┌──────────────────────────Errors──────────────────────────┐ │        
+       └─│ Search text                                              │─┘        
+       ┌─│ regex parse error:                                       │          
+       │ │     (                                                    │          
+       └─│     ^                                                    │          
+       ┌─│ error: unclosed group                                    │          
+       │ │                                                          │          
+       └─│ Files to include                                         │          
+       ┌─│ error parsing glob '{': unclosed alternate group; missin │          
+       │ │                                                          │          
+       └─│ Files to exclude                                         │          
+       ┌F│ error parsing glob '!{{': nested alternate groups are no │─┐        
+       │*└──────────────────────────────────────────────────────────┘ │        
+       └──────────────────────────────────────────────────────────────┘        
+       ┌Files to exclude (Error: Couldn't parse glob pattern)─────────┐        
+       │{{                                                            │        
+       └──────────────────────────────────────────────────────────────┘        
+enter> search / <tab> focus next / <C-r> reset / <C-h> help / <esc> close popup
