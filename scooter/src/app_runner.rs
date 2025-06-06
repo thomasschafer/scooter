@@ -12,8 +12,7 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use regex::Regex;
-use scooter_core::search::FileSearcher;
-use scooter_core::search::SearchType;
+use scooter_core::search::{FileSearcher, SearchResult, SearchType};
 use std::env;
 use std::io;
 use std::path::Path;
@@ -21,6 +20,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -33,6 +33,7 @@ use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
     logging::setup_logging,
+    replace::calculate_statistics,
     tui::Tui,
     utils::validate_dir_or_default,
 };
@@ -425,20 +426,53 @@ pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
 
     let cancelled = Arc::new(AtomicBool::new(false));
 
-    searcher.walk_files(&cancelled, || {
+    let (results_sender, results_receiver) = mpsc::channel::<Vec<SearchResult>>();
+
+    let sender_clone = results_sender.clone();
+    searcher.walk_files(&cancelled, move || {
+        let sender = sender_clone.clone();
         Box::new(move |mut results| {
             match scooter_core::replace_in_file(&mut results) {
                 Ok(()) => {
-                    // TODO: increment
+                    // Send results into channel
                 }
                 // TODO: test this
-                Err(file_err) => println!("Found error when performing replacement: {file_err}"),
+                Err(file_err) => {
+                    println!("Found error when performing replacement: {file_err}");
+                }
             }
-            WalkState::Continue
+            if sender.send(results).is_err() {
+                // Channel closed, likely due to early termination
+                WalkState::Quit
+            } else {
+                WalkState::Continue
+            }
         })
     });
 
-    // TODO(no-tui): log out results
+    drop(results_sender);
 
-    todo!()
+    let all_results = results_receiver.into_iter().flatten();
+    let stats = calculate_statistics(all_results);
+
+    // TODO(no-tui): log out results
+    println!("Replacement completed:");
+    println!("  Successful replacements: {}", stats.num_successes);
+    println!("  Errors: {}", stats.errors.len());
+
+    if !stats.errors.is_empty() {
+        println!("\nErrors encountered:");
+        for error in &stats.errors {
+            println!(
+                "  {}:{} - {:?}",
+                error.path.display(),
+                error.line_number,
+                error.replace_result.as_ref().unwrap_or(
+                    &scooter_core::replace::ReplaceResult::Error("Unknown error".to_string())
+                )
+            );
+        }
+    }
+
+    Ok(())
 }
