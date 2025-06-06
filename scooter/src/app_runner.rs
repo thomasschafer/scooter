@@ -1,9 +1,7 @@
+use anyhow::bail;
 use crossterm::event::{self, Event as CrosstermEvent};
-use fancy_regex::Regex as FancyRegex;
 use futures::Stream;
 use futures::StreamExt;
-use ignore::overrides::Override;
-use ignore::overrides::OverrideBuilder;
 use ignore::WalkState;
 use log::error;
 use log::LevelFilter;
@@ -11,8 +9,7 @@ use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
-use regex::Regex;
-use scooter_core::search::{FileSearcher, SearchResult, SearchType};
+use scooter_core::search::SearchResult;
 use std::env;
 use std::io;
 use std::path::Path;
@@ -25,10 +22,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use anyhow::Context;
-
 use crate::logging::DEFAULT_LOG_LEVEL;
-use crate::utils;
 use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
@@ -36,6 +30,10 @@ use crate::{
     replace::{calculate_statistics, format_replacement_results},
     tui::Tui,
     utils::validate_dir_or_default,
+};
+
+use crate::validation::{
+    validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +53,25 @@ impl Default for AppConfig<'_> {
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
         }
+    }
+}
+
+impl TryFrom<AppConfig<'_>> for SearchConfiguration {
+    type Error = anyhow::Error;
+
+    fn try_from(config: AppConfig<'_>) -> anyhow::Result<Self> {
+        Ok(SearchConfiguration {
+            search_text: config.search_field_values.search.value.to_string(),
+            replacement_text: config.search_field_values.replace.value.to_string(),
+            fixed_strings: config.search_field_values.fixed_strings.value,
+            advanced_regex: config.app_run_config.advanced_regex,
+            include_globs: config.search_field_values.include_files.value.to_string(),
+            exclude_globs: config.search_field_values.exclude_files.value.to_string(),
+            match_whole_word: config.search_field_values.match_whole_word.value,
+            match_case: config.search_field_values.match_case.value,
+            include_hidden: config.app_run_config.include_hidden,
+            directory: validate_dir_or_default(config.directory)?,
+        })
     }
 }
 
@@ -359,70 +376,16 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO: refactor with TUI parsing/validation
-fn parse_search_text(
-    search_text: &str,
-    fixed_strings: bool,
-    advanced_regex: bool,
-) -> anyhow::Result<SearchType> {
-    let result = if fixed_strings {
-        SearchType::Fixed(search_text.to_string())
-    } else if advanced_regex {
-        SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
-    } else {
-        SearchType::Pattern(Regex::new(search_text)?)
-    };
-    Ok(result)
-}
-
-// TODO: refactor with TUI parsing/validation
-fn parse_overrides(
-    dir: &Path,
-    include_globs: &str,
-    exclude_globs: &str,
-) -> anyhow::Result<Override> {
-    let mut overrides = OverrideBuilder::new(dir);
-
-    utils::add_overrides(&mut overrides, include_globs, "")
-        .context("Failed to parse include globs")?;
-
-    utils::add_overrides(&mut overrides, exclude_globs, "!")
-        .context("Failed to parse exclude globs")?;
-
-    overrides.build().map_err(Into::into)
-}
-
 pub fn run_app_headless(app_config: AppConfig<'_>) -> anyhow::Result<()> {
-    let search_pattern = parse_search_text(
-        app_config.search_field_values.search.value,
-        app_config.search_field_values.fixed_strings.value,
-        app_config.app_run_config.advanced_regex,
-    )
-    .map_err(|e| {
-        if utils::is_regex_error(&e) {
-            e.context("Failed to parse search text")
-        } else {
-            e
+    let mut error_handler = SimpleErrorHandler::new();
+    let search_config = app_config.try_into()?;
+    let result = validate_search_configuration(search_config, &mut error_handler)?;
+    let searcher = match result {
+        ValidationResult::Success(searcher) => searcher,
+        ValidationResult::ValidationErrors => {
+            bail!("{}", error_handler.errors_str().unwrap());
         }
-    })?;
-
-    let directory = validate_dir_or_default(app_config.directory)?;
-
-    let overrides = parse_overrides(
-        &directory,
-        app_config.search_field_values.include_files.value,
-        app_config.search_field_values.exclude_files.value,
-    )?;
-
-    let searcher = FileSearcher::new(
-        search_pattern,
-        app_config.search_field_values.replace.value.to_owned(),
-        app_config.search_field_values.match_whole_word.value,
-        app_config.search_field_values.match_case.value,
-        overrides,
-        directory,
-        app_config.app_run_config.include_hidden,
-    );
+    };
 
     let cancelled = Arc::new(AtomicBool::new(false));
 

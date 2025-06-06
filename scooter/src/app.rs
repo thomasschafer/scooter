@@ -1,12 +1,7 @@
 use crossterm::event::KeyEvent;
-use fancy_regex::Regex as FancyRegex;
-use ignore::{
-    overrides::{Override, OverrideBuilder},
-    WalkState,
-};
+use ignore::WalkState;
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
-use regex::Regex;
 use std::{
     cmp::{max, min},
     iter::Iterator,
@@ -29,10 +24,11 @@ use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
-    utils::{self, ceil_div},
+    utils::ceil_div,
+    validation::{validate_search_configuration, SearchConfiguration, ValidationErrorHandler, ValidationResult},
 };
 
-use scooter_core::search::{FileSearcher, SearchResult, SearchType};
+use scooter_core::search::{FileSearcher, SearchResult};
 
 #[derive(Debug)]
 pub enum Event {
@@ -371,12 +367,6 @@ impl Screen {
             Screen::Results(_) => "Results",
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ValidatedField<T> {
-    Parsed(T),
-    Error,
 }
 
 #[derive(Clone, Debug)]
@@ -807,86 +797,28 @@ impl<'a> App {
     }
 
     fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
-        let search_text = self.search_fields.search().text.clone();
+        let search_config = SearchConfiguration {
+            search_text: self.search_fields.search().text.clone(),
+            replacement_text: self.search_fields.replace().text().to_string(),
+            fixed_strings: self.search_fields.fixed_strings().checked,
+            advanced_regex: self.search_fields.advanced_regex,
+            include_globs: self.search_fields.include_files().text().to_string(),
+            exclude_globs: self.search_fields.exclude_files().text().to_string(),
+            match_whole_word: self.search_fields.whole_word().checked,
+            match_case: self.search_fields.match_case().checked,
+            include_hidden: self.include_hidden,
+            directory: self.directory.clone(),
+        };
 
-        let search_pattern = match self.parse_search_text(&search_text) {
-            Ok(p) => ValidatedField::Parsed(p),
-            Err(e) => {
-                if utils::is_regex_error(&e) {
-                    self.search_fields
-                        .search_mut()
-                        .set_error("Couldn't parse regex".to_owned(), e.to_string());
-                    ValidatedField::Error
-                } else {
-                    return Err(e);
-                }
+        let mut error_handler = AppErrorHandler::new(self);
+        let result = validate_search_configuration(search_config, &mut error_handler)?;
+
+        match result {
+            ValidationResult::Success(searcher) => Ok(Some(searcher)),
+            ValidationResult::ValidationErrors => {
+                self.set_popup(Popup::Error);
+                Ok(None)
             }
-        };
-
-        let overrides = self.parse_overrides()?;
-
-        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
-            (search_pattern, overrides)
-        {
-            Ok(Some(FileSearcher::new(
-                search_pattern,
-                self.search_fields.replace().text().to_string(),
-                self.search_fields.whole_word().checked,
-                self.search_fields.match_case().checked,
-                overrides,
-                self.directory.clone(),
-                self.include_hidden,
-            )))
-        } else {
-            self.set_popup(Popup::Error);
-            Ok(None)
-        }
-    }
-
-    fn parse_search_text(&mut self, search_text: &str) -> anyhow::Result<SearchType> {
-        let result = if self.search_fields.fixed_strings().checked {
-            SearchType::Fixed(search_text.to_string())
-        } else if self.search_fields.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(search_text)?)
-        } else {
-            SearchType::Pattern(Regex::new(search_text)?)
-        };
-        Ok(result)
-    }
-
-    fn parse_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
-        let mut overrides = OverrideBuilder::new(self.directory.clone());
-        let mut success = true;
-
-        let include_res = utils::add_overrides(
-            &mut overrides,
-            self.search_fields.include_files().text(),
-            "",
-        );
-        if let Err(e) = include_res {
-            self.search_fields
-                .include_files_mut()
-                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            success = false;
-        }
-
-        let exlude_res = utils::add_overrides(
-            &mut overrides,
-            self.search_fields.exclude_files().text(),
-            "!",
-        );
-        if let Err(e) = exlude_res {
-            self.search_fields
-                .exclude_files_mut()
-                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            success = false;
-        }
-
-        if success {
-            let overrides = overrides.build()?;
-            Ok(ValidatedField::Parsed(overrides))
-        } else {
-            Ok(ValidatedField::Error)
         }
     }
 
@@ -1112,6 +1044,46 @@ impl<'a> App {
         for field in &mut self.search_fields.fields {
             field.set_by_cli = false;
         }
+    }
+}
+
+struct AppErrorHandler<'a> {
+    app: &'a mut App,
+    has_errors: bool,
+}
+
+impl<'a> AppErrorHandler<'a> {
+    fn new(app: &'a mut App) -> Self {
+        Self {
+            app,
+            has_errors: false,
+        }
+    }
+}
+
+impl ValidationErrorHandler for AppErrorHandler<'_> {
+    fn handle_search_text_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .search_mut()
+            .set_error(error.to_owned(), detail.to_string());
+        self.has_errors = true;
+    }
+
+    fn handle_include_files_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .include_files_mut()
+            .set_error(error.to_owned(), detail.to_string());
+        self.has_errors = true;
+    }
+
+    fn handle_exclude_files_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .exclude_files_mut()
+            .set_error(error.to_owned(), detail.to_string());
+        self.has_errors = true;
     }
 }
 
