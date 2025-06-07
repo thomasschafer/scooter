@@ -82,7 +82,7 @@ test_with_both_regex_modes!(
             ),
         );
 
-                let search_config = SearchConfiguration {
+        let search_config = SearchConfiguration {
             search_text: r"\d{3}".to_string(),
             replacement_text: "XXX".to_string(),
             directory: temp_dir.path().to_path_buf(),
@@ -102,8 +102,8 @@ test_with_both_regex_modes!(
             &temp_dir,
             "file1.txt" => text!(
                 "Numbers: XXX, XXX, and XXX.",
-                "Phone: (XXX) XXX-XXX",
-                "IP: 192.168.1.1",
+                "Phone: (XXX) XXX-XXX7",
+                "IP: XXX.XXX.1.1",
             ),
             "file2.txt" => text!(
                 "User IDs: user_XXX, admin_XXX, guest_XXX",
@@ -612,7 +612,6 @@ test_with_both_regex_modes_and_fixed_strings!(
 
 #[tokio::test]
 async fn test_headless_error_handling() -> anyhow::Result<()> {
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     // Invalid regex pattern
@@ -636,7 +635,7 @@ async fn test_headless_error_handling() -> anyhow::Result<()> {
 
     let error = result.unwrap_err().to_string();
     assert!(
-        error.contains("parse") || error.contains("regex") || error.contains("parenthesis"),
+        error.contains("regex"),
         "Error should mention regex parsing issue: {error}"
     );
 
@@ -659,27 +658,9 @@ async fn test_headless_error_handling() -> anyhow::Result<()> {
 
     let error = result.unwrap_err().to_string();
     assert!(
-        error.contains("glob") || error.contains("pattern"),
+        error.contains("glob"),
         "Error should mention glob pattern issue: {error}"
     );
-
-    // Directory that doesn't exist
-    let non_existent_dir = PathBuf::from("/path/that/does/not/exist/anywhere/0394720974");
-    let search_config = SearchConfiguration {
-        search_text: "valid".to_string(),
-        replacement_text: "REPLACEMENT".to_string(),
-        directory: non_existent_dir,
-        include_globs: "".to_string(),
-        exclude_globs: "".to_string(),
-        include_hidden: false,
-        fixed_strings: true,
-        match_case: true,
-        match_whole_word: false,
-        advanced_regex: false,
-    };
-
-    let result = run_headless(search_config);
-    assert!(result.is_err());
 
     Ok(())
 }

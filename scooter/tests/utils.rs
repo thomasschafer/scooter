@@ -139,6 +139,7 @@ macro_rules! assert_test_files {
         {
             use std::fs;
             use std::path::Path;
+            use std::str;
 
             $(
                 let expected_contents: &[u8] = $content;
@@ -149,16 +150,36 @@ macro_rules! assert_test_files {
                 let actual_contents = fs::read(&path)
                     .unwrap_or_else(|e| panic!("Failed to read file {}: {}", $name, e));
 
-                assert_eq!(
-                    actual_contents,
-                    expected_contents,
-                    "Contents mismatch for file {}.\nExpected {} bytes: {:?}\nActual {} bytes: {:?}",
-                    $name,
-                    expected_contents.len(),
-                    expected_contents,
-                    actual_contents.len(),
-                    actual_contents
-                );
+                #[allow(invalid_from_utf8)]
+                // Try to display as string if it's valid UTF-8
+                if actual_contents != expected_contents {
+                    let expected_str = str::from_utf8(expected_contents);
+                    let actual_str = str::from_utf8(&actual_contents);
+
+                    if let (Ok(expected_str), Ok(actual_str)) = (expected_str, actual_str) {
+                        // Both are valid UTF-8, show string representations
+                        assert_eq!(
+                            actual_contents,
+                            expected_contents,
+                            "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
+                            $name,
+                            expected_str,
+                            actual_str
+                        );
+                    } else {
+                        // Fall back to byte representation for non-UTF8 content
+                        assert_eq!(
+                            actual_contents,
+                            expected_contents,
+                            "Contents mismatch for file {}.\nExpected {} bytes: {:?}\nActual {} bytes: {:?}",
+                            $name,
+                            expected_contents.len(),
+                            expected_contents,
+                            actual_contents.len(),
+                            actual_contents
+                        );
+                    }
+                }
             )+
 
             let mut expected_files: Vec<String> = vec![$($name.to_string()),+];
