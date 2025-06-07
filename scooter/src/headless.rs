@@ -1,9 +1,7 @@
 use anyhow::bail;
 use ignore::WalkState;
 use scooter_core::search::SearchResult;
-use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::Arc;
 
 use crate::{
     replace::{calculate_statistics, format_replacement_results},
@@ -22,12 +20,10 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<()> {
         }
     };
 
-    let cancelled = Arc::new(AtomicBool::new(false));
-
     let (results_sender, results_receiver) = mpsc::channel::<Vec<SearchResult>>();
 
     let sender_clone = results_sender.clone();
-    searcher.walk_files(&cancelled, move || {
+    searcher.walk_files(None, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
             if let Err(file_err) = scooter_core::replace_in_file(&mut results) {

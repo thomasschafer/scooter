@@ -129,12 +129,13 @@ impl FileSearcher {
     }
 
     // TODO: document
-    pub fn walk_files<F>(&self, cancelled: &AtomicBool, mut file_handler: F)
+    pub fn walk_files<F>(&self, cancelled: Option<&AtomicBool>, mut file_handler: F)
     where
         F: FnMut() -> FileVisitor + Send,
     {
-        cancelled.store(false, Ordering::Relaxed);
-
+        if let Some(cancelled) = cancelled {
+            cancelled.store(false, Ordering::Relaxed);
+        }
         let num_threads = thread::available_parallelism()
             .map(NonZero::get)
             .unwrap_or(4)
@@ -149,8 +150,10 @@ impl FileSearcher {
         walker.run(|| {
             let mut on_file_found = file_handler();
             Box::new(move |result| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return WalkState::Quit;
+                if let Some(cancelled) = cancelled {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return WalkState::Quit;
+                    }
                 }
 
                 let Ok(entry) = result else {

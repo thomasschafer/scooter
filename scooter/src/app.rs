@@ -835,7 +835,7 @@ impl<'a> App {
         tokio::spawn(async move {
             let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.walk_files(&cancelled, || {
+                parsed_fields.walk_files(Some(&cancelled), || {
                     let sender = sender_for_search.clone();
                     Box::new(move |results| {
                         // Ignore error - likely state reset, thread about to be killed
