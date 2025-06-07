@@ -1,18 +1,16 @@
 use crossterm::event::KeyEvent;
+use crossterm::style::Stylize as _;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::{Duration, Instant},
 };
-use tempfile::NamedTempFile;
 use tokio::{
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -21,17 +19,12 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState},
-    line_reader::BufReadExt,
-    search::SearchResult,
-};
+use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReplaceResult {
-    Success,
-    Error(String),
-}
+use scooter_core::replace::replace_in_file;
+use scooter_core::search::SearchResult;
+
+pub use scooter_core::replace::ReplaceResult;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplaceState {
@@ -132,7 +125,7 @@ pub fn perform_replacement(
             let semaphore = Arc::new(Semaphore::new(8));
             let mut file_tasks = vec![];
 
-            for (path, mut results) in path_groups {
+            for (_path, mut results) in path_groups {
                 if cancelled.load(Ordering::Relaxed) {
                     break;
                 }
@@ -140,8 +133,8 @@ pub fn perform_replacement(
                 let semaphore = semaphore.clone();
                 let replacements_completed_clone = replacements_completed.clone();
                 let task = tokio::spawn(async move {
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    if let Err(file_err) = replace_in_file(&path, &mut results) {
+                    let permit = semaphore.acquire_owned().await.unwrap();
+                    if let Err(file_err) = replace_in_file(&mut results) {
                         for res in &mut results {
                             res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
                         }
@@ -158,7 +151,6 @@ pub fn perform_replacement(
                 .await
                 .into_iter()
                 .flat_map(Result::unwrap)
-                .collect::<Vec<_>>()
         });
 
         let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
@@ -176,15 +168,26 @@ pub fn perform_replacement(
 
         let _ = event_sender.send(Event::App(AppEvent::Rerender));
 
-        let replace_state = calculate_statistics(replacement_results, num_ignored);
+        let stats = calculate_statistics(replacement_results);
         // Ignore error: we may have gone back to the previous screen
         let _ = background_processing_sender.send(BackgroundProcessingEvent::ReplacementCompleted(
-            replace_state,
+            ReplaceState {
+                num_successes: stats.num_successes,
+                num_ignored,
+                errors: stats.errors,
+                replacement_errors_pos: 0,
+            },
         ));
     })
 }
 
-pub fn calculate_statistics<I>(results: I, num_ignored: usize) -> ReplaceState
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplaceStats {
+    pub num_successes: usize,
+    pub errors: Vec<SearchResult>,
+}
+
+pub fn calculate_statistics<I>(results: I) -> ReplaceStats
 where
     I: IntoIterator<Item = SearchResult>,
 {
@@ -213,58 +216,10 @@ where
         }
     });
 
-    ReplaceState {
+    ReplaceStats {
         num_successes,
-        num_ignored,
         errors,
-        replacement_errors_pos: 0,
     }
-}
-
-fn replace_in_file(file_path: &Path, results: &mut [SearchResult]) -> anyhow::Result<()> {
-    let mut line_map: HashMap<_, _> = results
-        .iter_mut()
-        .map(|res| (res.line_number, res))
-        .collect();
-
-    let parent_dir = file_path.parent().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Cannot create temp file: target path '{}' has no parent directory",
-            file_path.display()
-        )
-    })?;
-    let temp_output_file = NamedTempFile::new_in(parent_dir)?;
-
-    // Scope the file operations so they're closed before rename
-    {
-        let input = File::open(file_path)?;
-        let reader = BufReader::new(input);
-
-        let output = File::create(temp_output_file.path())?;
-        let mut writer = BufWriter::new(output);
-
-        for (mut line_number, line_result) in reader.lines_with_endings().enumerate() {
-            let (mut line, line_ending) = line_result?;
-            line_number += 1; // Ensure line-number is 1-indexed
-            if let Some(res) = line_map.get_mut(&line_number) {
-                if line == res.line {
-                    line.clone_from(&res.replacement);
-                    res.replace_result = Some(ReplaceResult::Success);
-                } else {
-                    res.replace_result = Some(ReplaceResult::Error(
-                        "File changed since last search".to_owned(),
-                    ));
-                }
-            }
-            line.push_str(line_ending.as_str());
-            writer.write_all(line.as_bytes())?;
-        }
-
-        writer.flush()?;
-    }
-
-    temp_output_file.persist(file_path)?;
-    Ok(())
 }
 
 pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
@@ -273,15 +228,45 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
     (included, num_ignored)
 }
 
+pub fn format_replacement_results(
+    num_successes: usize,
+    num_ignored: Option<usize>,
+    errors: Option<&[SearchResult]>,
+) -> String {
+    let errors_display = if let Some(errors) = errors {
+        #[allow(clippy::format_collect)]
+        errors
+            .iter()
+            .map(|error| {
+                let (path, error) = error.display_error();
+                format!("\n{path}:\n  {}", error.red())
+            })
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+
+    let maybe_ignored_str = match num_ignored {
+        Some(n) => format!("\nIgnored (lines): {n}"),
+        None => "".into(),
+    };
+    let maybe_errors_str = match errors {
+        Some(errors) => format!(
+            "\nErrors: {num_errors}{errors_display}",
+            num_errors = errors.len()
+        ),
+        None => "".into(),
+    };
+
+    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::line_reader::LineEnding;
-
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use scooter_core::line_reader::LineEnding;
     use std::path::PathBuf;
-    use tempfile::TempDir;
-    use tokio::fs;
 
     fn create_search_result(
         path: &str,
@@ -507,11 +492,9 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results, 0);
+        let stats = calculate_statistics(results);
         assert_eq!(stats.num_successes, 3);
-        assert_eq!(stats.num_ignored, 0);
         assert_eq!(stats.errors.len(), 0);
-        assert_eq!(stats.replacement_errors_pos, 0);
     }
 
     #[test]
@@ -544,12 +527,10 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results, 1);
+        let stats = calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
-        assert_eq!(stats.num_ignored, 1);
         assert_eq!(stats.errors.len(), 1);
         assert_eq!(stats.errors[0].path, error_result.path);
-        assert_eq!(stats.replacement_errors_pos, 0);
     }
 
     #[test]
@@ -574,9 +555,8 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results, 0);
+        let stats = calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
-        assert_eq!(stats.num_ignored, 0);
         assert_eq!(stats.errors.len(), 1);
         assert_eq!(stats.errors[0].path, PathBuf::from("file2.txt"));
         assert_eq!(
@@ -587,244 +567,38 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_replace_in_file_success() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
-
-        // Create test file
-        let content = "line 1\nold text\nline 3\nold text\nline 5\n";
-        fs::write(&file_path, content).await.unwrap();
-
-        // Create search results
-        let mut results = vec![
-            create_search_result(
-                file_path.to_str().unwrap(),
-                2,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-            create_search_result(
-                file_path.to_str().unwrap(),
-                4,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-        ];
-
-        // Perform replacement
-        let result = replace_in_file(&file_path, &mut results);
-        assert!(result.is_ok());
-
-        // Verify replacements were marked as successful
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
-
-        // Verify file content
-        let new_content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(new_content, "line 1\nnew text\nline 3\nnew text\nline 5\n");
-    }
-
-    #[tokio::test]
-    async fn test_replace_in_file_success_no_final_newline() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
-
-        // Create test file
-        let content = "line 1\nold text\nline 3\nold text\nline 5";
-        fs::write(&file_path, content).await.unwrap();
-
-        // Create search results
-        let mut results = vec![
-            create_search_result(
-                file_path.to_str().unwrap(),
-                2,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-            create_search_result(
-                file_path.to_str().unwrap(),
-                4,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-        ];
-
-        // Perform replacement
-        let result = replace_in_file(&file_path, &mut results);
-        assert!(result.is_ok());
-
-        // Verify replacements were marked as successful
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
-
-        // Verify file content
-        let new_content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(new_content, "line 1\nnew text\nline 3\nnew text\nline 5");
-    }
-
-    #[tokio::test]
-    async fn test_replace_in_file_success_windows_newlines() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
-
-        // Create test file
-        let content = "line 1\r\nold text\r\nline 3\r\nold text\r\nline 5\r\n";
-        fs::write(&file_path, content).await.unwrap();
-
-        // Create search results
-        let mut results = vec![
-            create_search_result(
-                file_path.to_str().unwrap(),
-                2,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-            create_search_result(
-                file_path.to_str().unwrap(),
-                4,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-        ];
-
-        // Perform replacement
-        let result = replace_in_file(&file_path, &mut results);
-        assert!(result.is_ok());
-
-        // Verify replacements were marked as successful
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
-
-        // Verify file content
-        let new_content = fs::read_to_string(&file_path).await.unwrap();
+    #[test]
+    fn test_format_replacement_results_no_errors() {
+        let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
-            new_content,
-            "line 1\r\nnew text\r\nline 3\r\nnew text\r\nline 5\r\n"
+            result,
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
         );
     }
 
-    #[tokio::test]
-    async fn test_replace_in_file_success_mixed_newlines() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
-
-        // Create test file
-        let content = "\n\r\nline 1\nold text\r\nline 3\nline 4\r\nline 5\r\n\n\n";
-        fs::write(&file_path, content).await.unwrap();
-
-        // Create search results
-        let mut results = vec![
-            create_search_result(
-                file_path.to_str().unwrap(),
-                4,
-                "old text",
-                "new text",
-                true,
-                None,
-            ),
-            create_search_result(
-                file_path.to_str().unwrap(),
-                7,
-                "line 5",
-                "updated line 5",
-                true,
-                None,
-            ),
-        ];
-
-        // Perform replacement
-        let result = replace_in_file(&file_path, &mut results);
-        assert!(result.is_ok());
-
-        // Verify replacements were marked as successful
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
-
-        // Verify file content
-        let new_content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(
-            new_content,
-            "\n\r\nline 1\nnew text\r\nline 3\nline 4\r\nupdated line 5\r\n\n\n"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_replace_in_file_line_mismatch() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.txt");
-
-        // Create test file
-        let content = "line 1\nactual text\nline 3\n";
-        fs::write(&file_path, content).await.unwrap();
-
-        // Create search result with mismatching line
-        let mut results = vec![create_search_result(
-            file_path.to_str().unwrap(),
-            2,
-            "expected text",
-            "new text",
+    #[test]
+    fn test_format_replacement_results_with_errors() {
+        let error_result = create_search_result(
+            "file.txt",
+            10,
+            "line",
+            "replacement",
             true,
-            None,
-        )];
-
-        // Perform replacement
-        let result = replace_in_file(&file_path, &mut results);
-        assert!(result.is_ok());
-
-        // Verify replacement was marked as error
-        assert_eq!(
-            results[0].replace_result,
-            Some(ReplaceResult::Error(
-                "File changed since last search".to_owned()
-            ))
+            Some(ReplaceResult::Error("Test error".to_string())),
         );
 
-        // Verify file content is unchanged (except for newlines)
-        let new_content = fs::read_to_string(&file_path).await.unwrap();
-        assert_eq!(new_content, "line 1\nactual text\nline 3\n");
+        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
+        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Ignored (lines): 1"));
+        assert!(result.contains("Errors: 1"));
+        assert!(result.contains("file.txt:10"));
+        assert!(result.contains("Test error"));
     }
 
-    #[tokio::test]
-    async fn test_replace_in_file_nonexistent_file() {
-        let mut results = vec![create_search_result(
-            "/nonexistent/path/file.txt",
-            1,
-            "old",
-            "new",
-            true,
-            None,
-        )];
-
-        let result = replace_in_file(&PathBuf::from("/nonexistent/path/file.txt"), &mut results);
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_replace_in_file_no_parent_directory() {
-        let mut results = vec![];
-
-        // PathBuf::from("/") has no parent
-        let result = replace_in_file(&PathBuf::from("/"), &mut results);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("no parent directory"));
-        }
+    #[test]
+    fn test_format_replacement_results_no_ignored_count() {
+        let result = format_replacement_results(7, None, Some(&[]));
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert!(!result.contains("Ignored (lines):"));
     }
 }

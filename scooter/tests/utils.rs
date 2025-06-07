@@ -9,7 +9,7 @@ macro_rules! create_test_files {
         }
     };
 
-    ($($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
+    ($($name:expr => $content:expr),+ $(,)?) => {
         {
             use std::path::Path;
             use std::fs::create_dir_all;
@@ -18,24 +18,33 @@ macro_rules! create_test_files {
             use tokio::io::AsyncWriteExt;
 
             let temp_dir = TempDir::new().unwrap();
-            $(
-                let contents = concat!($($line,"\n",)+);
 
+            $(
                 let path = [temp_dir.path().to_str().unwrap(), $name].join("/");
                 let path = Path::new(&path);
                 create_dir_all(path.parent().unwrap()).unwrap();
-                {
-                    let mut file = File::create(path).await.unwrap();
-                    file.write_all(contents.as_bytes()).await.unwrap();
-                    file.sync_all().await.unwrap();
-                }
+
+                let mut file = File::create(path).await.unwrap();
+                let content: &[u8] = $content;
+                file.write_all(content).await.unwrap();
+                file.sync_all().await.unwrap();
             )+
 
             #[cfg(windows)]
-            let _ = sleep(Duration::from_millis(100));
+            {
+                use tokio::time::{sleep, Duration};
+                sleep(Duration::from_millis(100)).await;
+            }
 
             temp_dir
         }
+    };
+}
+
+#[macro_export]
+macro_rules! text {
+    ($($line:expr),+ $(,)?) => {
+        concat!($($line, "\n"),+).as_bytes()
     };
 }
 
@@ -126,27 +135,51 @@ macro_rules! assert_test_files {
         }
     };
 
-    ($temp_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
+    ($temp_dir:expr, $($name:expr => $content:expr),+ $(,)?) => {
         {
             use std::fs;
             use std::path::Path;
+            use std::str;
 
             $(
-                let expected_contents = concat!($($line,"\n",)+);
+                let expected_contents: &[u8] = $content;
                 let path = Path::new($temp_dir.path()).join($name);
 
                 assert!(path.exists(), "File {} does not exist", $name);
 
-                let actual_contents = fs::read_to_string(&path)
+                let actual_contents = fs::read(&path)
                     .unwrap_or_else(|e| panic!("Failed to read file {}: {}", $name, e));
-                assert_eq!(
-                    actual_contents,
-                    expected_contents,
-                    "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
-                    $name,
-                    expected_contents,
-                    actual_contents
-                );
+
+                #[allow(invalid_from_utf8)]
+                // Try to display as string if it's valid UTF-8
+                if actual_contents != expected_contents {
+                    let expected_str = str::from_utf8(expected_contents);
+                    let actual_str = str::from_utf8(&actual_contents);
+
+                    if let (Ok(expected_str), Ok(actual_str)) = (expected_str, actual_str) {
+                        // Both are valid UTF-8, show string representations
+                        assert_eq!(
+                            actual_contents,
+                            expected_contents,
+                            "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
+                            $name,
+                            expected_str,
+                            actual_str
+                        );
+                    } else {
+                        // Fall back to byte representation for non-UTF8 content
+                        assert_eq!(
+                            actual_contents,
+                            expected_contents,
+                            "Contents mismatch for file {}.\nExpected {} bytes: {:?}\nActual {} bytes: {:?}",
+                            $name,
+                            expected_contents.len(),
+                            expected_contents,
+                            actual_contents.len(),
+                            actual_contents
+                        );
+                    }
+                }
             )+
 
             let mut expected_files: Vec<String> = vec![$($name.to_string()),+];
