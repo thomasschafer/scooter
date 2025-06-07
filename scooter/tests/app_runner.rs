@@ -240,20 +240,20 @@ test_with_both_regex_modes!(
     test_search_and_replace_simple_dir,
     |advanced_regex| async move {
         let temp_dir = &create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content before 123",
                 "  with some spaces at the start",
                 "and special ? characters 1! @@ # and number 890",
                 "        some    tabs  and - more % special   **** characters ())",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "from datetime import datetime as dt, timedelta as td",
                 "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
                 "class TestClass:",
                 "    super_long_name_really_before_long_name_very_long_name = 123",
                 "    return super_long_name_really_before_long_name_very_long_name",
                 "test_dict = {\"key1\": [1,2,3], 123: \"num key\", (\"a\",\"b\"): True, \"before\": 1, \"test-key\": None}",
-            },
+            ),
         );
 
         let (run_handle, event_sender, mut snapshot_rx) =
@@ -273,20 +273,20 @@ test_with_both_regex_modes!(
         // Nothing should have changed yet
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content before 123",
                 "  with some spaces at the start",
                 "and special ? characters 1! @@ # and number 890",
                 "        some    tabs  and - more % special   **** characters ())",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "from datetime import datetime as dt, timedelta as td",
                 "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
                 "class TestClass:",
                 "    super_long_name_really_before_long_name_very_long_name = 123",
                 "    return super_long_name_really_before_long_name_very_long_name",
                 "test_dict = {\"key1\": [1,2,3], 123: \"num key\", (\"a\",\"b\"): True, \"before\": 1, \"test-key\": None}",
-            },
+            ),
         );
 
         send_key(KeyCode::Enter, &event_sender);
@@ -296,20 +296,20 @@ test_with_both_regex_modes!(
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content after 123",
                 "  with some spaces at the start",
                 "and special ? characters 1! @@ # and number 890",
                 "        some    tabs  and - more % special   **** characters ())",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "from datetime import datetime as dt, timedelta as td",
                 "def mix_types(x=100, y=\"test\"): return f\"{x}_{y}\" if isinstance(x, int) else None",
                 "class TestClass:",
                 "    super_long_name_really_after_long_name_very_long_name = 123",
                 "    return super_long_name_really_after_long_name_very_long_name",
                 "test_dict = {\"key1\": [1,2,3], 123: \"num key\", (\"a\",\"b\"): True, \"after\": 1, \"test-key\": None}",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
@@ -320,9 +320,9 @@ test_with_both_regex_modes!(
     test_search_and_replace_no_matches,
     |advanced_regex| async move {
         let temp_dir = &create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content 123",
-            },
+            ),
         );
 
         let (run_handle, event_sender, mut snapshot_rx) =
@@ -342,9 +342,9 @@ test_with_both_regex_modes!(
         // Nothing should have changed yet
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content 123",
-            },
+            ),
         );
 
         send_key(KeyCode::Enter, &event_sender);
@@ -354,9 +354,9 @@ test_with_both_regex_modes!(
         // Verify that nothing has changed
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is some test content 123",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
@@ -402,7 +402,7 @@ test_with_both_regex_modes_and_fixed_strings!(
     test_search_and_replace_whole_words,
     |advanced_regex, fixed_strings| async move {
         let temp_dir = &create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "this is something",
                 "some text someone abcsome123",
                 "some",
@@ -410,10 +410,10 @@ test_with_both_regex_modes_and_fixed_strings!(
                 "slashes and commas/some,text",
                 "moresometext",
                 "text some",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "print('Hello, some world!')",
-            },
+            ),
         );
 
         let (run_handle, event_sender, mut snapshot_rx) =
@@ -439,7 +439,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         // Nothing should have changed yet
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "this is something",
                 "some text someone abcsome123",
                 "some",
@@ -447,10 +447,10 @@ test_with_both_regex_modes_and_fixed_strings!(
                 "slashes and commas/some,text",
                 "moresometext",
                 "text some",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "print('Hello, some world!')",
-            },
+            ),
         );
 
         send_key(KeyCode::Enter, &event_sender);
@@ -460,7 +460,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
             &temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "this is something",
                 "REPLACE text someone abcsome123",
                 "REPLACE",
@@ -468,10 +468,10 @@ test_with_both_regex_modes_and_fixed_strings!(
                 "slashes and commas/REPLACE,text",
                 "moresometext",
                 "text REPLACE",
-            },
-            "file2.py" => {
+            ),
+            "file2.py" => text!(
                 "print('Hello, REPLACE world!')",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
@@ -482,12 +482,12 @@ test_with_both_regex_modes!(
     test_search_and_replace_regex_capture_group,
     |advanced_regex| async move {
         let temp_dir = &create_test_files!(
-            "phones.txt" => {
+            "phones.txt" => text!(
                 "Phone: (020) 7123-4567",
                 "Another: (0161) 4969-8523",
                 "Different format: 020.7123.4567",
                 "Also different: 020-7123-4567",
-            },
+            ),
         );
 
         let (run_handle, event_sender, mut snapshot_rx) =
@@ -506,12 +506,12 @@ test_with_both_regex_modes!(
         // Nothing should have changed yet
         assert_test_files!(
             &temp_dir,
-            "phones.txt" => {
+            "phones.txt" => text!(
                 "Phone: (020) 7123-4567",
                 "Another: (0161) 4969-8523",
                 "Different format: 020.7123.4567",
                 "Also different: 020-7123-4567",
-            },
+            ),
         );
 
         send_key(KeyCode::Enter, &event_sender);
@@ -521,12 +521,12 @@ test_with_both_regex_modes!(
         // Verify only matching phone numbers are reformatted
         assert_test_files!(
             &temp_dir,
-            "phones.txt" => {
+            "phones.txt" => text!(
                 "Phone: +44 7123 020-4567",
                 "Another: +44 4969 0161-8523",
                 "Different format: 020.7123.4567",
                 "Also different: 020-7123-4567",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
@@ -536,7 +536,7 @@ test_with_both_regex_modes!(
 #[tokio::test]
 async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -551,7 +551,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -572,7 +572,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     // Nothing should have changed yet
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -587,7 +587,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     send_key(KeyCode::Enter, &event_sender);
@@ -597,7 +597,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     // Verify only non-mutable declarations are modified
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let /* immutable */ total = 0;",
@@ -612,7 +612,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
             "    let /* immutable */ base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -621,7 +621,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 #[tokio::test]
 async fn test_multi_select_mode() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -636,7 +636,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -671,7 +671,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -686,7 +686,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
             "    changed base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -695,7 +695,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_results_calculation_mixed() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -710,7 +710,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -736,7 +736,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    changed mut count = 0;",
             "    let total = 0;",
@@ -751,7 +751,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
             "    changed base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -760,7 +760,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_results_calculation_all_success() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -775,7 +775,7 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -797,7 +797,7 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    changed mut count = 0;",
             "    changed total = 0;",
@@ -812,7 +812,7 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
             "    changed base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -821,7 +821,7 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -836,7 +836,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -859,7 +859,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -874,7 +874,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
             "    let base = 10;",
             "    sum",
             "}",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -883,7 +883,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -891,8 +891,8 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
             "    let mut items = data.clone();",
             "    let result = compute(data);",
             "}",
-        },
-        "src/foo.rs" => {
+        ),
+        "src/foo.rs" => text!(
             "fn compute(input: Vec<u32>) -> u32 {",
             "    let mut sum = 0;",
             "    let multiplier = 2;",
@@ -900,7 +900,7 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
             "    sum",
             "}",
             "",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -941,12 +941,12 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    changed mut count = 0;",
             "}",
-        },
-        "src/foo.rs" => {
+        ),
+        "src/foo.rs" => text!(
             "fn compute(input: Vec<u32>) -> u32 {",
             "    changed mut sum = 0;",
             "    changed multiplier = 2;",
@@ -954,7 +954,7 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
             "    sum",
             "}",
             "",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -963,7 +963,7 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
 #[tokio::test]
 async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -971,8 +971,8 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
             "    let mut items = data.clone();",
             "    let result = compute(data);",
             "}",
-        },
-        "src/foo.rs" => {
+        ),
+        "src/foo.rs" => text!(
             "fn compute(input: Vec<u32>) -> u32 {",
             "    let mut sum = 0;",
             "    let multiplier = 2;",
@@ -980,14 +980,14 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
             "    sum",
             "}",
             "",
-        },
-        "src/bar.rs" => {
+        ),
+        "src/bar.rs" => text!(
             "fn something() {",
             "    let greeting = \"Hello, world!\";",
             "    println!(\"{greeting}\");",
             "}",
             "",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -1021,13 +1021,13 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
 
     assert_test_files!(
         &temp_dir,
-        "src/bar.rs" => {
+        "src/bar.rs" => text!(
             "fn something() {",
             "    changed greeting = \"Hello, world!\";",
             "    println!(\"{greeting}\");",
             "}",
             "",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -1036,7 +1036,7 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
 #[tokio::test]
 async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut count = 0;",
             "    let total = 0;",
@@ -1044,8 +1044,8 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
             "    let mut items = data.clone();",
             "    let result = compute(data);",
             "}",
-        },
-        "src/foo.rs" => {
+        ),
+        "src/foo.rs" => text!(
             "fn compute(input: Vec<u32>) -> u32 {",
             "    let mut sum = 0;",
             "    let multiplier = 2;",
@@ -1053,14 +1053,14 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
             "    sum",
             "}",
             "",
-        },
-        "src/bar.rs" => {
+        ),
+        "src/bar.rs" => text!(
             "fn something() {",
             "    let greeting = \"Hello, world!\";",
             "    println!(\"{greeting}\");",
             "}",
             "",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -1150,17 +1150,17 @@ async fn test_validation_errors() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_prepopulated_fields() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut old_value = 0;",
             "    let result = compute(data);",
             "}",
-        },
-        "src/foo.py" => {
+        ),
+        "src/foo.py" => text!(
             "def foo():",
             "    old_value = 0",
             "    result = compute(data)",
-        },
+        ),
     );
 
     let search_field_values = SearchFieldValues {
@@ -1220,17 +1220,17 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "src/lib.rs" => {
+        "src/lib.rs" => text!(
             "fn process(mut data: Vec<u32>) {",
             "    let mut old_value = 0;",
             "    let result = compute(data);",
             "}",
-        },
-        "src/foo.py" => {
+        ),
+        "src/foo.py" => text!(
             "def foo():",
             "    new_value = 0",
             "    result = compute(data)",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -1239,20 +1239,20 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_replacement_progress_display() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
-        "file1.txt" => {
+        "file1.txt" => text!(
             "This is a test file",
             "It contains some test content",
             "For testing purposes",
-        },
-        "file2.txt" => {
+        ),
+        "file2.txt" => text!(
             "Another test file here",
             "Also with test content",
             "test test test",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "Third file for testing",
             "More test data",
-        },
+        ),
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
@@ -1283,20 +1283,20 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
 
     assert_test_files!(
         &temp_dir,
-        "file1.txt" => {
+        "file1.txt" => text!(
             "This is a TEST file",
             "It contains some TEST content",
             "For TESTing purposes",
-        },
-        "file2.txt" => {
+        ),
+        "file2.txt" => text!(
             "Another TEST file here",
             "Also with TEST content",
             "TEST TEST TEST",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "Third file for TESTing",
             "More TEST data",
-        },
+        ),
     );
 
     shutdown(event_sender, run_handle).await
@@ -1306,16 +1306,16 @@ test_with_both_regex_modes!(
     test_immediate_search_flag_skips_search_screen,
     |advanced_regex| async move {
         let temp_dir = &create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is some test content with SEARCH",
                 "Another line with SEARCH here",
                 "No match on this line",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Start of file",
                 "SEARCH appears here too",
                 "End of file",
-            },
+            ),
         );
 
         let search_field_values = SearchFieldValues {
@@ -1347,16 +1347,16 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is some test content with REPLACED",
                 "Another line with REPLACED here",
                 "No match on this line",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Start of file",
                 "REPLACED appears here too",
                 "End of file",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
@@ -1367,20 +1367,20 @@ test_with_both_regex_modes!(
     test_immediate_replace_flag_skips_confirmation,
     |advanced_regex| async move {
         let temp_dir = &create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "Beautiful is better than ugly.",
                 "Explicit is better than implicit.",
                 "Simple is better than complex.",
                 "Complex is better than complicated.",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Flat is better than nested.",
                 "Sparse is better than dense.",
                 "Readability counts.",
                 "Special cases aren't special enough to break the rules.",
                 "Although practicality beats purity.",
                 "Errors should never pass silently.",
-            },
+            ),
         );
 
         let config = AppConfig {
@@ -1407,20 +1407,20 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "Beautiful REPLACEMENT better than ugly.",
                 "Explicit REPLACEMENT better than implicit.",
                 "Simple REPLACEMENT better than complex.",
                 "Complex REPLACEMENT better than complicated.",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Flat REPLACEMENT better than nested.",
                 "Sparse REPLACEMENT better than dense.",
                 "Readability counts.",
                 "Special cases aren't special enough to break the rules.",
                 "Although practicality beats purity.",
                 "Errors should never pass silently.",
-            },
+            ),
         );
 
         shutdown(event_sender, run_handle).await
