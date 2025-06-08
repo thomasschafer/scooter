@@ -35,6 +35,10 @@ impl LineEnding {
 /// Unlike the standard library's `lines()` iterator which strips line endings,
 /// this iterator returns tuples of `(content, line_ending)` where the content is
 /// returned as bytes and the line ending is preserved as a separate enum value.
+///
+/// Callers are responsible for UTF-8 validation if they need to work with the content
+/// as text. When the content is known to be valid UTF-8, it can be converted using
+/// `String::from_utf8()` or `String::from_utf8_lossy()`.
 pub struct LinesSplitEndings<R> {
     reader: R,
     buffer: Vec<u8>,

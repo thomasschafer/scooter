@@ -193,11 +193,18 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
-    if args.no_tui {
-        run_headless(config.try_into()?)
+
+    let results = if args.no_tui {
+        let res = run_headless(config.try_into()?)?;
+        Some(res)
     } else {
-        run_app_tui(config).await
+        run_app_tui(config).await?
+    };
+
+    if let Some(results) = results {
+        println!("{results}");
     }
+    Ok(())
 }
 
 #[cfg(test)]

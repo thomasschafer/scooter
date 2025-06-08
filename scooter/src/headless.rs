@@ -10,7 +10,8 @@ use crate::{
     },
 };
 
-pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<()> {
+// TODO: test output String
+pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String> {
     let mut error_handler = SimpleErrorHandler::new();
     let result = validate_search_configuration(search_config, &mut error_handler)?;
     let searcher = match result {
@@ -48,7 +49,6 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<()> {
         log::error!("\n{path}:\n  {error}");
     }
     let results_output = format_replacement_results(stats.num_successes, None, None);
-    println!("{results_output}");
 
-    Ok(())
+    Ok(results_output)
 }

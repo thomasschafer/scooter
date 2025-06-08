@@ -49,6 +49,13 @@ macro_rules! text {
 }
 
 #[macro_export]
+macro_rules! binary {
+    ($($line:expr),+ $(,)?) => {{
+        &[$($line, b"\n" as &[u8]),+].concat()
+    }};
+}
+
+#[macro_export]
 macro_rules! overwrite_files {
     ($base_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
         {
@@ -171,12 +178,10 @@ macro_rules! assert_test_files {
                         assert_eq!(
                             actual_contents,
                             expected_contents,
-                            "Contents mismatch for file {}.\nExpected {} bytes: {:?}\nActual {} bytes: {:?}",
+                            "Contents mismatch for file {}.\nExpected utf8 lossy conversion:\n{:?}\n\nActual utf8 lossy conversion:\n{:?}\n",
                             $name,
-                            expected_contents.len(),
-                            expected_contents,
-                            actual_contents.len(),
-                            actual_contents
+                            String::from_utf8_lossy(expected_contents),
+                            String::from_utf8_lossy(&actual_contents),
                         );
                     }
                 }

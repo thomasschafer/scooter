@@ -353,13 +353,10 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 }
 
-pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<()> {
+pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let results_to_print = runner.run_event_loop().await?;
+    let results = runner.run_event_loop().await?;
     runner.cleanup()?;
-    if let Some(results) = results_to_print {
-        println!("{results}");
-    }
-    Ok(())
+    Ok(results)
 }

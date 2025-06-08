@@ -39,7 +39,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -96,7 +97,8 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -147,7 +149,8 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         let search_config = SearchConfiguration {
             search_text: r"\[(\d{4})-(\d{2})-(\d{2})\]".to_string(),
@@ -163,7 +166,8 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -218,7 +222,8 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    assert!(matches!(result, Ok(())));
+    // TODO: match on exact return value
+    assert!(result.is_ok());
 
     // Positive lookbehind - match numbers after headings
     let search_config = SearchConfiguration {
@@ -235,7 +240,8 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    assert!(matches!(result, Ok(())));
+    // TODO: match on exact return value
+    assert!(result.is_ok());
 
     // Add spaces after commas in CSV file
     let search_config = SearchConfiguration {
@@ -252,7 +258,8 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    assert!(matches!(result, Ok(())));
+    // TODO: match on exact return value
+    assert!(result.is_ok());
 
     assert_test_files!(
         &temp_dir,
@@ -319,7 +326,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -360,7 +368,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -401,7 +410,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -460,7 +470,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -509,7 +520,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir1,
@@ -551,7 +563,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir2,
@@ -595,7 +608,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -609,61 +623,6 @@ test_with_both_regex_modes_and_fixed_strings!(
         Ok(())
     }
 );
-
-#[tokio::test]
-async fn test_headless_error_handling() -> anyhow::Result<()> {
-    use tempfile::TempDir;
-
-    // Invalid regex pattern
-    let temp_dir = TempDir::new()?;
-
-    let search_config = SearchConfiguration {
-        search_text: "(".to_string(),
-        replacement_text: "REPLACEMENT".to_string(),
-        directory: temp_dir.path().to_path_buf(),
-        include_globs: "".to_string(),
-        exclude_globs: "".to_string(),
-        include_hidden: false,
-        fixed_strings: false,
-        match_case: true,
-        match_whole_word: false,
-        advanced_regex: false,
-    };
-
-    let result = run_headless(search_config);
-    assert!(result.is_err());
-
-    let error = result.unwrap_err().to_string();
-    assert!(
-        error.contains("regex"),
-        "Error should mention regex parsing issue: {error}"
-    );
-
-    // Invalid glob pattern
-    let search_config = SearchConfiguration {
-        search_text: "valid".to_string(),
-        replacement_text: "REPLACEMENT".to_string(),
-        directory: temp_dir.path().to_path_buf(),
-        include_globs: "[invalid-glob".to_string(),
-        exclude_globs: "".to_string(),
-        include_hidden: false,
-        fixed_strings: true,
-        match_case: true,
-        match_whole_word: false,
-        advanced_regex: false,
-    };
-
-    let result = run_headless(search_config);
-    assert!(result.is_err());
-
-    let error = result.unwrap_err().to_string();
-    assert!(
-        error.contains("glob"),
-        "Error should mention glob pattern issue: {error}"
-    );
-
-    Ok(())
-}
 
 test_with_both_regex_modes_and_fixed_strings!(
     test_headless_output_formatting,
@@ -697,7 +656,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -738,7 +698,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         assert_test_files!(
             &temp_dir,
@@ -784,7 +745,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         // Only visible file should be modified, hidden files untouched
         assert_test_files!(
@@ -815,7 +777,8 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        assert!(matches!(result, Ok(())));
+        // TODO: match on exact return value
+        assert!(result.is_ok());
 
         // Now all files should be modified
         assert_test_files!(
@@ -828,6 +791,553 @@ test_with_both_regex_modes_and_fixed_strings!(
             ),
             ".config/settings.txt" => text!(
                 "Settings file with REPLACEMENT"
+            ),
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_headless_validation_errors_regex,
+    |advanced_regex| async move {
+        let temp_dir = create_test_files!(
+            "test.txt" => text!(
+                "This file won't be modified as the configuration will be invalid"
+            )
+        );
+
+        let search_config = SearchConfiguration {
+            search_text: "(".to_string(), // Unclosed parenthesis = invalid regex
+            replacement_text: "replacement".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "".to_string(),
+            exclude_globs: "".to_string(),
+            include_hidden: false,
+            fixed_strings: false,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(err_str.contains("Failed to parse search text"));
+
+        assert_test_files!(
+            &temp_dir,
+            "test.txt" => text!(
+                "This file won't be modified as the configuration will be invalid"
+            )
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_validation_errors_glob,
+    |advanced_regex, fixed_strings: bool| async move {
+        let temp_dir = create_test_files!(
+            "test.txt" => text!(
+                "This file won't be modified as the configuration will be invalid"
+            )
+        );
+
+        let search_config = SearchConfiguration {
+            search_text: "valid".to_string(),
+            replacement_text: "replacement".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "{{".to_string(), // Invalid glob pattern
+            exclude_globs: "".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("glob"));
+
+        assert_test_files!(
+            &temp_dir,
+            "test.txt" => text!(
+                "This file won't be modified as the configuration will be invalid"
+            )
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_file_globs_include,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "# Sample Text File 1",
+                "",
+                "This is text file 1 with PATTERN in the middle of the content.",
+                "Some additional text for context.",
+                "The end of the file."
+            ),
+            "file2.txt" => text!(
+                "Another Text File",
+                "This is text file 2 with PATTERN something.",
+                "Some more text on a separate line.",
+                "And a little more text for additional context.",
+                "Final line of the file."
+            ),
+            "other.md" => text!(
+                "# Markdown Document",
+                "",
+                "## Introduction",
+                "",
+                "This is markdown with *PATTERN* in it.",
+                "",
+                "* Item 1",
+                "* Item 2",
+                "* Item 3"
+            ),
+            "code.rs" => text!(
+                "// Sample Rust code file",
+                "",
+                "fn main() {",
+                "    // Comment with PATTERN",
+                "    let x = 42;",
+                "    println!(\"The answer is {}\", x);",
+                "}"
+            )
+        );
+
+        // Test include glob - only include .txt files
+        let search_config = SearchConfiguration {
+            search_text: "PATTERN".to_string(),
+            replacement_text: "REPLACEMENT".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "*.txt".to_string(),
+            exclude_globs: "".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        // TODO: match on exact return value
+        assert!(result.is_ok());
+
+        // Verify only .txt files were modified
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => text!(
+                "# Sample Text File 1",
+                "",
+                "This is text file 1 with REPLACEMENT in the middle of the content.",
+                "Some additional text for context.",
+                "The end of the file."
+            ),
+            "file2.txt" => text!(
+                "Another Text File",
+                "This is text file 2 with REPLACEMENT something.",
+                "Some more text on a separate line.",
+                "And a little more text for additional context.",
+                "Final line of the file."
+            ),
+            "other.md" => text!(
+                "# Markdown Document",
+                "",
+                "## Introduction",
+                "",
+                "This is markdown with *PATTERN* in it.",
+                "",
+                "* Item 1",
+                "* Item 2",
+                "* Item 3"
+            ),
+            "code.rs" => text!(
+                "// Sample Rust code file",
+                "",
+                "fn main() {",
+                "    // Comment with PATTERN",
+                "    let x = 42;",
+                "    println!(\"The answer is {}\", x);",
+                "}"
+            )
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_file_globs_exclude,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "# Sample Text File 1",
+                "",
+                "This is text file 1 with PATTERN in the middle of the content.",
+                "Some additional text for context.",
+                "The end of the file."
+            ),
+            "file2.txt" => text!(
+                "Another Text File",
+                "This is text file 2 with PATTERN something.",
+                "Some more text on a separate line.",
+                "And a little more text for additional context.",
+                "Final line of the file."
+            ),
+            "other.md" => text!(
+                "# Markdown Document",
+                "",
+                "## Introduction",
+                "",
+                "This is markdown with *PATTERN* in it.",
+                "",
+                "* Item 1",
+                "* Item 2",
+                "* Item 3"
+            ),
+            "code.rs" => text!(
+                "// Sample Rust code file",
+                "",
+                "fn main() {",
+                "    // Comment with PATTERN",
+                "    let x = 42;",
+                "    println!(\"The answer is {}\", x);",
+                "}"
+            )
+        );
+
+        // Test exclude glob - exclude .txt files
+        let search_config = SearchConfiguration {
+            search_text: "PATTERN".to_string(),
+            replacement_text: "REPLACEMENT".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "".to_string(),
+            exclude_globs: "*.txt".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        // TODO: match on exact return value
+        assert!(result.is_ok());
+
+        // Verify non-.txt files were modified
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => text!(
+                "# Sample Text File 1",
+                "",
+                "This is text file 1 with PATTERN in the middle of the content.",
+                "Some additional text for context.",
+                "The end of the file."
+            ),
+            "file2.txt" => text!(
+                "Another Text File",
+                "This is text file 2 with PATTERN something.",
+                "Some more text on a separate line.",
+                "And a little more text for additional context.",
+                "Final line of the file."
+            ),
+            "other.md" => text!(
+                "# Markdown Document",
+                "",
+                "## Introduction",
+                "",
+                "This is markdown with *REPLACEMENT* in it.",
+                "",
+                "* Item 1",
+                "* Item 2",
+                "* Item 3"
+            ),
+            "code.rs" => text!(
+                "// Sample Rust code file",
+                "",
+                "fn main() {",
+                "    // Comment with REPLACEMENT",
+                "    let x = 42;",
+                "    println!(\"The answer is {}\", x);",
+                "}"
+            )
+        );
+
+        Ok(())
+    }
+);
+
+// Test combined include and exclude globs
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_file_globs_combined,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "src/main.rs" => text!(
+                "//! Main entry point for the application",
+                "",
+                "use std::io;",
+                "",
+                "fn main() {",
+                "    println!(\"Hello, this contains PATTERN to replace\");",
+                "    ",
+                "    let result = process_data();",
+                "    println!(\"Result: {}\", result);",
+                "}",
+                "",
+                "fn process_data() -> i32 {",
+                "    // Processing with PATTERN",
+                "    42",
+                "}"
+            ),
+            "src/lib.rs" => text!(
+                "//! Library functionality",
+                "",
+                "/// Public function that contains PATTERN in documentation",
+                "pub fn lib_fn() {",
+                "    // Implementation details",
+                "    let value = internal_helper();",
+                "    println!(\"Value: {}\", value);",
+                "}",
+                "",
+                "fn internal_helper() -> &'static str {",
+                "    \"PATTERN in a string literal\"",
+                "}"
+            ),
+            "src/utils.rs" => text!(
+                "//! Utility functions",
+                "",
+                "pub fn util() {",
+                "    // Using PATTERN in a comment",
+                "    println!(\"Utility function\");",
+                "}",
+                "",
+                "pub fn format_data(input: &str) -> String {",
+                "    // Format containing PATTERN",
+                "    format!(\"[formatted]: {}\", input)",
+                "}"
+            ),
+            "tests/test.rs" => text!(
+                "//! Test module",
+                "",
+                "#[cfg(test)]",
+                "mod tests {",
+                "    use super::*;",
+                "",
+                "    #[test]",
+                "    fn test_basic_functionality() {",
+                "        // Test with PATTERN that shouldn't be changed",
+                "        assert_eq!(\"PATTERN\", \"expected\".replace(\"expected\", \"PATTERN\"));",
+                "    }",
+                "}"
+            ),
+            "docs/readme.md" => text!(
+                "# Project Documentation",
+                "",
+                "## Overview",
+                "",
+                "This project does things with PATTERN processing.",
+                "",
+                "## Examples",
+                "",
+                "```rust",
+                "// Example code with PATTERN",
+                "let x = process_pattern();",
+                "```",
+                "",
+                "## API Reference",
+                "",
+                "See the inline documentation for details."
+            )
+        );
+
+        // Include all .rs files but exclude those in tests directory
+        let search_config = SearchConfiguration {
+            search_text: "PATTERN".to_string(),
+            replacement_text: "REPLACEMENT".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "**/*.rs".to_string(),
+            exclude_globs: "tests/**".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        // TODO: match on exact return value
+        assert!(result.is_ok());
+
+        // Verify only source .rs files were modified, not test files or docs
+        assert_test_files!(
+            &temp_dir,
+            "src/main.rs" => text!(
+                "//! Main entry point for the application",
+                "",
+                "use std::io;",
+                "",
+                "fn main() {",
+                "    println!(\"Hello, this contains REPLACEMENT to replace\");",
+                "    ",
+                "    let result = process_data();",
+                "    println!(\"Result: {}\", result);",
+                "}",
+                "",
+                "fn process_data() -> i32 {",
+                "    // Processing with REPLACEMENT",
+                "    42",
+                "}"
+            ),
+            "src/lib.rs" => text!(
+                "//! Library functionality",
+                "",
+                "/// Public function that contains REPLACEMENT in documentation",
+                "pub fn lib_fn() {",
+                "    // Implementation details",
+                "    let value = internal_helper();",
+                "    println!(\"Value: {}\", value);",
+                "}",
+                "",
+                "fn internal_helper() -> &'static str {",
+                "    \"REPLACEMENT in a string literal\"",
+                "}"
+            ),
+            "src/utils.rs" => text!(
+                "//! Utility functions",
+                "",
+                "pub fn util() {",
+                "    // Using REPLACEMENT in a comment",
+                "    println!(\"Utility function\");",
+                "}",
+                "",
+                "pub fn format_data(input: &str) -> String {",
+                "    // Format containing REPLACEMENT",
+                "    format!(\"[formatted]: {}\", input)",
+                "}"
+            ),
+            "tests/test.rs" => text!(
+                "//! Test module",
+                "",
+                "#[cfg(test)]",
+                "mod tests {",
+                "    use super::*;",
+                "",
+                "    #[test]",
+                "    fn test_basic_functionality() {",
+                "        // Test with PATTERN that shouldn't be changed",
+                "        assert_eq!(\"PATTERN\", \"expected\".replace(\"expected\", \"PATTERN\"));",
+                "    }",
+                "}"
+            ),
+            "docs/readme.md" => text!(
+                "# Project Documentation",
+                "",
+                "## Overview",
+                "",
+                "This project does things with PATTERN processing.",
+                "",
+                "## Examples",
+                "",
+                "```rust",
+                "// Example code with PATTERN",
+                "let x = process_pattern();",
+                "```",
+                "",
+                "## API Reference",
+                "",
+                "See the inline documentation for details."
+            )
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_binary_detection,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "contains_binary.txt" => binary!(
+                b"Some content PATTERN in a file",
+                b"with \xFF invalid PATTERN UTF-8",
+                b"and some PATTERN valid UTF-8 too.",
+            ),
+            "text.txt" => text!(
+                "Regular text file with PATTERN to replace.",
+                "Some more text with various words",
+                "and another usage of PATTERN here"
+            ),
+            "completely_binary.txt" => binary!(
+                b"\x89PNG\r\n\x1a\n",
+                b"\x00\x00\x00\rIHDR",
+                b"\x00\x00PATTERN \x00\x01\x00\x00\x00\x01",
+                b"\x08\x02\x00\x00\x00",
+                b"\x90wS\xde",
+                b"\x00\x00\x00\x0cIDAT",
+                b"x\x9cc```\x00\x00\x00\x04\x00\x01",
+                b"\r\n\x03PATTERN \xb8",
+                b"\x00\x00\x00\x00IEND\xae\x42\x60\x82"
+            ),
+            "binary_extension.pdf" => text!(
+                "This content PATTERN shouldn't matter",
+                "as PDFs should be skipped PATTERN by extension, without",
+                "even reading the file.",
+            ),
+        );
+
+        let search_config = SearchConfiguration {
+            search_text: "PATTERN".to_string(),
+            replacement_text: "REPLACED".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "".to_string(),
+            exclude_globs: "".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless(search_config);
+        // TODO: match on exact return value
+        assert!(result.is_ok());
+
+        assert_test_files!(
+            &temp_dir,
+            "contains_binary.txt" => binary!(
+                b"Some content REPLACED in a file",
+                b"with \xFF invalid PATTERN UTF-8",
+                b"and some REPLACED valid UTF-8 too.",
+            ),
+            "text.txt" => text!(
+                "Regular text file with REPLACED to replace.",
+                "Some more text with various words",
+                "and another usage of REPLACED here"
+            ),
+            "completely_binary.txt" => binary!(
+                b"\x89PNG\r\n\x1a\n",
+                b"\x00\x00\x00\rIHDR",
+                b"\x00\x00PATTERN \x00\x01\x00\x00\x00\x01",
+                b"\x08\x02\x00\x00\x00",
+                b"\x90wS\xde",
+                b"\x00\x00\x00\x0cIDAT",
+                b"x\x9cc```\x00\x00\x00\x04\x00\x01",
+                b"\r\n\x03PATTERN \xb8",
+                b"\x00\x00\x00\x00IEND\xae\x42\x60\x82"
+            ),
+            "binary_extension.pdf" => text!(
+                "This content PATTERN shouldn't matter",
+                "as PDFs should be skipped PATTERN by extension, without",
+                "even reading the file.",
             ),
         );
 
