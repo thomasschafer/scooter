@@ -39,8 +39,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 4".to_owned(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -97,8 +100,11 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 6".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -149,8 +155,11 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         let search_config = SearchConfiguration {
             search_text: r"\[(\d{4})-(\d{2})-(\d{2})\]".to_string(),
@@ -166,8 +175,11 @@ test_with_both_regex_modes!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -222,8 +234,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    // TODO: match on exact return value
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        "Successful replacements (lines): 1".to_string(),
+    );
 
     // Positive lookbehind - match numbers after headings
     let search_config = SearchConfiguration {
@@ -240,8 +254,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    // TODO: match on exact return value
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        "Successful replacements (lines): 1".to_string(),
+    );
 
     // Add spaces after commas in CSV file
     let search_config = SearchConfiguration {
@@ -258,8 +274,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
     };
 
     let result = run_headless(search_config);
-    // TODO: match on exact return value
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        "Successful replacements (lines): 4".to_string(),
+    );
 
     assert_test_files!(
         &temp_dir,
@@ -326,8 +344,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 4".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -368,8 +389,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -410,8 +434,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -470,8 +497,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -520,8 +550,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir1,
@@ -563,8 +596,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 5".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir2,
@@ -608,8 +644,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 1".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -656,8 +695,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 4".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -698,8 +740,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         assert_test_files!(
             &temp_dir,
@@ -745,8 +790,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 1".to_string(),
+        );
 
         // Only visible file should be modified, hidden files untouched
         assert_test_files!(
@@ -777,8 +825,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_string(),
+        );
 
         // Now all files should be modified
         assert_test_files!(
@@ -929,8 +980,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_owned(),
+        );
 
         // Verify only .txt files were modified
         assert_test_files!(
@@ -969,6 +1023,24 @@ test_with_both_regex_modes_and_fixed_strings!(
                 "    println!(\"The answer is {}\", x);",
                 "}"
             )
+        );
+
+        let result = run_headless(SearchConfiguration {
+            search_text: "PATTERN".to_string(),
+            replacement_text: "REPLACEMENT".to_string(),
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: "*.txt".to_string(),
+            exclude_globs: "".to_string(),
+            include_hidden: false,
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        });
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 0".to_owned(),
         );
 
         Ok(())
@@ -1030,8 +1102,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 2".to_owned(),
+        );
 
         // Verify non-.txt files were modified
         assert_test_files!(
@@ -1174,8 +1249,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 6".to_owned(),
+        );
 
         // Verify only source .rs files were modified, not test files or docs
         assert_test_files!(
@@ -1308,8 +1386,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         };
 
         let result = run_headless(search_config);
-        // TODO: match on exact return value
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "Successful replacements (lines): 4".to_owned(),
+        );
 
         assert_test_files!(
             &temp_dir,

@@ -10,7 +10,6 @@ use crate::{
     },
 };
 
-// TODO: test output String
 pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String> {
     let mut error_handler = SimpleErrorHandler::new();
     let result = validate_search_configuration(search_config, &mut error_handler)?;
@@ -27,7 +26,7 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String
     searcher.walk_files(None, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
-            if let Err(file_err) = scooter_core::replace_in_file(&mut results) {
+            if let Err(file_err) = scooter_core::replace::replace_in_file(&mut results) {
                 log::error!("Found error when performing replacement: {file_err}");
             }
             if sender.send(results).is_err() {

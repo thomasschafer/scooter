@@ -68,41 +68,63 @@ impl SearchType {
     }
 }
 
+/// A function that processes search results for a file and determines whether to continue searching.
 type FileVisitor = Box<dyn FnMut(Vec<SearchResult>) -> WalkState + Send>;
 
+/// A file searcher that finds text patterns in files.
+///
+/// `FileSearcher` provides methods to search for text patterns in files within a directory hierarchy.
+/// It supports both fixed string and regex-based search patterns, and can handle various search
+/// options like case sensitivity and whole word matching.
+///
+/// This struct is the main entry point for file searching operations in scooter-core.
 #[derive(Clone, Debug)]
 pub struct FileSearcher {
+    search: SearchType,
+    replace: String,
+    overrides: Override,
+    root_dir: PathBuf,
+    include_hidden: bool,
+}
+
+/// Configuration for creating a new `FileSearcher`.
+pub struct FileSearcherConfig {
+    /// The pattern to search for (fixed string or regex)
     pub search: SearchType,
+    /// The text to replace matches with
     pub replace: String,
+    /// Whether to match only whole words (bounded by non-word characters)
+    pub whole_word: bool,
+    /// Whether to perform case-sensitive matching
+    pub match_case: bool,
+    /// Configuration for file inclusion/exclusion patterns
     pub overrides: Override,
+    /// The root directory to start searching from
     pub root_dir: PathBuf,
+    /// Whether to include hidden files/directories in the search
     pub include_hidden: bool,
 }
 
 impl FileSearcher {
+    /// Creates a new `FileSearcher` from the given configuration.
+    ///
+    /// This method processes the configuration options and prepares the search pattern.
+    /// If `whole_word` or `match_case` options are set, the search pattern is adjusted
+    /// accordingly by wrapping it in appropriate regex patterns.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        search: SearchType,
-        replace: String,
-        // TODO: two bools in a row is a footgun
-        whole_word: bool,
-        match_case: bool,
-        overrides: Override,
-        root_dir: PathBuf,
-        include_hidden: bool,
-    ) -> Self {
-        let search = if !whole_word && match_case {
+    pub fn new(config: FileSearcherConfig) -> Self {
+        let search = if !config.whole_word && config.match_case {
             // No conversion required
-            search
+            config.search
         } else {
-            Self::convert_regex(&search, whole_word, match_case)
+            Self::convert_regex(&config.search, config.whole_word, config.match_case)
         };
         Self {
             search,
-            replace,
-            overrides,
-            root_dir,
-            include_hidden,
+            replace: config.replace,
+            overrides: config.overrides,
+            root_dir: config.root_dir,
+            include_hidden: config.include_hidden,
         }
     }
 
@@ -126,7 +148,58 @@ impl FileSearcher {
         SearchType::PatternAdvanced(fancy_regex)
     }
 
-    // TODO: document
+    /// Walks through files in the configured directory and processes matches.
+    ///
+    /// This method traverses the filesystem starting from the `root_dir` specified in the `FileSearcher`,
+    /// respecting the configured overrides (include/exclude patterns) and hidden file settings.
+    /// It uses parallel processing when available for better performance.
+    ///
+    /// # Parameters
+    ///
+    /// * `cancelled` - An optional atomic boolean that can be used to signal cancellation from another thread.
+    ///   If this is set to `true` during execution, the search will stop as soon as possible.
+    ///
+    /// * `file_handler` - A closure that returns a `FileVisitor`.
+    ///   The returned `FileVisitor` is a function that processes search results for each file with matches.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::{
+    ///     sync::{atomic::AtomicBool, mpsc},
+    ///     path::PathBuf,
+    /// };
+    /// use regex::Regex;
+    /// use ignore::{WalkState, overrides::Override};
+    /// use scooter_core::search::{FileSearcher, FileSearcherConfig, SearchResult, SearchType};
+    ///
+    /// let config = FileSearcherConfig {
+    ///     search: SearchType::Pattern(Regex::new("pattern").unwrap()),
+    ///     replace: "replacement".to_string(),
+    ///     whole_word: false,
+    ///     match_case: true,
+    ///     overrides: Override::empty(),
+    ///     root_dir: PathBuf::from("."),
+    ///     include_hidden: false,
+    /// };
+    /// let searcher = FileSearcher::new(config);
+    /// let cancelled = AtomicBool::new(false);
+    ///
+    /// searcher.walk_files(Some(&cancelled), move || {
+    ///     Box::new(move |results| {
+    ///         if process(results).is_err() {
+    ///             WalkState::Quit
+    ///         } else {
+    ///             WalkState::Continue
+    ///         }
+    ///     })
+    /// });
+    ///
+    /// fn process(results: Vec<SearchResult>) -> anyhow::Result<()> {
+    ///     println!("{results:?}");
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn walk_files<F>(&self, cancelled: Option<&AtomicBool>, mut file_handler: F)
     where
         F: FnMut() -> FileVisitor + Send,
@@ -809,6 +882,97 @@ mod tests {
         }
     }
 
+    mod unicode_handling {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn test_complex_unicode_replacement() {
+            let text = "ASCII text with 世界 (CJK), Здравствуйте (Cyrillic), 안녕하세요 (Hangul), αβγδ (Greek), עִבְרִית (Hebrew)";
+            let search = SearchType::Fixed("世界".to_string());
+
+            let result = FileSearcher::replacement_if_match(text, &search, "World");
+
+            assert_eq!(
+                result,
+                Some("ASCII text with World (CJK), Здравствуйте (Cyrillic), 안녕하세요 (Hangul), αβγδ (Greek), עִבְרִית (Hebrew)".to_string())
+            );
+        }
+
+        #[test]
+        fn test_unicode_word_boundaries() {
+            let pattern = SearchType::Pattern(Regex::new(r"\b\p{Script=Han}{2}\b").unwrap());
+            let converted = FileSearcher::convert_regex(&pattern, true, false);
+
+            assert!(
+                FileSearcher::replacement_if_match("Text 世界 more", &converted, "XX").is_some()
+            );
+            assert!(FileSearcher::replacement_if_match("Text世界more", &converted, "XX").is_none());
+        }
+
+        #[test]
+        fn test_unicode_normalization() {
+            let text = "café";
+            let search = SearchType::Fixed("é".to_string());
+            assert_eq!(
+                FileSearcher::replacement_if_match(text, &search, "e"),
+                Some("cafe".to_string())
+            );
+        }
+
+        #[test]
+        fn test_unicode_in_file() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            writeln!(temp_file, "Line with Greek: αβγδε").unwrap();
+            write!(temp_file, "Line with Emoji: 😀 🚀 🌍\r\n").unwrap();
+            write!(temp_file, "Line with Arabic: مرحبا بالعالم").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = SearchType::Pattern(Regex::new(r"\p{Greek}+").unwrap());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "GREEK").unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].replacement, "Line with Greek: GREEK");
+
+            let search = SearchType::Pattern(Regex::new(r"🚀").unwrap());
+            let results = FileSearcher::search_file(temp_file.path(), &search, "ROCKET").unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].replacement, "Line with Emoji: 😀 ROCKET 🌍");
+            assert_eq!(results[0].line_ending, LineEnding::CrLf);
+        }
+
+        #[test]
+        fn test_unicode_regex_classes() {
+            let text = "Latin A, Cyrillic Б, Greek Γ, Hebrew א";
+
+            let search = SearchType::Pattern(Regex::new(r"\p{Cyrillic}").unwrap());
+            assert_eq!(
+                FileSearcher::replacement_if_match(text, &search, "X"),
+                Some("Latin A, Cyrillic X, Greek Γ, Hebrew א".to_string())
+            );
+
+            let search = SearchType::Pattern(Regex::new(r"\p{Greek}").unwrap());
+            assert_eq!(
+                FileSearcher::replacement_if_match(text, &search, "X"),
+                Some("Latin A, Cyrillic Б, Greek X, Hebrew א".to_string())
+            );
+        }
+
+        #[test]
+        fn test_unicode_capture_groups() {
+            let text = "Name: 李明 (ID: A12345)";
+
+            let search =
+                SearchType::Pattern(Regex::new(r"Name: (\p{Han}+) \(ID: ([A-Z0-9]+)\)").unwrap());
+            assert_eq!(
+                FileSearcher::replacement_if_match(text, &search, "ID $2 belongs to $1"),
+                Some("ID A12345 belongs to 李明".to_string())
+            );
+        }
+    }
+
     mod replace_any {
         use super::*;
 
@@ -1144,51 +1308,6 @@ mod tests {
 
     mod file_searcher_tests {
         use super::*;
-        use ignore::overrides::OverrideBuilder;
-
-        fn create_test_override() -> Override {
-            OverrideBuilder::new("/tmp").build().unwrap()
-        }
-
-        #[test]
-        fn test_new_no_conversion_needed() {
-            let search = test_helpers::create_fixed_search("test");
-            let searcher = FileSearcher::new(
-                search.clone(),
-                "replacement".to_string(),
-                false, // whole_word
-                true,  // match_case
-                create_test_override(),
-                PathBuf::from("/tmp"),
-                false,
-            );
-
-            // When whole_word=false and match_case=true, no conversion should happen
-            // We can't directly compare SearchType due to regex internals, but we can check the replace string
-            assert_eq!(searcher.replace, "replacement");
-            assert_eq!(searcher.root_dir, PathBuf::from("/tmp"));
-            assert!(!searcher.include_hidden);
-        }
-
-        #[test]
-        fn test_new_with_conversion() {
-            let search = test_helpers::create_fixed_search("test");
-            let searcher = FileSearcher::new(
-                search,
-                "replacement".to_string(),
-                true,  // whole_word - should trigger conversion
-                false, // match_case - should trigger conversion
-                create_test_override(),
-                PathBuf::from("/home"),
-                true, // include_hidden
-            );
-
-            assert_eq!(searcher.replace, "replacement");
-            assert_eq!(searcher.root_dir, PathBuf::from("/home"));
-            assert!(searcher.include_hidden);
-            // The search should have been converted to PatternAdvanced
-            assert!(matches!(searcher.search, SearchType::PatternAdvanced(_)));
-        }
 
         #[test]
         fn test_convert_regex_whole_word() {

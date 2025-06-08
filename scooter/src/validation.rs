@@ -2,7 +2,7 @@ use crossterm::style::Stylize;
 use fancy_regex::Regex as FancyRegex;
 use ignore::{overrides::Override, overrides::OverrideBuilder};
 use regex::Regex;
-use scooter_core::search::{FileSearcher, SearchType};
+use scooter_core::search::{FileSearcher, FileSearcherConfig, SearchType};
 use std::path::PathBuf;
 
 use crate::utils;
@@ -99,15 +99,16 @@ pub fn validate_search_configuration<H: ValidationErrorHandler>(
 
     match (search_pattern, overrides) {
         (ValidationResult::Success(search_pattern), ValidationResult::Success(overrides)) => {
-            Ok(ValidationResult::Success(FileSearcher::new(
-                search_pattern,
-                config.replacement_text,
-                config.match_whole_word,
-                config.match_case,
+            let searcher = FileSearcher::new(FileSearcherConfig {
+                search: search_pattern,
+                replace: config.replacement_text,
+                whole_word: config.match_whole_word,
+                match_case: config.match_case,
                 overrides,
-                config.directory,
-                config.include_hidden,
-            )))
+                root_dir: config.directory,
+                include_hidden: config.include_hidden,
+            });
+            Ok(ValidationResult::Success(searcher))
         }
         _ => Ok(ValidationResult::ValidationErrors),
     }
