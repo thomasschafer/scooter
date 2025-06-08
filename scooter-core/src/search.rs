@@ -9,7 +9,6 @@ use content_inspector::{inspect, ContentType};
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkState};
-use log::{error, warn};
 use regex::Regex;
 
 use crate::line_reader::{BufReadExt, LineEnding};
@@ -76,7 +75,6 @@ pub struct FileSearcher {
     pub search: SearchType,
     pub replace: String,
     pub overrides: Override,
-    // TODO: `root_dir` and `include_hidden` are duplicated across this and App
     pub root_dir: PathBuf,
     pub include_hidden: bool,
 }
@@ -176,12 +174,11 @@ impl FileSearcher {
         });
     }
 
-    // TODO: return result, not option
     fn search_file(path: &Path, search: &SearchType, replace: &str) -> Option<Vec<SearchResult>> {
         let mut file = match File::open(path) {
             Ok(f) => f,
             Err(err) => {
-                warn!("Error opening file {}: {err}", path.display());
+                log::error!("Error opening file {}: {err}", path.display());
                 return None;
             }
         };
@@ -193,7 +190,7 @@ impl FileSearcher {
             return None;
         }
         if file.seek(SeekFrom::Start(0)).is_err() {
-            error!("Failed to seek file {} to start", path.display());
+            log::error!("Failed to seek file {} to start", path.display());
             return None;
         }
 
@@ -209,7 +206,7 @@ impl FileSearcher {
                 Ok(l) => l,
                 Err(err) => {
                     read_errors += 1;
-                    warn!(
+                    log::warn!(
                         "Error retrieving line {line_number} of {}: {err}",
                         path.display()
                     );

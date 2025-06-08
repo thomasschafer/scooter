@@ -16,6 +16,7 @@ bool_assert_comparison = "allow"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
+# rust_2024_compatibility = "warn" # TODO: uncomment
 
 [profile.release]
 lto = true

@@ -14,7 +14,8 @@ pub enum ReplaceResult {
     Error(String),
 }
 
-// TODO: document - e.g. should be called on results from same file.
+/// NOTE: this should only be called with search results from the same file
+// TODO: enforce the above via types
 pub fn replace_in_file(results: &mut [SearchResult]) -> anyhow::Result<()> {
     let file_path = match results {
         [r, ..] => r.path.clone(),
