@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Error, Result};
+use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
 use ignore::overrides::OverrideBuilder;
 use std::{
     env::current_dir,
@@ -13,8 +14,6 @@ use syntect::{
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
 };
-
-use scooter_core::line_reader::{BufReadExt, LinesSplitEndings};
 
 pub fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {

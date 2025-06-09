@@ -7,24 +7,13 @@ use std::thread::{self};
 
 use content_inspector::{inspect, ContentType};
 use fancy_regex::Regex as FancyRegex;
+use frep_core::search::SearchResult;
 use ignore::overrides::Override;
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 
 use crate::line_reader::{BufReadExt, LineEnding};
 use crate::replace::ReplaceResult;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchResult {
-    pub path: PathBuf,
-    /// 1-indexed
-    pub line_number: usize,
-    pub line: String,
-    pub line_ending: LineEnding,
-    pub replacement: String,
-    pub included: bool,
-    pub replace_result: Option<ReplaceResult>,
-}
 
 impl SearchResult {
     pub fn display_error(&self) -> (String, &str) {
