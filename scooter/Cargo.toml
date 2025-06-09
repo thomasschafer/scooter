@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.98"
-scooter-core = { path = "../scooter-core" }
+scooter-core = { version = "0.1.0", path = "../scooter-core" }
 clap = { version = "4.5.39", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
