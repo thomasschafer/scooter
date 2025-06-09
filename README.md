@@ -119,6 +119,8 @@ Scooter is fast. Below is a benchmark for comparison, performing a find and repl
 
 Much of the speed is thanks to using the [ripgrep](https://github.com/BurntSushi/ripgrep) file walker, found in the [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crate.
 
+Note that "no TUI" mode can be enabled with the `--no-tui` (`-N`) flag.
+
 
 ## Installation
 
