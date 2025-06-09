@@ -36,15 +36,7 @@ impl SearchResult {
             }
         };
 
-        let path_display = format!(
-            "{}:{}",
-            self.path
-                .clone()
-                .into_os_string()
-                .into_string()
-                .expect("Failed to display path"),
-            self.line_number
-        );
+        let path_display = format!("{}:{}", self.path.display(), self.line_number);
 
         (path_display, error)
     }
@@ -111,7 +103,6 @@ impl FileSearcher {
     /// This method processes the configuration options and prepares the search pattern.
     /// If `whole_word` or `match_case` options are set, the search pattern is adjusted
     /// accordingly by wrapping it in appropriate regex patterns.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(config: FileSearcherConfig) -> Self {
         let search = if !config.whole_word && config.match_case {
             // No conversion required

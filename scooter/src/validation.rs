@@ -45,6 +45,11 @@ impl SimpleErrorHandler {
             Some(format!("Validation errors:\n{}", self.errors.join("\n")))
         }
     }
+
+    fn push_error(&mut self, err_msg: &str, detail: &str) {
+        self.errors
+            .push(format!("\n{title}:\n{detail}", title = err_msg.red()));
+    }
 }
 
 impl Default for SimpleErrorHandler {
@@ -53,12 +58,6 @@ impl Default for SimpleErrorHandler {
     }
 }
 
-impl SimpleErrorHandler {
-    fn push_error(&mut self, err_msg: &str, detail: &str) {
-        self.errors
-            .push(format!("\n{title}:\n{detail}", title = err_msg.red()));
-    }
-}
 impl ValidationErrorHandler for SimpleErrorHandler {
     fn handle_search_text_error(&mut self, _error: &str, detail: &str) {
         self.push_error("Failed to parse search text", detail);

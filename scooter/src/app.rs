@@ -1052,15 +1052,11 @@ impl<'a> App {
 
 struct AppErrorHandler<'a> {
     app: &'a mut App,
-    has_errors: bool,
 }
 
 impl<'a> AppErrorHandler<'a> {
     fn new(app: &'a mut App) -> Self {
-        Self {
-            app,
-            has_errors: false,
-        }
+        Self { app }
     }
 }
 
@@ -1070,7 +1066,6 @@ impl ValidationErrorHandler for AppErrorHandler<'_> {
             .search_fields
             .search_mut()
             .set_error(error.to_owned(), detail.to_string());
-        self.has_errors = true;
     }
 
     fn handle_include_files_error(&mut self, error: &str, detail: &str) {
@@ -1078,7 +1073,6 @@ impl ValidationErrorHandler for AppErrorHandler<'_> {
             .search_fields
             .include_files_mut()
             .set_error(error.to_owned(), detail.to_string());
-        self.has_errors = true;
     }
 
     fn handle_exclude_files_error(&mut self, error: &str, detail: &str) {
@@ -1086,7 +1080,6 @@ impl ValidationErrorHandler for AppErrorHandler<'_> {
             .search_fields
             .exclude_files_mut()
             .set_error(error.to_owned(), detail.to_string());
-        self.has_errors = true;
     }
 }
 

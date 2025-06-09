@@ -1,5 +1,5 @@
 [workspace]
-members = ["scooter", "xtask"]
+members = ["scooter", "scooter-core", "xtask"]
 resolver = "2"
 
 [workspace.lints.clippy]
