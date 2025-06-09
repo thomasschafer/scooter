@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'scooter/Cargo.toml'
+  pull_request: # TODO: remove
   workflow_dispatch:
 
 permissions:
@@ -30,16 +31,27 @@ jobs:
           echo "version=${version}" >> $GITHUB_OUTPUT
           echo "package_name=${package_name}" >> $GITHUB_OUTPUT
 
-      - name: Check if version exists on crates.io
+      - name: Check if versions exist on crates.io
         id: check-version
         run: |
           version="${{ steps.get-package-info.outputs.version }}"
           package_name="${{ steps.get-package-info.outputs.package_name }}"
+
+          # Check if scooter already exists with this version
           if cargo search "${package_name}" | grep -q "^${package_name} = \"${version}\""; then
             echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          # Check if scooter-core is published (required dependency)
+          core_version=$(grep -m1 'scooter-core.*version' scooter/Cargo.toml | grep -o '"[0-9.]*"' | tr -d '"')
+          if ! cargo search "scooter-core" | grep -q "^scooter-core = \"${core_version}\""; then
+            echo "Required dependency scooter-core v${core_version} not found on crates.io" >&2
+            echo "exists=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "exists=false" >> $GITHUB_OUTPUT
 
       - name: Create release
         if: steps.check-version.outputs.exists == 'false'
@@ -168,7 +180,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Publish to crates.io
+      - name: Publish scooter to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |

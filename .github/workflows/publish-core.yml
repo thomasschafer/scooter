@@ -1,0 +1,62 @@
+name: Publish scooter-core
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'scooter-core/Cargo.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-publish:
+    name: Prepare scooter-core publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-package-info.outputs.version }}
+      should_publish: ${{ steps.check-version.outputs.exists == 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get package info from Cargo.toml
+        id: get-package-info
+        run: |
+          version=$(grep -m1 '^version = ' scooter-core/Cargo.toml | cut -d '"' -f2)
+          package_name=$(grep -m1 '^name = ' scooter-core/Cargo.toml | cut -d '"' -f2)
+          echo "version=${version}" >> $GITHUB_OUTPUT
+          echo "package_name=${package_name}" >> $GITHUB_OUTPUT
+
+      - name: Check if version exists on crates.io
+        id: check-version
+        run: |
+          version="${{ steps.get-package-info.outputs.version }}"
+          package_name="${{ steps.get-package-info.outputs.package_name }}"
+          if cargo search "${package_name}" | grep -q "^${package_name} = \"${version}\""; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  publish-core:
+    needs: [prepare-publish]
+    if: needs.prepare-publish.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Publish scooter-core to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd scooter-core
+          cargo publish
