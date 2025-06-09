@@ -1769,7 +1769,7 @@ mod tests {
                 RegexOptions {
                     whole_word: true,
                     match_case: false,
-                }
+                },
             );
 
             assert!(

@@ -72,7 +72,7 @@ impl ValidationErrorHandler for SimpleErrorHandler {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ValidationResult<T> {
     Success(T),
     ValidationErrors,
@@ -96,20 +96,21 @@ pub fn validate_search_configuration<H: ValidationErrorHandler>(
         error_handler,
     )?;
 
-    match (search_pattern, overrides) {
-        (ValidationResult::Success(search_pattern), ValidationResult::Success(overrides)) => {
-            let searcher = FileSearcher::new(FileSearcherConfig {
-                search: search_pattern,
-                replace: config.replacement_text,
-                whole_word: config.match_whole_word,
-                match_case: config.match_case,
-                overrides,
-                root_dir: config.directory,
-                include_hidden: config.include_hidden,
-            });
-            Ok(ValidationResult::Success(searcher))
-        }
-        _ => Ok(ValidationResult::ValidationErrors),
+    if let (ValidationResult::Success(search_pattern), ValidationResult::Success(overrides)) =
+        (search_pattern, overrides)
+    {
+        let searcher = FileSearcher::new(FileSearcherConfig {
+            search: search_pattern,
+            replace: config.replacement_text,
+            whole_word: config.match_whole_word,
+            match_case: config.match_case,
+            overrides,
+            root_dir: config.directory,
+            include_hidden: config.include_hidden,
+        });
+        Ok(ValidationResult::Success(searcher))
+    } else {
+        Ok(ValidationResult::ValidationErrors)
     }
 }
 
