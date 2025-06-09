@@ -404,25 +404,700 @@ mod tests {
         }
     }
 
-    mod replace_whole_word {
+    mod regex_options_tests {
         use super::*;
 
-        #[test]
-        fn test_basic_replacement() {
-            assert_eq!(
-                FileSearcher::replacement_if_match(
-                    "hello world",
-                    &FileSearcher::convert_regex(
-                        &SearchType::Fixed("world".to_string()),
-                        RegexOptions {
-                            whole_word: true,
-                            match_case: false,
-                        }
-                    ),
-                    "earth"
-                ),
-                Some("hello earth".to_string())
-            );
+        mod fixed_string_tests {
+            use super::*;
+
+            mod whole_word_true_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_basic_replacement() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_word_boundaries() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod whole_word_true_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_basic_replacement() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_insensitivity() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_word_boundaries() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_unicode() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "Hello CAFÉ table",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("café".to_string()),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "restaurant"
+                        ),
+                        Some("Hello restaurant table".to_string())
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_basic_replacement() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_substring_matches() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("earthwide".to_string())
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_basic_replacement() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_insensitivity() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_substring_matches() {
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "WORLDWIDE",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Fixed("world".to_string()),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("earthWIDE".to_string())
+                    );
+                }
+            }
+        }
+
+        mod regex_pattern_tests {
+            use super::*;
+
+            mod whole_word_true_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_basic_regex() {
+                    let re = Regex::new(r"w\w+d").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_word_boundaries() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod whole_word_true_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_basic_regex() {
+                    let re = Regex::new(r"w\w+d").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_word_boundaries() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_special_characters() {
+                    let re = Regex::new(r"\d+").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "test 123 number",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "NUM"
+                        ),
+                        Some("test NUM number".to_string())
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_basic_regex() {
+                    let re = Regex::new(r"w\w+d").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+
+                #[test]
+                fn test_substring_matches() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("earthwide".to_string())
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_basic_regex() {
+                    let re = Regex::new(r"w\w+d").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("hello earth".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_substring_matches() {
+                    let re = Regex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "WORLDWIDE",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        Some("earthWIDE".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_complex_pattern() {
+                    let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "SSN: 123-45-6789",
+                            &FileSearcher::convert_regex(
+                                &SearchType::Pattern(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "XXX-XX-XXXX"
+                        ),
+                        Some("SSN: XXX-XX-XXXX".to_string())
+                    );
+                }
+            }
+        }
+
+        mod fancy_regex_pattern_tests {
+            use super::*;
+
+            mod whole_word_true_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_lookbehind() {
+                    let re = FancyRegex::new(r"(?<=@)\w+").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "email: user@example.com",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "domain"
+                        ),
+                        Some("email: user@domain.com".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_lookahead() {
+                    let re = FancyRegex::new(r"\w+(?=\.\w+$)").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "file: document.pdf",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "report"
+                        ),
+                        Some("file: report.pdf".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    let re = FancyRegex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello WORLD",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod whole_word_true_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_lookbehind_case_insensitive() {
+                    let re = FancyRegex::new(r"(?<=@)\w+").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "email: user@EXAMPLE.com",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "domain"
+                        ),
+                        Some("email: user@domain.com".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_word_boundaries() {
+                    let re = FancyRegex::new(r"world").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "worldwide",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: true,
+                                    match_case: false,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_true {
+                use super::*;
+
+                #[test]
+                fn test_complex_pattern() {
+                    let re = FancyRegex::new(r"(?<=\d{4}-\d{2}-\d{2}T)\d{2}:\d{2}").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "Timestamp: 2023-01-15T14:30:00Z",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "XX:XX"
+                        ),
+                        Some("Timestamp: 2023-01-15TXX:XX:00Z".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_case_sensitivity() {
+                    let re = FancyRegex::new(r"WORLD").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "hello world",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: true,
+                                }
+                            ),
+                            "earth"
+                        ),
+                        None
+                    );
+                }
+            }
+
+            mod whole_word_false_match_case_false {
+                use super::*;
+
+                #[test]
+                fn test_complex_pattern_case_insensitive() {
+                    let re = FancyRegex::new(r"(?<=\[)\w+(?=\])").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "Tag: [WARNING] message",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "ERROR"
+                        ),
+                        Some("Tag: [ERROR] message".to_string())
+                    );
+                }
+
+                #[test]
+                fn test_unicode_support() {
+                    let re = FancyRegex::new(r"\p{Greek}+").unwrap();
+                    assert_eq!(
+                        FileSearcher::replacement_if_match(
+                            "Symbol: αβγδ",
+                            &FileSearcher::convert_regex(
+                                &SearchType::PatternAdvanced(re),
+                                RegexOptions {
+                                    whole_word: false,
+                                    match_case: false,
+                                }
+                            ),
+                            "GREEK"
+                        ),
+                        Some("Symbol: GREEK".to_string())
+                    );
+                }
+            }
         }
 
         #[test]
@@ -1089,7 +1764,13 @@ mod tests {
         #[test]
         fn test_unicode_word_boundaries() {
             let pattern = SearchType::Pattern(Regex::new(r"\b\p{Script=Han}{2}\b").unwrap());
-            let converted = FileSearcher::convert_regex(&pattern, true, false);
+            let converted = FileSearcher::convert_regex(
+                &pattern,
+                RegexOptions {
+                    whole_word: true,
+                    match_case: false,
+                }
+            );
 
             assert!(
                 FileSearcher::replacement_if_match("Text 世界 more", &converted, "XX").is_some()
