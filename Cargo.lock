@@ -1326,7 +1326,6 @@ version = "0.5.2"
 dependencies = [
  "anyhow",
  "clap",
- "content_inspector",
  "crossbeam-channel",
  "crossterm",
  "etcetera",
@@ -1340,6 +1339,7 @@ dependencies = [
  "rand 0.9.1",
  "ratatui",
  "regex",
+ "scooter-core",
  "serde",
  "serial_test",
  "similar",
@@ -1349,6 +1349,19 @@ dependencies = [
  "termini",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "scooter-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "content_inspector",
+ "fancy-regex",
+ "ignore",
+ "log",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]

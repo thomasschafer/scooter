@@ -47,8 +47,7 @@
         shellDeps = with pkgs; [
           rustToolchain
           rust-analyzer
-          cargo-watch
-          pkg-config
+          cargo-insta
         ];
       in
       {

@@ -27,12 +27,13 @@ use crate::{
     app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
-    search::SearchResult,
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
         read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
     },
 };
+
+use scooter_core::search::SearchResult;
 
 use super::colour::to_ratatui_colour;
 
@@ -784,11 +785,11 @@ fn render_results_tallies(results_area: Rect, frame: &mut Frame<'_>, replace_sta
     .areas(results_area);
     let widgets: [_; NUM_TALLIES as usize] = [
         (
-            "Successful replacements:",
+            "Successful replacements (lines):",
             replace_state.num_successes,
             success_area,
         ),
-        ("Ignored:", replace_state.num_ignored, ignored_area),
+        ("Ignored (lines):", replace_state.num_ignored, ignored_area),
         ("Errors:", replace_state.errors.len(), errors_area),
     ];
     let widgets = widgets.into_iter().map(|(title, num, area)| {

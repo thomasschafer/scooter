@@ -1,7 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use insta::assert_debug_snapshot;
-use scooter::line_reader::LineEnding;
+use scooter::app::EventHandlingResult;
+use scooter::app::Popup;
+use scooter::app::Screen;
+use scooter_core::line_reader::LineEnding;
 use serial_test::serial;
+use std::env::current_dir;
 use std::fs;
 use std::io;
 use std::mem;
@@ -14,12 +18,13 @@ use tempfile::TempDir;
 use tokio::sync::mpsc;
 
 use scooter::{
+    app::{App, AppError, AppRunConfig, SearchCompleteState, SearchInProgressState, SearchState},
+    fields::{FieldValue, SearchFieldValues, SearchFields},
     replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
-    search::SearchResult,
-    test_with_both_regex_modes, App, AppError, AppRunConfig, EventHandlingResult, FieldValue,
-    Popup, Screen, SearchCompleteState, SearchFieldValues, SearchFields, SearchInProgressState,
-    SearchState,
+    test_with_both_regex_modes,
 };
+
+use scooter_core::search::SearchResult;
 
 mod utils;
 
@@ -55,7 +60,7 @@ async fn test_replace_state() {
 #[tokio::test]
 async fn test_app_reset() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -74,7 +79,7 @@ async fn test_app_reset() {
 #[tokio::test]
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -113,7 +118,7 @@ async fn test_back_from_results() {
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -184,7 +189,7 @@ async fn test_error_popup_invalid_exclude_files() {
 
 fn test_help_popup_on_screen(initial_screen: Screen) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -321,7 +326,7 @@ fn setup_app(
     app_run_config: &AppRunConfig,
 ) -> App {
     let (app, _app_event_receiver) = App::new_with_receiver(
-        Some(temp_dir.path().to_path_buf()),
+        temp_dir.path().to_path_buf(),
         search_field_values,
         app_run_config,
     );
@@ -397,25 +402,25 @@ test_with_both_regex_modes!(
     test_search_replace_defaults,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For TESTING purposes",
                 "Test TEST tEsT tesT test",
                 "TestbTESTctEsTdtesTetest",
                 " test ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "test-TEST-tESt",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -440,25 +445,25 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a 123, file",
                 "It contains some 123, content",
                 "For TESTING purposes",
                 "Test TEST tEsT tesT 123,",
                 "TestbTESTctEsTdtesTe123,",
                 " 123, ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another 123, file",
                 "With different content",
                 "Also for 123,ing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "123,-TEST-123,",
                 "something",
-            }
+            )
         );
         Ok(())
     }
@@ -468,21 +473,21 @@ test_with_both_regex_modes!(
     test_search_replace_fixed_string,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -512,21 +517,21 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+examplebar)(baz 456",
                 "something",
-            }
+            )
         );
         Ok(())
     }
@@ -536,25 +541,25 @@ test_with_both_regex_modes!(
     test_search_replace_match_case,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For TESTING purposes",
                 "Test TEST tEsT tesT test",
                 "TestbTESTctEsTdtesTetest",
                 " test ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "test-TEST-tESt",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -584,25 +589,25 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a REPLACEMENT file",
                 "It contains some REPLACEMENT content",
                 "For TESTING purposes",
                 "Test TEST tEsT tesT REPLACEMENT",
                 "TestbTESTctEsTdtesTeREPLACEMENT",
                 " REPLACEMENT ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another REPLACEMENT file",
                 "With different content",
                 "Also for REPLACEMENTing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "REPLACEMENT-TEST-tESt",
                 "something",
-            }
+            )
         );
         Ok(())
     }
@@ -612,25 +617,25 @@ test_with_both_regex_modes!(
     test_search_replace_dont_match_case,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For TESTING purposes",
                 "Test TEST tEsT tesT test",
                 "TestbTESTctEsTdtesTetest",
                 " test ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "test-TEST-tESt",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -660,25 +665,25 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             &temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a REPLACEMENT file",
                 "It contains some REPLACEMENT content",
                 "For REPLACEMENTING purposes",
                 "REPLACEMENT REPLACEMENT REPLACEMENT REPLACEMENT REPLACEMENT",
                 "REPLACEMENTbREPLACEMENTcREPLACEMENTdREPLACEMENTeREPLACEMENT",
                 " REPLACEMENT ",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another REPLACEMENT file",
                 "With different content",
                 "Also for REPLACEMENTing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "REPLACEMENT-REPLACEMENT-REPLACEMENT",
                 "something",
-            }
+            )
         );
         Ok(())
     }
@@ -688,21 +693,21 @@ test_with_both_regex_modes!(
     test_update_search_results_regex,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -732,21 +737,21 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For VERB purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for VERB",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "VERB",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "VERB",
-            }
+            )
         );
         Ok(())
     }
@@ -756,21 +761,21 @@ test_with_both_regex_modes!(
     test_update_search_results_no_matches,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -800,21 +805,21 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
-            }
+            )
         );
         Ok(())
     }
@@ -824,21 +829,21 @@ test_with_both_regex_modes!(
     test_update_search_results_invalid_regex,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "file1.txt" => {
+            "file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "file2.txt" => {
+            ),
+            "file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "file3.txt" => {
+            ),
+            "file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -874,21 +879,21 @@ test_with_both_regex_modes!(
 #[serial]
 async fn test_advanced_regex_negative_lookahead() {
     let temp_dir = &create_test_files!(
-        "file1.txt" => {
+        "file1.txt" => text!(
             "This is a test file",
             "It contains some test content",
             "For testing purposes",
-        },
-        "file2.txt" => {
+        ),
+        "file2.txt" => text!(
             "Another test file",
             "With different content",
             "Also for testing",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "something",
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
-        }
+        )
     );
 
     let search_field_values = SearchFieldValues {
@@ -918,21 +923,21 @@ async fn test_advanced_regex_negative_lookahead() {
 
     assert_test_files!(
         temp_dir,
-        "file1.txt" => {
+        "file1.txt" => text!(
             "This is a BAR file",
             "It contains some BAR content",
             "For testing purposes",
-        },
-        "file2.txt" => {
+        ),
+        "file2.txt" => text!(
             "Another BAR file",
             "With different content",
             "Also for testing",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "something",
             "123 bar[a-b]+.*bar)(baz 456",
             "something",
-        }
+        )
     );
 }
 
@@ -940,33 +945,33 @@ test_with_both_regex_modes!(
     test_update_search_results_include_dir,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.txt" => {
+            ),
+            "dir2/file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for testing",
-            },
-            "dir2/file3.txt" => {
+            ),
+            "dir2/file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something testing",
-            },
-            "dir3/file4.txt" => {
+            ),
+            "dir3/file4.txt" => text!(
                 "some testing text from dir3/file4.txt, blah",
-            },
-            "dir3/subdir1/file5.txt" => {
+            ),
+            "dir3/subdir1/file5.txt" => text!(
                 "some testing text from dir3/subdir1/file5.txt, blah",
-            },
-            "dir4/subdir2/file6.txt" => {
+            ),
+            "dir4/subdir2/file6.txt" => text!(
                 "some testing text from dir4/subdir2/file6.txt, blah",
-            },
-            "dir4/subdir3/file7.txt" => {
+            ),
+            "dir4/subdir3/file7.txt" => text!(
                 "some testing text from dir4/subdir3/file7.txt, blah",
-            },
+            ),
         );
 
         let search_field_values = SearchFieldValues {
@@ -1000,33 +1005,33 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.txt" => {
+            ),
+            "dir2/file2.txt" => text!(
                 "Another test file",
                 "With different content",
                 "Also for f",
-            },
-            "dir2/file3.txt" => {
+            ),
+            "dir2/file3.txt" => text!(
                 "something",
                 "123 bar[a-b]+.*bar)(baz 456",
                 "something f",
-            },
-            "dir3/file4.txt" => {
+            ),
+            "dir3/file4.txt" => text!(
                 "some f text from dir3/file4.txt, blah",
-            },
-            "dir3/subdir1/file5.txt" => {
+            ),
+            "dir3/subdir1/file5.txt" => text!(
                 "some f text from dir3/subdir1/file5.txt, blah",
-            },
-            "dir4/subdir2/file6.txt" => {
+            ),
+            "dir4/subdir2/file6.txt" => text!(
                 "some testing text from dir4/subdir2/file6.txt, blah",
-            },
-            "dir4/subdir3/file7.txt" => {
+            ),
+            "dir4/subdir3/file7.txt" => text!(
                 "some f text from dir4/subdir3/file7.txt, blah",
-            },
+            ),
         );
         Ok(())
     }
@@ -1036,31 +1041,31 @@ test_with_both_regex_modes!(
     test_update_search_results_exclude_dir,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func testing() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "testing""#,
                 "}",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -1092,31 +1097,31 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func testing() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For REPL purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "REPL""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "REPL""#,
                 "}",
-            }
+            )
         );
         Ok(())
     }
@@ -1126,36 +1131,36 @@ test_with_both_regex_modes!(
     test_update_search_results_multiple_includes_and_excludes,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func testing1() {",
                 r#"  "testing1""#,
                 "}",
-            },
-            "dir1/file2.rs" => {
+            ),
+            "dir1/file2.rs" => text!(
                 "func testing2() {",
                 r#"  "testing2""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "testing""#,
                 "}",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -1188,36 +1193,36 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For REPL purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func REPL1() {",
                 r#"  "REPL1""#,
                 "}",
-            },
-            "dir1/file2.rs" => {
+            ),
+            "dir1/file2.rs" => text!(
                 "func testing2() {",
                 r#"  "testing2""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "REPL""#,
                 "}",
-            }
+            )
         );
         Ok(())
     }
@@ -1227,45 +1232,45 @@ test_with_both_regex_modes!(
     test_update_search_results_multiple_includes_and_excludes_additional_spacing,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func testing1() {",
                 r#"  "testing1""#,
                 "}",
-            },
-            "dir1/file2.rs" => {
+            ),
+            "dir1/file2.rs" => text!(
                 "func testing2() {",
                 r#"  "testing2""#,
                 "}",
-            },
-            "dir1/subdir1/subdir2/file3.rs" => {
+            ),
+            "dir1/subdir1/subdir2/file3.rs" => text!(
                 "func testing3() {",
                 r#"  "testing3""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file4.py" => {
+            ),
+            "dir2/file4.py" => text!(
                 "def main():",
                 "  return 'testing'",
-            },
+            ),
         );
 
         let search_field_values = SearchFieldValues {
@@ -1306,45 +1311,45 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For REPL purposes",
-            },
-            "dir1/file1.rs" => {
+            ),
+            "dir1/file1.rs" => text!(
                 "func REPL1() {",
                 r#"  "REPL1""#,
                 "}",
-            },
-            "dir1/file2.rs" => {
+            ),
+            "dir1/file2.rs" => text!(
                 "func testing2() {",
                 r#"  "testing2""#,
                 "}",
-            },
-            "dir1/subdir1/subdir2/file3.rs" => {
+            ),
+            "dir1/subdir1/subdir2/file3.rs" => text!(
                 "func REPL3() {",
                 r#"  "REPL3""#,
                 "}",
-            },
-            "dir2/file1.txt" => {
+            ),
+            "dir2/file1.txt" => text!(
                 "This is a test file",
                 "It contains some test content",
                 "For testing purposes",
-            },
-            "dir2/file2.rs" => {
+            ),
+            "dir2/file2.rs" => text!(
                 "func main2() {",
                 r#"  "testing""#,
                 "}",
-            },
-            "dir2/file3.rs" => {
+            ),
+            "dir2/file3.rs" => text!(
                 "func main3() {",
                 r#"  "REPL""#,
                 "}",
-            },
-            "dir2/file4.py" => {
+            ),
+            "dir2/file4.py" => text!(
                 "def main():",
                 "  return 'REPL'",
-            },
+            ),
         );
         Ok(())
     }
@@ -1352,15 +1357,15 @@ test_with_both_regex_modes!(
 
 test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async move {
     let temp_dir = &create_test_files!(
-        "dir1/file1.txt" => {
+        "dir1/file1.txt" => text!(
             "This is a text file",
-        },
-        "dir2/file2.gif" => {
+        ),
+        "dir2/file2.gif" => text!(
             "This is a gif file",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "This is a text file",
-        }
+        )
     );
 
     let search_field_values = SearchFieldValues {
@@ -1390,15 +1395,15 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
 
     assert_test_files!(
         temp_dir,
-        "dir1/file1.txt" => {
+        "dir1/file1.txt" => text!(
             "Th  a text file",
-        },
-        "dir2/file2.gif" => {
+        ),
+        "dir2/file2.gif" => text!(
             "This is a gif file",
-        },
-        "file3.txt" => {
+        ),
+        "file3.txt" => text!(
             "Th  a text file",
-        }
+        )
     );
     Ok(())
 });
@@ -1407,15 +1412,15 @@ test_with_both_regex_modes!(
     test_ignores_hidden_files_by_default,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a text file",
-            },
-            ".dir2/file2.rs" => {
+            ),
+            ".dir2/file2.rs" => text!(
                 "This is a file in a hidden directory",
-            },
-            ".file3.txt" => {
+            ),
+            ".file3.txt" => text!(
                 "This is a hidden text file",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -1445,15 +1450,15 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This REPLACED a text file",
-            },
-            ".dir2/file2.rs" => {
+            ),
+            ".dir2/file2.rs" => text!(
                 "This is a file in a hidden directory",
-            },
-            ".file3.txt" => {
+            ),
+            ".file3.txt" => text!(
                 "This is a hidden text file",
-            }
+            )
         );
         Ok(())
     }
@@ -1463,15 +1468,15 @@ test_with_both_regex_modes!(
     test_includes_hidden_files_with_flag,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This is a text file",
-            },
-            ".dir2/file2.rs" => {
+            ),
+            ".dir2/file2.rs" => text!(
                 "This is a file in a hidden directory",
-            },
-            ".file3.txt" => {
+            ),
+            ".file3.txt" => text!(
                 "This is a hidden text file",
-            }
+            )
         );
 
         let search_field_values = SearchFieldValues {
@@ -1502,15 +1507,15 @@ test_with_both_regex_modes!(
 
         assert_test_files!(
             temp_dir,
-            "dir1/file1.txt" => {
+            "dir1/file1.txt" => text!(
                 "This REPLACED a text file",
-            },
-            ".dir2/file2.rs" => {
+            ),
+            ".dir2/file2.rs" => text!(
                 "This REPLACED a file in a hidden directory",
-            },
-            ".file3.txt" => {
+            ),
+            ".file3.txt" => text!(
                 "This REPLACED a hidden text file",
-            }
+            )
         );
         Ok(())
     }
@@ -1617,7 +1622,7 @@ test_with_both_regex_modes!(
 #[tokio::test]
 async fn test_keymaps_search_fields() {
     let (app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1631,7 +1636,7 @@ async fn test_keymaps_search_fields() {
 #[tokio::test]
 async fn test_keymaps_search_complete() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1649,7 +1654,7 @@ async fn test_keymaps_search_complete() {
 #[tokio::test]
 async fn test_keymaps_search_progressing() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1669,7 +1674,7 @@ async fn test_keymaps_search_progressing() {
 #[tokio::test]
 async fn test_keymaps_performing_replacement() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1695,7 +1700,7 @@ async fn test_keymaps_performing_replacement() {
 #[tokio::test]
 async fn test_keymaps_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1737,7 +1742,7 @@ async fn test_keymaps_results() {
 #[tokio::test]
 async fn test_keymaps_popup() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        None,
+        current_dir().unwrap(),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
@@ -1762,8 +1767,11 @@ async fn test_unlock_prepopulated_fields_via_ctrl_u() {
         exclude_files: FieldValue::new("", false),
     };
 
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        current_dir().unwrap(),
+        &search_field_values,
+        &AppRunConfig::default(),
+    );
 
     assert_eq!(
         app.search_fields
@@ -1801,8 +1809,11 @@ async fn test_keybinding_integration_with_disabled_fields() {
         exclude_files: FieldValue::new("", false),
     };
 
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        current_dir().unwrap(),
+        &search_field_values,
+        &AppRunConfig::default(),
+    );
 
     assert_eq!(app.search_fields.highlighted, 2);
 
@@ -1844,8 +1855,11 @@ async fn test_ctrl_u_unlocks_all_fields() {
         exclude_files: FieldValue::new("*.txt", true),
     };
 
-    let (mut app, _app_event_receiver) =
-        App::new_with_receiver(None, &search_field_values, &AppRunConfig::default());
+    let (mut app, _app_event_receiver) = App::new_with_receiver(
+        current_dir().unwrap(),
+        &search_field_values,
+        &AppRunConfig::default(),
+    );
 
     for field in &app.search_fields.fields {
         assert!(field.set_by_cli);

@@ -105,16 +105,19 @@ Run `scooter --help` to see the full list of command-line args that can be used 
 
 ## Performance
 
-Scooter is fast. While it will never be as performant as tools that don't spin up a TUI, such as [ripgrep](https://github.com/BurntSushi/ripgrep) piped into [sd](https://github.com/chmln/sd) (`rg -l <search> | xargs sd <search> <replace>`), it still performs well. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "before" with "after":
+Scooter is fast. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "before" with "after":
 
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
-| `scooter` | 5.045 ± 0.141 | 4.845 | 5.191 | 1.47 ± 0.07 |
-| `rg + sd` | 3.435 ± 0.144 | 3.236 | 3.547 | 1.00 |
-| `fd + sd` | 10.054 ± 0.016 | 10.044 | 10.082 | 2.93 ± 0.12 |
+| `scooter` | 5.140 ± 0.090 | 5.067 | 5.247 | 1.35 ± 0.03 |
+| `scooter (no tui)` | 3.799 ± 0.059 | 3.715 | 3.879 | 1.00 |
+| `ripgrep + sd` | 4.178 ± 0.112 | 4.035 | 4.306 | 1.10 ± 0.03 |
+| `fd + sd` | 10.029 ± 0.002 | 10.026 | 10.032 | 2.64 ± 0.04 |
 
 <!-- BENCHMARK END -->
+
+Much of the speed is thanks to using the [ripgrep](https://github.com/BurntSushi/ripgrep) file walker, found in the [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crate.
 
 
 ## Installation

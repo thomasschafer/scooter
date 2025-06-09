@@ -9,7 +9,7 @@ macro_rules! create_test_files {
         }
     };
 
-    ($($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
+    ($($name:expr => $content:expr),+ $(,)?) => {
         {
             use std::path::Path;
             use std::fs::create_dir_all;
@@ -18,25 +18,41 @@ macro_rules! create_test_files {
             use tokio::io::AsyncWriteExt;
 
             let temp_dir = TempDir::new().unwrap();
-            $(
-                let contents = concat!($($line,"\n",)+);
 
+            $(
                 let path = [temp_dir.path().to_str().unwrap(), $name].join("/");
                 let path = Path::new(&path);
                 create_dir_all(path.parent().unwrap()).unwrap();
-                {
-                    let mut file = File::create(path).await.unwrap();
-                    file.write_all(contents.as_bytes()).await.unwrap();
-                    file.sync_all().await.unwrap();
-                }
+
+                let mut file = File::create(path).await.unwrap();
+                let content: &[u8] = $content;
+                file.write_all(content).await.unwrap();
+                file.sync_all().await.unwrap();
             )+
 
             #[cfg(windows)]
-            let _ = sleep(Duration::from_millis(100));
+            {
+                use tokio::time::{sleep, Duration};
+                sleep(Duration::from_millis(100)).await;
+            }
 
             temp_dir
         }
     };
+}
+
+#[macro_export]
+macro_rules! text {
+    ($($line:expr),+ $(,)?) => {
+        concat!($($line, "\n"),+).as_bytes()
+    };
+}
+
+#[macro_export]
+macro_rules! binary {
+    ($($line:expr),+ $(,)?) => {{
+        &[$($line, b"\n" as &[u8]),+].concat()
+    }};
 }
 
 #[macro_export]
@@ -126,27 +142,31 @@ macro_rules! assert_test_files {
         }
     };
 
-    ($temp_dir:expr, $($name:expr => {$($line:expr),+ $(,)?}),+ $(,)?) => {
+    ($temp_dir:expr, $($name:expr => $content:expr),+ $(,)?) => {
         {
             use std::fs;
             use std::path::Path;
 
             $(
-                let expected_contents = concat!($($line,"\n",)+);
+                let expected_contents: &[u8] = $content;
                 let path = Path::new($temp_dir.path()).join($name);
 
                 assert!(path.exists(), "File {} does not exist", $name);
 
-                let actual_contents = fs::read_to_string(&path)
+                let actual_contents = fs::read(&path)
                     .unwrap_or_else(|e| panic!("Failed to read file {}: {}", $name, e));
-                assert_eq!(
-                    actual_contents,
-                    expected_contents,
-                    "Contents mismatch for file {}.\nExpected:\n{}\nActual:\n{}",
-                    $name,
-                    expected_contents,
-                    actual_contents
-                );
+
+                #[allow(invalid_from_utf8)]
+                if actual_contents != expected_contents {
+                    assert_eq!(
+                        actual_contents,
+                        expected_contents,
+                        "Contents mismatch for file {}\nExpected utf8 lossy conversion:\n{:?}\nActual utf8 lossy conversion:\n{:?}\n",
+                        $name,
+                        String::from_utf8_lossy(expected_contents),
+                        String::from_utf8_lossy(&actual_contents),
+                    );
+                }
             )+
 
             let mut expected_files: Vec<String> = vec![$($name.to_string()),+];

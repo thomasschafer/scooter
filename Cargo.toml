@@ -1,5 +1,5 @@
 [workspace]
-members = ["scooter", "xtask"]
+members = ["scooter", "scooter-core", "xtask"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -12,9 +12,11 @@ missing_panics_doc = "allow"
 redundant_else = "allow"
 if_not_else = "allow"
 needless_raw_string_hashes = "allow"
+bool_assert_comparison = "allow"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
+# rust_2024_compatibility = "warn" # TODO: uncomment
 
 [profile.release]
 lto = true

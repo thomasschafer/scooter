@@ -1,6 +1,5 @@
-use anyhow::Error;
-use crossterm::{event::KeyEvent, style::Stylize};
-use ignore::overrides::{Override, OverrideBuilder};
+use crossterm::event::KeyEvent;
+use ignore::WalkState;
 use log::warn;
 use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use std::{
@@ -12,7 +11,6 @@ use std::{
     },
 };
 use std::{
-    env::current_dir,
     mem,
     path::PathBuf,
     time::{Duration, Instant},
@@ -25,10 +23,15 @@ use tokio::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, PerformingReplacementState, ReplaceState},
-    search::{ParsedFields, SearchResult},
+    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
+    validation::{
+        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        ValidationResult,
+    },
 };
+
+use scooter_core::search::{FileSearcher, SearchResult};
 
 #[derive(Debug)]
 pub enum Event {
@@ -369,11 +372,6 @@ impl Screen {
     }
 }
 
-enum ValidatedField<T> {
-    Parsed(T),
-    Error,
-}
-
 #[derive(Clone, Debug)]
 pub struct AppError {
     pub name: String,
@@ -425,17 +423,12 @@ pub struct App {
 
 impl<'a> App {
     fn new(
-        directory: Option<PathBuf>,
+        directory: PathBuf,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
     ) -> Self {
         let config = load_config().expect("Failed to read config file");
-
-        let directory = match directory {
-            Some(d) => d,
-            None => current_dir().unwrap(),
-        };
 
         let search_fields = SearchFields::with_values(
             search_field_values,
@@ -464,7 +457,7 @@ impl<'a> App {
     }
 
     pub fn new_with_receiver(
-        directory: Option<PathBuf>,
+        directory: PathBuf,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
     ) -> (Self, UnboundedReceiver<Event>) {
@@ -501,7 +494,7 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            Some(self.directory.clone()),
+            self.directory.clone(),
             &SearchFieldValues::default(),
             self.event_sender.clone(),
             &AppRunConfig {
@@ -552,18 +545,16 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        match self
-            .validate_fields(&background_processing_sender, cancelled.clone())
-            .unwrap()
-        {
+        match self.validate_fields().unwrap() {
             None => {
                 self.current_screen = Screen::SearchFields;
             }
             Some(parsed_fields) => {
-                let handle = Self::update_search_results(
+                let handle = Self::spawn_update_search_results(
                     parsed_fields,
-                    background_processing_sender.clone(),
+                    &background_processing_sender,
                     self.event_sender.clone(),
+                    cancelled.clone(),
                 );
                 self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
                     handle,
@@ -656,20 +647,10 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    #[allow(clippy::format_collect)]
-                    let errors = replace_state
-                        .errors
-                        .iter()
-                        .map(|error| {
-                            let (path, error) = error.display_error();
-                            format!("\n{path}:\n  {}", error.red())
-                        })
-                        .collect::<String>();
-                    let results = format!(
-                        "Successful replacements: {replacements}\nIgnored: {ignored}\nErrors: {num_errors}{errors}",
-                        replacements = replace_state.num_successes,
-                        ignored = replace_state.num_ignored,
-                        num_errors = replace_state.errors.len(),
+                    let results = format_replacement_results(
+                        replace_state.num_successes,
+                        Some(replace_state.num_ignored),
+                        Some(&replace_state.errors),
                     );
                     EventHandlingResult::Exit(Some(results))
                 } else {
@@ -818,110 +799,51 @@ impl<'a> App {
         }
     }
 
-    fn is_regex_error(e: &Error) -> bool {
-        e.downcast_ref::<regex::Error>().is_some()
-            || e.downcast_ref::<fancy_regex::Error>().is_some()
-    }
-
-    fn validate_fields(
-        &mut self,
-        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
-        cancelled: Arc<AtomicBool>,
-    ) -> anyhow::Result<Option<ParsedFields>> {
-        let search_pattern = match self.search_fields.search_type() {
-            Ok(p) => ValidatedField::Parsed(p),
-            Err(e) => {
-                if Self::is_regex_error(&e) {
-                    self.search_fields
-                        .search_mut()
-                        .set_error("Couldn't parse regex".to_owned(), e.to_string());
-                    ValidatedField::Error
-                } else {
-                    return Err(e);
-                }
-            }
+    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
+        let search_config = SearchConfiguration {
+            search_text: self.search_fields.search().text.clone(),
+            replacement_text: self.search_fields.replace().text().to_string(),
+            fixed_strings: self.search_fields.fixed_strings().checked,
+            advanced_regex: self.search_fields.advanced_regex,
+            include_globs: self.search_fields.include_files().text().to_string(),
+            exclude_globs: self.search_fields.exclude_files().text().to_string(),
+            match_whole_word: self.search_fields.whole_word().checked,
+            match_case: self.search_fields.match_case().checked,
+            include_hidden: self.include_hidden,
+            directory: self.directory.clone(),
         };
 
-        let overrides = self.validate_overrides()?;
+        let mut error_handler = AppErrorHandler::new(self);
+        let result = validate_search_configuration(search_config, &mut error_handler)?;
 
-        if let (ValidatedField::Parsed(search_pattern), ValidatedField::Parsed(overrides)) =
-            (search_pattern, overrides)
-        {
-            Ok(Some(ParsedFields::new(
-                search_pattern,
-                self.search_fields.replace().text().to_string(),
-                self.search_fields.whole_word().checked,
-                self.search_fields.match_case().checked,
-                overrides,
-                self.directory.clone(),
-                self.include_hidden,
-                cancelled,
-                background_processing_sender.clone(),
-            )))
-        } else {
-            self.set_popup(Popup::Error);
-            Ok(None)
-        }
-    }
-
-    fn add_overrides(
-        overrides: &mut OverrideBuilder,
-        files: &str,
-        prefix: &str,
-    ) -> anyhow::Result<()> {
-        for file in files.split(',') {
-            let file = file.trim();
-            if !file.is_empty() {
-                overrides.add(&format!("{prefix}{file}"))?;
+        match result {
+            ValidationResult::Success(searcher) => Ok(Some(searcher)),
+            ValidationResult::ValidationErrors => {
+                self.set_popup(Popup::Error);
+                Ok(None)
             }
         }
-        Ok(())
     }
 
-    fn validate_overrides(&mut self) -> anyhow::Result<ValidatedField<Override>> {
-        let mut overrides = OverrideBuilder::new(self.directory.clone());
-        let mut success = true;
-
-        let include_res = Self::add_overrides(
-            &mut overrides,
-            self.search_fields.include_files().text(),
-            "",
-        );
-        if let Err(e) = include_res {
-            self.search_fields
-                .include_files_mut()
-                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            success = false;
-        }
-
-        let exlude_res = Self::add_overrides(
-            &mut overrides,
-            self.search_fields.exclude_files().text(),
-            "!",
-        );
-        if let Err(e) = exlude_res {
-            self.search_fields
-                .exclude_files_mut()
-                .set_error("Couldn't parse glob pattern".to_string(), e.to_string());
-            success = false;
-        }
-
-        if success {
-            let overrides = overrides.build()?;
-            Ok(ValidatedField::Parsed(overrides))
-        } else {
-            Ok(ValidatedField::Error)
-        }
-    }
-
-    pub fn update_search_results(
-        parsed_fields: ParsedFields,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+    pub fn spawn_update_search_results(
+        parsed_fields: FileSearcher,
+        sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
+        cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
+        let sender = sender.clone();
         tokio::spawn(async move {
+            let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.search_parallel();
+                parsed_fields.walk_files(Some(&cancelled), || {
+                    let sender = sender_for_search.clone();
+                    Box::new(move |results| {
+                        // Ignore error - likely state reset, thread about to be killed
+                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+
+                        WalkState::Continue
+                    })
+                });
             });
 
             let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
@@ -941,9 +863,7 @@ impl<'a> App {
                 }
             }
 
-            if let Err(err) =
-                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
-            {
+            if let Err(err) = sender.send(BackgroundProcessingEvent::SearchCompleted) {
                 // Log and ignore error: likely have gone back to previous screen
                 warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
@@ -1130,13 +1050,48 @@ impl<'a> App {
     }
 }
 
+struct AppErrorHandler<'a> {
+    app: &'a mut App,
+}
+
+impl<'a> AppErrorHandler<'a> {
+    fn new(app: &'a mut App) -> Self {
+        Self { app }
+    }
+}
+
+impl ValidationErrorHandler for AppErrorHandler<'_> {
+    fn handle_search_text_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .search_mut()
+            .set_error(error.to_owned(), detail.to_string());
+    }
+
+    fn handle_include_files_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .include_files_mut()
+            .set_error(error.to_owned(), detail.to_string());
+    }
+
+    fn handle_exclude_files_error(&mut self, error: &str, detail: &str) {
+        self.app
+            .search_fields
+            .exclude_files_mut()
+            .set_error(error.to_owned(), detail.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::Rng;
-    use std::path::Path;
+    use std::{env::current_dir, path::Path};
+
+    use crate::replace::ReplaceStats;
 
     use super::*;
-    use crate::line_reader::LineEnding;
+    use scooter_core::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();
@@ -1292,7 +1247,7 @@ mod tests {
     fn build_test_app(results: Vec<SearchResult>) -> App {
         let (event_sender, _) = mpsc::unbounded_channel();
         let mut app = App::new(
-            None,
+            current_dir().unwrap(),
             &SearchFieldValues::default(),
             event_sender,
             &AppRunConfig::default(),
@@ -1308,20 +1263,18 @@ mod tests {
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) =
+            let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results, num_ignored)
+            replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
 
         assert_eq!(
             stats,
-            ReplaceState {
+            ReplaceStats {
                 num_successes: 3,
-                num_ignored: 0,
                 errors: vec![],
-                replacement_errors_pos: 0,
             }
         );
     }
@@ -1337,20 +1290,18 @@ mod tests {
             ignored_result(),
         ]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, num_ignored) =
+            let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results, num_ignored)
+            replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
 
         assert_eq!(
             stats,
-            ReplaceState {
+            ReplaceStats {
                 num_successes: 2,
-                num_ignored: 2,
                 errors: vec![error_result],
-                replacement_errors_pos: 0,
             }
         );
     }

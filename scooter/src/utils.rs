@@ -1,7 +1,9 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Error, Result};
+use ignore::overrides::OverrideBuilder;
 use std::{
+    env::current_dir,
     fs::File,
-    io::{self, BufRead, BufReader, Lines},
+    io::{self, BufReader},
     num::NonZeroUsize,
     ops::{Add, Div, Mul, Rem},
     path::{Path, PathBuf},
@@ -11,6 +13,8 @@ use syntect::{
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
 };
+
+use scooter_core::line_reader::{BufReadExt, LinesSplitEndings};
 
 pub fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
@@ -50,15 +54,19 @@ where
     result
 }
 
-pub fn validate_directory(dir_str: &str) -> Result<PathBuf> {
-    let path = Path::new(dir_str);
-    if path.exists() {
-        Ok(path.to_path_buf())
-    } else {
-        Err(anyhow!(
-            "Directory '{}' does not exist. Please provide a valid directory path.",
-            dir_str
-        ))
+pub fn validate_dir_or_default(dir: Option<String>) -> Result<PathBuf> {
+    match dir {
+        Some(dir_str) => {
+            let path = Path::new(&dir_str);
+            if path.exists() {
+                Ok(path.to_path_buf())
+            } else {
+                Err(anyhow!(
+                    "Directory '{dir_str}' does not exist. Please provide a valid directory path.",
+                ))
+            }
+        }
+        None => Ok(current_dir()?),
     }
 }
 
@@ -90,13 +98,21 @@ pub fn read_lines_range(
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-
     let lines = reader
-        .lines()
+        .lines_with_endings()
         .enumerate()
         .skip(start)
         .take(end - start + 1)
-        .map(|(idx, line)| (idx, line.unwrap()));
+        .map(move |(idx, line_result)| {
+            let line = match line_result {
+                Ok((content, _ending)) => String::from_utf8_lossy(&content).into_owned(),
+                Err(e) => {
+                    log::error!("Error reading line {idx}: {e}");
+                    String::new()
+                }
+            };
+            (idx, line)
+        });
 
     Ok(lines)
 }
@@ -104,7 +120,7 @@ pub fn read_lines_range(
 pub type HighlightedLine = Vec<(Option<Style>, String)>;
 
 struct HighlightedLinesIterator<'a> {
-    lines: Lines<BufReader<File>>,
+    lines: LinesSplitEndings<BufReader<File>>,
     highlighter: HighlightLines<'a>,
     syntax_set: &'a SyntaxSet,
     current_idx: usize,
@@ -132,8 +148,9 @@ impl<'a> HighlightedLinesIterator<'a> {
 
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let mut lines = reader.lines();
+        let mut lines = reader.lines_with_endings();
 
+        // Skip lines if we're not doing full highlighting
         if !full_highlighting {
             for _ in 0..start_idx {
                 if lines.next().is_none() {
@@ -168,7 +185,7 @@ impl Iterator for HighlightedLinesIterator<'_> {
             }
         }
 
-        for line_result in self.lines.by_ref() {
+        loop {
             let idx = self.current_idx;
             self.current_idx += 1;
 
@@ -177,8 +194,11 @@ impl Iterator for HighlightedLinesIterator<'_> {
                 "Should have skipped early lines before iteration"
             );
 
-            match line_result {
-                Ok(line) => {
+            match self.lines.next() {
+                Some(Ok((content, _ending))) => {
+                    // Convert to UTF-8 lossy, which replaces invalid sequences with the � character
+                    let line = String::from_utf8_lossy(&content).into_owned();
+
                     let highlighted_res = self.highlighter.highlight_line(&line, self.syntax_set);
                     if let Err(ref e) = highlighted_res {
                         log::error!("Highlighting error at line {idx}: {e}");
@@ -199,13 +219,13 @@ impl Iterator for HighlightedLinesIterator<'_> {
                     };
                     return Some((idx, highlighted));
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     log::error!("Error reading line {}: {e}", self.current_idx);
                     return None;
                 }
+                None => return None, // EOF
             }
         }
-        None
     }
 }
 
@@ -312,6 +332,24 @@ pub fn largest_range_centered_on(
     }
 
     Ok((cur_start, cur_end))
+}
+
+pub fn is_regex_error(e: &Error) -> bool {
+    e.downcast_ref::<regex::Error>().is_some() || e.downcast_ref::<fancy_regex::Error>().is_some()
+}
+
+pub fn add_overrides(
+    overrides: &mut OverrideBuilder,
+    files: &str,
+    prefix: &str,
+) -> anyhow::Result<()> {
+    for file in files.split(',') {
+        let file = file.trim();
+        if !file.is_empty() {
+            overrides.add(&format!("{prefix}{file}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[macro_export]
@@ -477,7 +515,7 @@ mod tests {
         let temp_dir = setup_test_dir();
         let dir_path = temp_dir.path().to_str().unwrap();
 
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), PathBuf::from(dir_path));
     }
@@ -485,7 +523,7 @@ mod tests {
     #[test]
     fn test_validate_directory_does_not_exist() {
         let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
-        let result = validate_directory(nonexistent_path);
+        let result = validate_dir_or_default(Some(nonexistent_path.to_owned()));
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -500,7 +538,7 @@ mod tests {
         fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
 
         let dir_path = nested_dir.to_str().unwrap();
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), nested_dir);
@@ -513,7 +551,7 @@ mod tests {
         fs::create_dir(&special_dir).expect("Failed to create directory with special characters");
 
         let dir_path = special_dir.to_str().unwrap();
-        let result = validate_directory(dir_path);
+        let result = validate_dir_or_default(Some(dir_path.to_owned()));
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);

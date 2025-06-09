@@ -5,7 +5,6 @@ use log::error;
 use log::LevelFilter;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::env;
@@ -17,14 +16,15 @@ use std::str::FromStr;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::logging::DEFAULT_LOG_LEVEL;
 use crate::{
     app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
     fields::SearchFieldValues,
-    logging::setup_logging,
+    logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
-    utils::validate_directory,
+    utils::validate_dir_or_default,
 };
+
+use crate::validation::SearchConfiguration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -46,6 +46,25 @@ impl Default for AppConfig<'_> {
     }
 }
 
+impl TryFrom<AppConfig<'_>> for SearchConfiguration {
+    type Error = anyhow::Error;
+
+    fn try_from(config: AppConfig<'_>) -> anyhow::Result<Self> {
+        Ok(SearchConfiguration {
+            search_text: config.search_field_values.search.value.to_string(),
+            replacement_text: config.search_field_values.replace.value.to_string(),
+            fixed_strings: config.search_field_values.fixed_strings.value,
+            advanced_regex: config.app_run_config.advanced_regex,
+            include_globs: config.search_field_values.include_files.value.to_string(),
+            exclude_globs: config.search_field_values.exclude_files.value.to_string(),
+            match_whole_word: config.search_field_values.match_whole_word.value,
+            match_case: config.search_field_values.match_case.value,
+            include_hidden: config.app_run_config.include_hidden,
+            directory: validate_dir_or_default(config.directory)?,
+        })
+    }
+}
+
 pub trait EventStream:
     Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin
 {
@@ -54,49 +73,90 @@ impl<T: Stream<Item = Result<CrosstermEvent, std::io::Error>> + Send + Unpin> Ev
 
 pub type CrosstermEventStream = event::EventStream;
 
-pub struct AppRunner<B: Backend, E: EventStream> {
+pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
-    buffer_snapshot_sender: Option<UnboundedSender<String>>,
+    snapshot_provider: S,
 }
 
-pub trait BufferProvider {
-    fn get_buffer(&mut self) -> &Buffer;
+pub trait SnapshotProvider<B: Backend> {
+    fn send_snapshot(&self, tui: &Tui<B>);
 }
 
-impl BufferProvider for AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    fn get_buffer(&mut self) -> &Buffer {
-        self.tui.terminal.current_buffer_mut()
+pub struct NoOpSnapshotProvider;
+
+impl<B: Backend> SnapshotProvider<B> for NoOpSnapshotProvider {
+    #[inline]
+    fn send_snapshot(&self, _tui: &Tui<B>) {
+        // No-op - optimized away in release builds
     }
 }
 
-impl<E: EventStream> BufferProvider for AppRunner<TestBackend, E> {
-    fn get_buffer(&mut self) -> &Buffer {
-        self.tui.terminal.backend().buffer()
+pub struct TestSnapshotProvider {
+    sender: UnboundedSender<String>,
+}
+
+// Used in integration tests
+#[allow(dead_code)]
+impl TestSnapshotProvider {
+    pub fn new(sender: UnboundedSender<String>) -> Self {
+        Self { sender }
     }
 }
 
-impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream> {
-    pub fn new_terminal(config: AppConfig<'_>) -> anyhow::Result<Self> {
+impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
+    fn send_snapshot(&self, tui: &Tui<TestBackend>) {
+        let buffer = tui.terminal.backend().buffer();
+        let contents = buffer
+            .content
+            .iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                if i % buffer.area.width as usize == 0 && i > 0 {
+                    "\n" // TODO: should this be `cell.symbol() + "\n"`
+                } else {
+                    cell.symbol()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let _ = self.sender.send(contents);
+    }
+}
+
+impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
+    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
-        Self::new(config, backend, event_stream)
+        let snapshot_provider = NoOpSnapshotProvider;
+        Self::new(config, backend, event_stream, snapshot_provider)
     }
 }
 
-impl<B: Backend + 'static, E: EventStream> AppRunner<B, E>
-where
-    Self: BufferProvider,
-{
-    pub fn new(config: AppConfig<'_>, backend: B, event_stream: E) -> anyhow::Result<Self> {
-        setup_logging(config.log_level)?;
+impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
+    // Used in integration tests
+    #[allow(dead_code)]
+    pub fn new_test_with_snapshot(
+        config: AppConfig<'_>,
+        backend: TestBackend,
+        event_stream: E,
+        snapshot_sender: UnboundedSender<String>,
+    ) -> anyhow::Result<Self> {
+        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
+        Self::new(config, backend, event_stream, snapshot_provider)
+    }
+}
 
-        let directory = match config.directory {
-            None => None,
-            Some(d) => Some(validate_directory(&d)?),
-        };
+impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
+    pub fn new(
+        config: AppConfig<'_>,
+        backend: B,
+        event_stream: E,
+        snapshot_provider: S,
+    ) -> anyhow::Result<Self> {
+        let directory = validate_dir_or_default(config.directory)?;
 
         let (app, event_receiver) = App::new_with_receiver(
             directory,
@@ -112,15 +172,8 @@ where
             event_receiver,
             tui,
             event_stream,
-            buffer_snapshot_sender: None,
+            snapshot_provider,
         })
-    }
-
-    // Used only for testing
-    #[allow(dead_code)]
-    pub fn with_snapshot_channel(mut self, sender: UnboundedSender<String>) -> Self {
-        self.buffer_snapshot_sender = Some(sender);
-        self
     }
 
     pub fn init(&mut self) -> anyhow::Result<()> {
@@ -132,36 +185,8 @@ where
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
         self.tui.draw(&mut self.app)?;
-        self.send_snapshot();
+        self.snapshot_provider.send_snapshot(&self.tui);
         Ok(())
-    }
-
-    fn buffer_contents(&mut self) -> String {
-        let buffer = self.get_buffer();
-        buffer
-            .content
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                if i % buffer.area.width as usize == 0 && i > 0 {
-                    "\n"
-                } else {
-                    cell.symbol()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("")
-    }
-
-    fn send_snapshot(&mut self) {
-        if self.buffer_snapshot_sender.is_none() {
-            return;
-        }
-
-        let contents = self.buffer_contents();
-        if let Some(sender) = &self.buffer_snapshot_sender {
-            let _ = sender.send(contents);
-        }
     }
 
     pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<String>> {
@@ -328,13 +353,10 @@ where
     }
 }
 
-pub async fn run_app(app_config: AppConfig<'_>) -> anyhow::Result<()> {
-    let mut runner = AppRunner::new_terminal(app_config)?;
+pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
+    let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let res = runner.run_event_loop().await?;
+    let results = runner.run_event_loop().await?;
     runner.cleanup()?;
-    if let Some(res) = res {
-        println!("{res}");
-    }
-    Ok(())
+    Ok(results)
 }
