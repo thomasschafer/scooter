@@ -45,7 +45,7 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String
 
     for error in &stats.errors {
         let (path, error) = error.display_error();
-        log::error!("\n{path}:\n  {error}");
+        log::error!("Error when replacing {path}: {error}");
     }
     let results_output = format_replacement_results(stats.num_successes, None, None);
 

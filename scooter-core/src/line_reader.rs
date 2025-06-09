@@ -108,7 +108,6 @@ impl<R: BufRead> BufReadExt for R {}
 /// ```
 /// use scooter_core::line_reader::{split_line_ending, LineEnding};
 ///
-/// // Need to use as_slice() to convert &[u8; N] to &[u8]
 /// assert_eq!(split_line_ending(b"hello\n"), (&b"hello"[..], LineEnding::Lf));
 /// assert_eq!(split_line_ending(b"hello\r\n"), (&b"hello"[..], LineEnding::CrLf));
 /// assert_eq!(split_line_ending(b"hello"), (&b"hello"[..], LineEnding::None));

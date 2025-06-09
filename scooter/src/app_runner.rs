@@ -115,7 +115,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
             .enumerate()
             .map(|(i, cell)| {
                 if i % buffer.area.width as usize == 0 && i > 0 {
-                    "\n"
+                    "\n" // TODO: should this be `cell.symbol() + "\n"`
                 } else {
                     cell.symbol()
                 }
