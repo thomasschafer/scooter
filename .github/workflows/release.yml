@@ -45,9 +45,16 @@ jobs:
           # Check if scooter-core is published (required dependency)
           core_version=$(grep -m1 'scooter-core.*version' scooter/Cargo.toml | grep -o '"[0-9.]*"' | tr -d '"')
           if ! cargo search "scooter-core" | grep -q "^scooter-core = \"${core_version}\""; then
-            echo "Required dependency scooter-core v${core_version} not found on crates.io" >&2
-            echo "exists=true" >> $GITHUB_OUTPUT
-            exit 1
+            echo "Required dependency scooter-core v${core_version} not found on crates.io. Waiting 30 seconds and trying again..." >&2
+            # Wait and retry - the core workflow might still be running
+            sleep 30
+            if ! cargo search "scooter-core" | grep -q "^scooter-core = \"${core_version}\""; then
+              echo "Required dependency scooter-core v${core_version} still not found on crates.io after waiting" >&2
+              echo "exists=true" >> $GITHUB_OUTPUT
+              exit 1
+            else
+              echo "Required dependency scooter-core v${core_version} found on second attempt!" >&2
+            fi
           fi
 
           echo "exists=false" >> $GITHUB_OUTPUT
