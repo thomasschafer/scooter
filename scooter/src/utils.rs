@@ -98,37 +98,23 @@ pub fn read_lines_range(
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let mut lines = reader.lines_with_endings();
+    let lines = reader
+        .lines_with_endings()
+        .enumerate()
+        .skip(start)
+        .take(end - start + 1)
+        .map(move |(idx, line_result)| {
+            let line = match line_result {
+                Ok((content, _ending)) => String::from_utf8_lossy(&content).into_owned(),
+                Err(e) => {
+                    log::error!("Error reading line {idx}: {e}");
+                    String::new()
+                }
+            };
+            (idx, line)
+        });
 
-    // Skip lines before the start index
-    let mut current_idx = 0;
-    while current_idx < start {
-        if lines.next().is_none() {
-            // EOF, return empty iterator
-            return Ok(Vec::new().into_iter());
-        }
-        current_idx += 1;
-    }
-
-    // Read lines from start to end (inclusive)
-    let mut result = Vec::new();
-    while current_idx <= end {
-        match lines.next() {
-            Some(Ok((content, _ending))) => {
-                let line = String::from_utf8_lossy(&content).into_owned();
-                result.push((current_idx, line));
-                current_idx += 1;
-            }
-            Some(Err(e)) => {
-                return Err(e);
-            }
-            None => {
-                break; // EOF
-            }
-        }
-    }
-
-    Ok(result.into_iter())
+    Ok(lines)
 }
 
 pub type HighlightedLine = Vec<(Option<Style>, String)>;
