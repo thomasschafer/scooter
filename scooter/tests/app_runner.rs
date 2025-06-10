@@ -4,7 +4,7 @@ use futures::Stream;
 use insta::assert_snapshot;
 use ratatui::backend::TestBackend;
 use regex::Regex;
-use std::{io, path::Path, pin::Pin, task::Poll};
+use std::{env, io, path::Path, pin::Pin, task::Poll};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -162,7 +162,7 @@ type TestRunner = (
 
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
     let config = AppConfig {
-        directory: directory.map(|d| d.to_str().unwrap().to_owned()),
+        directory: directory.map_or(env::current_dir().unwrap(), Path::to_path_buf),
         app_run_config: AppRunConfig {
             advanced_regex,
             ..AppRunConfig::default()
@@ -1195,7 +1195,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
     };
 
     let config = AppConfig {
-        directory: Some(temp_dir.path().to_string_lossy().into_owned()),
+        directory: temp_dir.path().to_path_buf(),
         search_field_values,
         ..AppConfig::default()
     };
@@ -1324,7 +1324,7 @@ test_with_both_regex_modes!(
             ..SearchFieldValues::default()
         };
         let config = AppConfig {
-            directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
+            directory: temp_dir.path().to_path_buf(),
             search_field_values,
             app_run_config: AppRunConfig {
                 advanced_regex,
@@ -1384,7 +1384,7 @@ test_with_both_regex_modes!(
         );
 
         let config = AppConfig {
-            directory: Some(temp_dir.path().to_str().unwrap().to_owned()),
+            directory: temp_dir.path().to_path_buf(),
             app_run_config: AppRunConfig {
                 advanced_regex,
                 immediate_replace: true,

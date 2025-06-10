@@ -1,12 +1,11 @@
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{bail, Error};
 use ignore::overrides::OverrideBuilder;
 use std::{
-    env::current_dir,
     fs::File,
     io::{self, BufReader},
     num::NonZeroUsize,
     ops::{Add, Div, Mul, Rem},
-    path::{Path, PathBuf},
+    path::Path,
 };
 use syntect::{
     easy::HighlightLines,
@@ -52,22 +51,6 @@ where
     }
 
     result
-}
-
-pub fn validate_dir_or_default(dir: Option<String>) -> Result<PathBuf> {
-    match dir {
-        Some(dir_str) => {
-            let path = Path::new(&dir_str);
-            if path.exists() {
-                Ok(path.to_path_buf())
-            } else {
-                Err(anyhow!(
-                    "Directory '{dir_str}' does not exist. Please provide a valid directory path.",
-                ))
-            }
-        }
-        None => Ok(current_dir()?),
-    }
 }
 
 pub fn ceil_div<T>(a: T, b: T) -> T
@@ -411,9 +394,9 @@ macro_rules! test_with_both_regex_modes_and_fixed_strings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Write};
+    use std::io::Write;
     use syntect::highlighting::ThemeSet;
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_replace_start_matching_prefix() {
@@ -504,57 +487,6 @@ mod tests {
             grouped,
             vec![vec!["apple", "app"], vec!["banana", "ban"], vec!["cat"]]
         );
-    }
-
-    fn setup_test_dir() -> TempDir {
-        TempDir::new().unwrap()
-    }
-
-    #[test]
-    fn test_validate_directory_exists() {
-        let temp_dir = setup_test_dir();
-        let dir_path = temp_dir.path().to_str().unwrap();
-
-        let result = validate_dir_or_default(Some(dir_path.to_owned()));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PathBuf::from(dir_path));
-    }
-
-    #[test]
-    fn test_validate_directory_does_not_exist() {
-        let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
-        let result = validate_dir_or_default(Some(nonexistent_path.to_owned()));
-
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("does not exist"));
-        assert!(err.contains(nonexistent_path));
-    }
-
-    #[test]
-    fn test_validate_directory_with_nested_structure() {
-        let temp_dir = setup_test_dir();
-        let nested_dir = temp_dir.path().join("nested").join("directory");
-        fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
-
-        let dir_path = nested_dir.to_str().unwrap();
-        let result = validate_dir_or_default(Some(dir_path.to_owned()));
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), nested_dir);
-    }
-
-    #[test]
-    fn test_validate_directory_with_special_chars() {
-        let temp_dir = setup_test_dir();
-        let special_dir = temp_dir.path().join("test with spaces and-symbols_!@#$");
-        fs::create_dir(&special_dir).expect("Failed to create directory with special characters");
-
-        let dir_path = special_dir.to_str().unwrap();
-        let result = validate_dir_or_default(Some(dir_path.to_owned()));
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), special_dir);
     }
 
     #[test]

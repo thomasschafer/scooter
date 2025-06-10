@@ -21,7 +21,6 @@ use crate::{
     fields::SearchFieldValues,
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
-    utils::validate_dir_or_default,
 };
 
 use crate::validation::SearchConfiguration;
@@ -29,7 +28,7 @@ use crate::validation::SearchConfiguration;
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppConfig<'a> {
-    pub directory: Option<String>,
+    pub directory: PathBuf,
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
@@ -38,7 +37,7 @@ pub struct AppConfig<'a> {
 impl Default for AppConfig<'_> {
     fn default() -> Self {
         Self {
-            directory: None,
+            directory: env::current_dir().unwrap(),
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
@@ -60,7 +59,7 @@ impl TryFrom<AppConfig<'_>> for SearchConfiguration {
             match_whole_word: config.search_field_values.match_whole_word.value,
             match_case: config.search_field_values.match_case.value,
             include_hidden: config.app_run_config.include_hidden,
-            directory: validate_dir_or_default(config.directory)?,
+            directory: config.directory,
         })
     }
 }
@@ -156,10 +155,8 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
-        let directory = validate_dir_or_default(config.directory)?;
-
         let (app, event_receiver) = App::new_with_receiver(
-            directory,
+            config.directory,
             &config.search_field_values,
             &config.app_run_config,
         );

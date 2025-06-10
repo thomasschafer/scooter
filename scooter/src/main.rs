@@ -1,8 +1,8 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use app::AppRunConfig;
 use clap::Parser;
 use log::LevelFilter;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use app_runner::{run_app_tui, AppConfig};
 use fields::{FieldValue, SearchFieldValues};
@@ -27,8 +27,8 @@ mod validation;
 #[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Directory in which to search
-    #[arg(index = 1)]
-    directory: Option<String>,
+    #[arg(index = 1, value_parser = parse_directory, default_value = ".")]
+    directory: PathBuf,
 
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
     #[arg(short = '.', long, default_value = "false")]
@@ -99,6 +99,17 @@ struct Args {
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
     LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {s}"))
+}
+
+fn parse_directory(dir: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(&dir);
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(anyhow!(
+            "Directory '{dir}' does not exist. Please provide a valid directory path.",
+        ))
+    }
 }
 
 fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
@@ -209,12 +220,14 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
     use log::LevelFilter;
 
     fn default_args() -> Args {
         Args {
-            directory: None,
+            directory: env::current_dir().unwrap(),
             hidden: false,
             log_level: LevelFilter::Info,
             advanced_regex: false,
@@ -390,7 +403,7 @@ mod tests {
     #[test]
     fn test_app_config_try_from_success() {
         let args = Args {
-            directory: Some("/test".to_string()),
+            directory: PathBuf::from("/test"),
             search_text: Some("test".to_string()),
             immediate: true,
             ..default_args()
@@ -399,7 +412,7 @@ mod tests {
         assert!(config.is_ok());
 
         let config = config.unwrap();
-        assert_eq!(config.directory, Some("/test".to_string()));
+        assert_eq!(config.directory, PathBuf::from("/test"));
         assert!(config.app_run_config.immediate_search);
         assert!(config.app_run_config.immediate_replace);
         assert!(config.app_run_config.print_results);
