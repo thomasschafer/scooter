@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::bail;
 use app::AppRunConfig;
 use clap::Parser;
 use log::LevelFilter;
@@ -31,7 +31,7 @@ struct Args {
     directory: PathBuf,
 
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
-    #[arg(short = '.', long, default_value = "false")]
+    #[arg(short = '.', long, action = clap::ArgAction::SetTrue)]
     hidden: bool,
 
     /// Log level (trace, debug, info, warn, error)
@@ -43,7 +43,7 @@ struct Args {
     log_level: LevelFilter,
 
     /// Use advanced regex features (including negative look-ahead), at the cost of performance
-    #[arg(short = 'a', long, default_value = "false")]
+    #[arg(short = 'a', long, action = clap::ArgAction::SetTrue)]
     advanced_regex: bool,
 
     /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
@@ -102,13 +102,13 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 }
 
 fn parse_directory(dir: &str) -> anyhow::Result<PathBuf> {
-    let path = PathBuf::from(&dir);
-    if path.exists() {
+    let path = PathBuf::from(dir);
+    if path.is_dir() {
         Ok(path)
+    } else if path.exists() {
+        bail!("'{dir}' is not a directory. Please provide a valid directory path.")
     } else {
-        Err(anyhow!(
-            "Directory '{dir}' does not exist. Please provide a valid directory path.",
-        ))
+        bail!("Directory '{dir}' does not exist. Please provide a valid directory path.")
     }
 }
 
@@ -220,10 +220,10 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use super::*;
     use log::LevelFilter;
+    use std::env;
+    use tempfile::TempDir;
 
     fn default_args() -> Args {
         Args {
@@ -480,5 +480,57 @@ mod tests {
 
         assert_eq!(values.exclude_files.value, "");
         assert_eq!(values.exclude_files.set_by_cli, false);
+    }
+
+    fn setup_test_dir() -> TempDir {
+        TempDir::new().unwrap()
+    }
+
+    #[test]
+    fn test_validate_directory_exists() {
+        let temp_dir = setup_test_dir();
+        let dir_path = temp_dir.path().to_str().unwrap();
+
+        let result = parse_directory(dir_path);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from(dir_path));
+    }
+
+    #[test]
+    fn test_validate_directory_does_not_exist() {
+        let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
+        let result = parse_directory(nonexistent_path);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"));
+        assert!(err.contains(nonexistent_path));
+    }
+
+    #[test]
+    fn test_validate_directory_with_nested_structure() {
+        let temp_dir = setup_test_dir();
+        let nested_dir = temp_dir.path().join("nested").join("directory");
+        std::fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
+
+        let dir_path = nested_dir.to_str().unwrap();
+        let result = parse_directory(dir_path);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), nested_dir);
+    }
+
+    #[test]
+    fn test_validate_directory_with_special_chars() {
+        let temp_dir = setup_test_dir();
+        let special_dir = temp_dir.path().join("test with spaces and-symbols_!@#$");
+        std::fs::create_dir(&special_dir)
+            .expect("Failed to create directory with special characters");
+
+        let dir_path = special_dir.to_str().unwrap();
+        let result = parse_directory(dir_path);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), special_dir);
     }
 }
