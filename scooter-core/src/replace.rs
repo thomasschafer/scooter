@@ -1,12 +1,14 @@
+use anyhow::bail;
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Seek, SeekFrom, Write},
+    path::Path,
 };
 use tempfile::NamedTempFile;
 
-use crate::line_reader::BufReadExt;
-use crate::search::SearchResult;
+use crate::search::{self, SearchResult};
+use crate::{line_reader::BufReadExt, search::SearchType};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplaceResult {
@@ -65,6 +67,50 @@ pub fn replace_in_file(results: &mut [SearchResult]) -> anyhow::Result<()> {
     }
 
     temp_output_file.persist(file_path)?;
+    Ok(())
+}
+
+pub fn replace_in_open_file(
+    path: &Path,
+    file: &mut File,
+    search: &SearchType,
+    replace: &str,
+) -> anyhow::Result<()> {
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        bail!("Failed to seek file {} to start", path.display());
+    }
+
+    let parent_dir = path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot create temp file: target path '{}' has no parent directory",
+            path.display()
+        )
+    })?;
+    let temp_output_file = NamedTempFile::new_in(parent_dir)?;
+
+    // Scope the file operations so they're closed before rename
+    {
+        let input = File::open(path)?;
+        let reader = BufReader::new(input);
+
+        let output = File::create(temp_output_file.path())?;
+        let mut writer = BufWriter::new(output);
+
+        for line_result in reader.lines_with_endings() {
+            let (mut line, line_ending) = line_result?;
+            if let Ok(line_str) = String::from_utf8(line.clone()) {
+                if let Some(res) = search::replacement_if_match(&line_str, search, replace) {
+                    line = res.as_bytes().to_vec();
+                }
+            }
+            line.extend(line_ending.as_bytes());
+            writer.write_all(&line)?;
+        }
+
+        writer.flush()?;
+    }
+
+    temp_output_file.persist(path)?;
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 use anyhow::bail;
 use ignore::WalkState;
 use scooter_core::search::SearchResult;
-use std::sync::mpsc;
+use std::sync::{atomic::AtomicUsize, mpsc};
 
 use crate::{
     replace::{calculate_statistics, format_replacement_results},
@@ -23,6 +23,7 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String
     let (results_sender, results_receiver) = mpsc::channel::<Vec<SearchResult>>();
 
     let sender_clone = results_sender.clone();
+    // let replacements_counter = AtomicUsize::new(0);
     searcher.walk_files(None, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
