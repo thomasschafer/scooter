@@ -1,6 +1,7 @@
 [workspace]
 members = ["scooter", "scooter-core", "xtask"]
 resolver = "2"
+default-members = ["scooter"]
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
