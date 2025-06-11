@@ -1,4 +1,5 @@
 use crossterm::event::{self, Event as CrosstermEvent};
+use frep_core::validation::SearchConfiguration;
 use futures::Stream;
 use futures::StreamExt;
 use log::error;
@@ -22,8 +23,6 @@ use crate::{
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
 };
-
-use crate::validation::SearchConfiguration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]

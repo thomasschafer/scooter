@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-use scooter_core::search::SearchResult;
+use frep_core::search::SearchResult;
 
 use super::colour::to_ratatui_colour;
 

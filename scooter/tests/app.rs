@@ -1,9 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use frep_core::line_reader::LineEnding;
+use frep_core::replace::ReplaceResult;
 use insta::assert_debug_snapshot;
 use scooter::app::EventHandlingResult;
 use scooter::app::Popup;
 use scooter::app::Screen;
-use scooter_core::line_reader::LineEnding;
 use serial_test::serial;
 use std::env::current_dir;
 use std::fs;
@@ -20,11 +21,11 @@ use tokio::sync::mpsc;
 use scooter::{
     app::{App, AppError, AppRunConfig, SearchCompleteState, SearchInProgressState, SearchState},
     fields::{FieldValue, SearchFieldValues, SearchFields},
-    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
+    replace::{PerformingReplacementState, ReplaceState},
     test_with_both_regex_modes,
 };
 
-use scooter_core::search::SearchResult;
+use frep_core::search::SearchResult;
 
 mod utils;
 

@@ -20,18 +20,18 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
+use frep_core::validation::{
+    validate_search_configuration, SearchConfiguration, ValidationErrorHandler, ValidationResult,
+};
+
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
-    validation::{
-        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
-        ValidationResult,
-    },
 };
 
-use scooter_core::search::{FileSearcher, SearchResult};
+use frep_core::search::{FileSearcher, SearchResult};
 
 #[derive(Debug)]
 pub enum Event {
@@ -1085,13 +1085,14 @@ impl ValidationErrorHandler for AppErrorHandler<'_> {
 
 #[cfg(test)]
 mod tests {
+    use frep_core::replace::ReplaceResult;
     use rand::Rng;
     use std::{env::current_dir, path::Path};
 
     use crate::replace::ReplaceStats;
 
     use super::*;
-    use scooter_core::line_reader::LineEnding;
+    use frep_core::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();
@@ -1216,7 +1217,7 @@ mod tests {
             line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(replace::ReplaceResult::Success),
+            replace_result: Some(ReplaceResult::Success),
         }
     }
 
@@ -1240,7 +1241,7 @@ mod tests {
             line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(replace::ReplaceResult::Error("error".to_owned())),
+            replace_result: Some(ReplaceResult::Error("error".to_owned())),
         }
     }
 

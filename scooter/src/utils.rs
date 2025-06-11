@@ -1,5 +1,4 @@
-use anyhow::{bail, Error};
-use ignore::overrides::OverrideBuilder;
+use anyhow::bail;
 use std::{
     fs::File,
     io::{self, BufReader},
@@ -13,7 +12,7 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
-use scooter_core::line_reader::{BufReadExt, LinesSplitEndings};
+use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
 
 pub fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
@@ -315,24 +314,6 @@ pub fn largest_range_centered_on(
     }
 
     Ok((cur_start, cur_end))
-}
-
-pub fn is_regex_error(e: &Error) -> bool {
-    e.downcast_ref::<regex::Error>().is_some() || e.downcast_ref::<fancy_regex::Error>().is_some()
-}
-
-pub fn add_overrides(
-    overrides: &mut OverrideBuilder,
-    files: &str,
-    prefix: &str,
-) -> anyhow::Result<()> {
-    for file in files.split(',') {
-        let file = file.trim();
-        if !file.is_empty() {
-            overrides.add(&format!("{prefix}{file}"))?;
-        }
-    }
-    Ok(())
 }
 
 #[macro_export]

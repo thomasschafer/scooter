@@ -19,12 +19,10 @@ use tokio::{
     task::JoinHandle,
 };
 
+use frep_core::replace::{replace_in_file, ReplaceResult};
+use frep_core::search::SearchResult;
+
 use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState};
-
-use scooter_core::replace::replace_in_file;
-use scooter_core::search::SearchResult;
-
-pub use scooter_core::replace::ReplaceResult;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplaceState {
@@ -265,7 +263,7 @@ pub fn format_replacement_results(
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use scooter_core::line_reader::LineEnding;
+    use frep_core::line_reader::LineEnding;
     use std::path::PathBuf;
 
     fn create_search_result(

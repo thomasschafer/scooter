@@ -19,6 +19,7 @@ crossbeam-channel = "0.5.15"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
 fancy-regex = "0.14.0"
+frep-core = { path = "../../frep/frep-core" }                   # TODO: remove path dependency
 futures = "0.3.31"
 ignore = "0.4.23"
 itertools = "0.14.0"

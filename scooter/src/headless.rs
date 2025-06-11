@@ -1,14 +1,12 @@
 use anyhow::bail;
+use frep_core::search::SearchResult;
+use frep_core::validation::{
+    validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
+};
 use ignore::WalkState;
-use scooter_core::search::SearchResult;
 use std::sync::mpsc;
 
-use crate::{
-    replace::{calculate_statistics, format_replacement_results},
-    validation::{
-        validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
-    },
-};
+use crate::replace::{calculate_statistics, format_replacement_results};
 
 pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String> {
     let mut error_handler = SimpleErrorHandler::new();
@@ -26,7 +24,7 @@ pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String
     searcher.walk_files(None, move || {
         let sender = sender_clone.clone();
         Box::new(move |mut results| {
-            if let Err(file_err) = scooter_core::replace::replace_in_file(&mut results) {
+            if let Err(file_err) = frep_core::replace::replace_in_file(&mut results) {
                 log::error!("Found error when performing replacement: {file_err}");
             }
             if sender.send(results).is_err() {
