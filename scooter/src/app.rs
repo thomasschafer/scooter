@@ -804,21 +804,35 @@ impl<'a> App {
     }
 
     fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
+        let search_text = self.search_fields.search().text.clone();
+        let replacement_text = self.search_fields.replace().text();
+        let fixed_strings = self.search_fields.fixed_strings().checked;
+        let advanced_regex = self.search_fields.advanced_regex;
+        let include_globs = Some(self.search_fields.include_files().text());
+        let exclude_globs = Some(self.search_fields.exclude_files().text());
+        let match_whole_word = self.search_fields.whole_word().checked;
+        let match_case = self.search_fields.match_case().checked;
+        let include_hidden = self.include_hidden;
+        let directory = self.directory.clone();
+
         let search_config = SearchConfiguration {
-            search_text: self.search_fields.search().text.clone(),
-            replacement_text: self.search_fields.replace().text().to_string(),
-            fixed_strings: self.search_fields.fixed_strings().checked,
-            advanced_regex: self.search_fields.advanced_regex,
-            include_globs: self.search_fields.include_files().text().to_string(),
-            exclude_globs: self.search_fields.exclude_files().text().to_string(),
-            match_whole_word: self.search_fields.whole_word().checked,
-            match_case: self.search_fields.match_case().checked,
-            include_hidden: self.include_hidden,
-            directory: self.directory.clone(),
+            search_text: &search_text,
+            replacement_text: &replacement_text,
+            fixed_strings,
+            advanced_regex,
+            include_globs,
+            exclude_globs,
+            match_whole_word,
+            match_case,
+            include_hidden,
+            directory,
         };
 
-        let mut error_handler = AppErrorHandler::new(self);
+        let mut error_handler = AppErrorHandler::new();
         let result = validate_search_configuration(search_config, &mut error_handler)?;
+
+        // Apply any validation errors to the app
+        error_handler.apply_to_app(self);
 
         match result {
             ValidationResult::Success(searcher) => Ok(Some(searcher)),
@@ -1054,36 +1068,53 @@ impl<'a> App {
     }
 }
 
-struct AppErrorHandler<'a> {
-    app: &'a mut App,
+struct AppErrorHandler {
+    search_errors: Option<(String, String)>,
+    include_errors: Option<(String, String)>,
+    exclude_errors: Option<(String, String)>,
 }
 
-impl<'a> AppErrorHandler<'a> {
-    fn new(app: &'a mut App) -> Self {
-        Self { app }
+impl AppErrorHandler {
+    fn new() -> Self {
+        Self {
+            search_errors: None,
+            include_errors: None,
+            exclude_errors: None,
+        }
+    }
+
+    fn apply_to_app(&self, app: &mut App) {
+        if let Some((error, detail)) = &self.search_errors {
+            app.search_fields
+                .search_mut()
+                .set_error(error.clone(), detail.clone());
+        }
+
+        if let Some((error, detail)) = &self.include_errors {
+            app.search_fields
+                .include_files_mut()
+                .set_error(error.clone(), detail.clone());
+        }
+
+        if let Some((error, detail)) = &self.exclude_errors {
+            app.search_fields
+                .exclude_files_mut()
+                .set_error(error.clone(), detail.clone());
+        }
     }
 }
 
-impl ValidationErrorHandler for AppErrorHandler<'_> {
+impl ValidationErrorHandler for AppErrorHandler {
     fn handle_search_text_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .search_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.search_errors = Some((error.to_owned(), detail.to_string()));
     }
 
     fn handle_include_files_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .include_files_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.include_errors = Some((error.to_owned(), detail.to_string()));
     }
 
     fn handle_exclude_files_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .exclude_files_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.exclude_errors = Some((error.to_owned(), detail.to_string()));
     }
 }
 

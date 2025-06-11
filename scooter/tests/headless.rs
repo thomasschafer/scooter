@@ -27,11 +27,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "TEST_PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "TEST_PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -88,11 +88,11 @@ test_with_both_regex_modes!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: r"\d{3}".to_string(),
-            replacement_text: "XXX".to_string(),
+            search_text: r"\d{3}",
+            replacement_text: "XXX",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings: false,
             match_case: true,
@@ -143,11 +143,11 @@ test_with_both_regex_modes!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: r"username: (\w+), email: ([^@]+)@".to_string(),
-            replacement_text: "user: $1 (contact: $2 at".to_string(),
+            search_text: r"username: (\w+), email: ([^@]+)@",
+            replacement_text: "user: $1 (contact: $2 at",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings: false,
             match_case: true,
@@ -163,11 +163,11 @@ test_with_both_regex_modes!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: r"\[(\d{4})-(\d{2})-(\d{2})\]".to_string(),
-            replacement_text: "[$3/$2/$1]".to_string(),
+            search_text: r"\[(\d{4})-(\d{2})-(\d{2})\]",
+            replacement_text: "[$3/$2/$1]",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "logs.txt".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some("logs.txt"),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings: false,
             match_case: true,
@@ -222,11 +222,11 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
 
     // Negative lookahead - match 'let' but not 'let mut'
     let search_config = SearchConfiguration {
-        search_text: r"let(?!\s+mut)".to_string(),
-        replacement_text: "const".to_string(),
+        search_text: r"let(?!\s+mut)",
+        replacement_text: "const",
         directory: temp_dir.path().to_path_buf(),
-        include_globs: "code.rs".to_string(),
-        exclude_globs: "".to_string(),
+        include_globs: Some("code.rs"),
+        exclude_globs: Some(""),
         include_hidden: false,
         fixed_strings: false,
         match_case: true,
@@ -242,11 +242,11 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
 
     // Positive lookbehind - match numbers after headings
     let search_config = SearchConfiguration {
-        search_text: r"(?<=# )[A-Za-z]+\s+(\d+)".to_string(),
-        replacement_text: "Section $1".to_string(),
+        search_text: r"(?<=# )[A-Za-z]+\s+(\d+)",
+        replacement_text: "Section $1",
         directory: temp_dir.path().to_path_buf(),
-        include_globs: "*.md".to_string(),
-        exclude_globs: "".to_string(),
+        include_globs: Some("*.md"),
+        exclude_globs: Some(""),
         include_hidden: false,
         fixed_strings: false,
         match_case: true,
@@ -262,11 +262,11 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
 
     // Add spaces after commas in CSV file
     let search_config = SearchConfiguration {
-        search_text: ",".to_string(),
-        replacement_text: ", ".to_string(),
+        search_text: ",",
+        replacement_text: ", ",
         directory: temp_dir.path().to_path_buf(),
-        include_globs: "*.csv".to_string(),
-        exclude_globs: "".to_string(),
+        include_globs: Some("*.csv"),
+        exclude_globs: Some(""),
         include_hidden: false,
         fixed_strings: true,
         match_case: true,
@@ -332,11 +332,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Include glob - only match Rust files
         let search_config = SearchConfiguration {
-            search_text: "REPLACE_ME".to_string(),
-            replacement_text: "REPLACED_CODE".to_string(),
+            search_text: "REPLACE_ME",
+            replacement_text: "REPLACED_CODE",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "**/*.rs".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some("**/*.rs"),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -377,11 +377,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Exclude glob - exclude test files
         let search_config = SearchConfiguration {
-            search_text: "REPLACED_CODE".to_string(),
-            replacement_text: "FINAL_VERSION".to_string(),
+            search_text: "REPLACED_CODE",
+            replacement_text: "FINAL_VERSION",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "**/*.rs".to_string(),
-            exclude_globs: "tests/**".to_string(),
+            include_globs: Some("**/*.rs"),
+            exclude_globs: Some("tests/**"),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -422,11 +422,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Multiple include globs
         let search_config = SearchConfiguration {
-            search_text: "REPLACE_ME".to_string(),
-            replacement_text: "DOCS_REPLACED".to_string(),
+            search_text: "REPLACE_ME",
+            replacement_text: "DOCS_REPLACED",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "**/*.md,**/*.txt".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some("**/*.md,**/*.txt"),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -485,11 +485,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "whole_word".to_string(),
-            replacement_text: "REPLACED".to_string(),
+            search_text: "whole_word",
+            replacement_text: "REPLACED",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -538,11 +538,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "pattern".to_string(),
-            replacement_text: "REPLACED".to_string(),
+            search_text: "pattern",
+            replacement_text: "REPLACED",
             directory: temp_dir1.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -584,11 +584,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "pattern".to_string(),
-            replacement_text: "variable".to_string(),
+            search_text: "pattern",
+            replacement_text: "variable",
             directory: temp_dir2.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: false,
@@ -632,11 +632,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -683,11 +683,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -728,11 +728,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -778,11 +778,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Default behavior - hidden files excluded
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false, // Default behavior
             fixed_strings,
             match_case: true,
@@ -813,11 +813,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Explicit include hidden files
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: true, // Include hidden files
             fixed_strings,
             match_case: true,
@@ -860,11 +860,11 @@ test_with_both_regex_modes!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "(".to_string(), // Unclosed parenthesis = invalid regex
-            replacement_text: "replacement".to_string(),
+            search_text: "(", // Unclosed parenthesis = invalid regex
+            replacement_text: "replacement",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings: false,
             match_case: true,
@@ -898,11 +898,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "valid".to_string(),
-            replacement_text: "replacement".to_string(),
+            search_text: "valid",
+            replacement_text: "replacement",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "{{".to_string(), // Invalid glob pattern
-            exclude_globs: "".to_string(),
+            include_globs: Some("{{"), // Invalid glob pattern
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -968,11 +968,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Test include glob - only include .txt files
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "*.txt".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some("*.txt"),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -1027,11 +1027,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let result = run_headless(SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "*.txt".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some("*.txt"),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -1090,11 +1090,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Test exclude glob - exclude .txt files
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "*.txt".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some("*.txt"),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -1237,11 +1237,11 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         // Include all .rs files but exclude those in tests directory
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACEMENT".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "**/*.rs".to_string(),
-            exclude_globs: "tests/**".to_string(),
+            include_globs: Some("**/*.rs"),
+            exclude_globs: Some("tests/**"),
             include_hidden: false,
             fixed_strings,
             match_case: true,
@@ -1374,11 +1374,11 @@ test_with_both_regex_modes_and_fixed_strings!(
         );
 
         let search_config = SearchConfiguration {
-            search_text: "PATTERN".to_string(),
-            replacement_text: "REPLACED".to_string(),
+            search_text: "PATTERN",
+            replacement_text: "REPLACED",
             directory: temp_dir.path().to_path_buf(),
-            include_globs: "".to_string(),
-            exclude_globs: "".to_string(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
             include_hidden: false,
             fixed_strings,
             match_case: true,
