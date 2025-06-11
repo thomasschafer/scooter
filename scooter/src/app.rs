@@ -804,34 +804,21 @@ impl<'a> App {
     }
 
     fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
-        let search_text = self.search_fields.search().text.clone();
-        let replacement_text = self.search_fields.replace().text();
-        let fixed_strings = self.search_fields.fixed_strings().checked;
-        let advanced_regex = self.search_fields.advanced_regex;
-        let include_globs = Some(self.search_fields.include_files().text());
-        let exclude_globs = Some(self.search_fields.exclude_files().text());
-        let match_whole_word = self.search_fields.whole_word().checked;
-        let match_case = self.search_fields.match_case().checked;
-        let include_hidden = self.include_hidden;
-        let directory = self.directory.clone();
-
         let search_config = SearchConfiguration {
-            search_text: &search_text,
-            replacement_text,
-            fixed_strings,
-            advanced_regex,
-            include_globs,
-            exclude_globs,
-            match_whole_word,
-            match_case,
-            include_hidden,
-            directory,
+            search_text: self.search_fields.search().text(),
+            replacement_text: self.search_fields.replace().text(),
+            fixed_strings: self.search_fields.fixed_strings().checked,
+            advanced_regex: self.search_fields.advanced_regex,
+            include_globs: Some(self.search_fields.include_files().text()),
+            exclude_globs: Some(self.search_fields.exclude_files().text()),
+            match_whole_word: self.search_fields.whole_word().checked,
+            match_case: self.search_fields.match_case().checked,
+            include_hidden: self.include_hidden,
+            directory: self.directory.clone(),
         };
 
         let mut error_handler = AppErrorHandler::new();
         let result = validate_search_configuration(search_config, &mut error_handler)?;
-
-        // Apply any validation errors to the app
         error_handler.apply_to_app(self);
 
         match result {
