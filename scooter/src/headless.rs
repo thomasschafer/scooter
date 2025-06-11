@@ -1,12 +1,13 @@
 use anyhow::bail;
-use frep_core::search::SearchResult;
-use frep_core::validation::{
-    validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
+use frep_core::{
+    replace::{calculate_statistics, format_replacement_results},
+    search::SearchResult,
+    validation::{
+        validate_search_configuration, SearchConfiguration, SimpleErrorHandler, ValidationResult,
+    },
 };
 use ignore::WalkState;
 use std::sync::mpsc;
-
-use crate::replace::{calculate_statistics, format_replacement_results};
 
 pub fn run_headless(search_config: SearchConfiguration) -> anyhow::Result<String> {
     let mut error_handler = SimpleErrorHandler::new();

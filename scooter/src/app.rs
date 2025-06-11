@@ -20,14 +20,18 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use frep_core::validation::{
-    validate_search_configuration, SearchConfiguration, ValidationErrorHandler, ValidationResult,
+use frep_core::{
+    replace::format_replacement_results,
+    validation::{
+        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        ValidationResult,
+    },
 };
 
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
+    replace::{self, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
 };
 
@@ -1085,11 +1089,9 @@ impl ValidationErrorHandler for AppErrorHandler<'_> {
 
 #[cfg(test)]
 mod tests {
-    use frep_core::replace::ReplaceResult;
+    use frep_core::replace::{ReplaceResult, ReplaceStats};
     use rand::Rng;
     use std::{env::current_dir, path::Path};
-
-    use crate::replace::ReplaceStats;
 
     use super::*;
     use frep_core::line_reader::LineEnding;
@@ -1266,7 +1268,7 @@ mod tests {
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results)
+            frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1293,7 +1295,7 @@ mod tests {
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results)
+            frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
