@@ -817,7 +817,7 @@ impl<'a> App {
 
         let search_config = SearchConfiguration {
             search_text: &search_text,
-            replacement_text: &replacement_text,
+            replacement_text,
             fixed_strings,
             advanced_regex,
             include_globs,
@@ -1068,6 +1068,8 @@ impl<'a> App {
     }
 }
 
+#[allow(clippy::struct_field_names)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct AppErrorHandler {
     search_errors: Option<(String, String)>,
     include_errors: Option<(String, String)>,
