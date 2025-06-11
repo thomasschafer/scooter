@@ -111,7 +111,7 @@ Scooter is fast. Below is a benchmark for comparison, performing a find and repl
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
 | `scooter` | 5.140 ± 0.090 | 5.067 | 5.247 | 1.35 ± 0.03 |
-| `scooter (no tui)` | 3.799 ± 0.059 | 3.715 | 3.879 | 1.00 |
+| `scooter (--no-tui)` | 3.799 ± 0.059 | 3.715 | 3.879 | 1.00 |
 | `ripgrep + sd` | 4.178 ± 0.112 | 4.035 | 4.306 | 1.10 ± 0.03 |
 | `fd + sd` | 10.029 ± 0.002 | 10.026 | 10.032 | 2.64 ± 0.04 |
 
@@ -119,7 +119,13 @@ Scooter is fast. Below is a benchmark for comparison, performing a find and repl
 
 Much of the speed is thanks to using the [ripgrep](https://github.com/BurntSushi/ripgrep) file walker, found in the [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crate.
 
-Note that "no TUI" mode can be enabled with the `--no-tui` (`-N`) flag.
+The `--no-tui` (`-N`) mode can be used like so:
+
+```sh
+scooter -N -s before -r after
+```
+
+Run `scooter --help` for a full list of flags.
 
 
 ## Installation
