@@ -11,7 +11,7 @@ repository = "https://github.com/thomasschafer/scooter/tree/main/scooter-core"
 keywords = ["find", "search", "replace"]
 
 [dependencies]
-frep-core = { path = "../../frep/frep-core" } # TODO: remove path dependency
+frep-core = "0.1.1"
 anyhow = "1.0"
 content_inspector = "0.2.4"
 fancy-regex = "0.14.0"
