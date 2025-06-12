@@ -102,12 +102,10 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
 
 fn parse_directory(dir: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(dir);
-    if path.is_dir() {
+    if path.exists() {
         Ok(path)
-    } else if path.exists() {
-        bail!("'{dir}' is not a directory. Please provide a valid directory path.")
     } else {
-        bail!("Directory '{dir}' does not exist. Please provide a valid directory path.")
+        bail!("'{dir}' does not exist. Please provide a valid path.")
     }
 }
 
