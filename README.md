@@ -110,10 +110,11 @@ Scooter is fast. Below is a benchmark for comparison, performing a find and repl
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
 |:---|---:|---:|---:|---:|
-| `scooter` | 5.140 ± 0.090 | 5.067 | 5.247 | 1.35 ± 0.03 |
-| `scooter (--no-tui)` | 3.799 ± 0.059 | 3.715 | 3.879 | 1.00 |
-| `ripgrep + sd` | 4.178 ± 0.112 | 4.035 | 4.306 | 1.10 ± 0.03 |
-| `fd + sd` | 10.029 ± 0.002 | 10.026 | 10.032 | 2.64 ± 0.04 |
+| `scooter` | 6.784 ± 0.147 | 6.616 | 7.004 | 1.50 ± 0.04 |
+| `scooter (--no-tui)` | 4.842 ± 0.099 | 4.722 | 4.926 | 1.07 ± 0.03 |
+| `ripgrep + sd` | 5.060 ± 0.150 | 4.836 | 5.246 | 1.12 ± 0.04 |
+| `fastmod` | 4.533 ± 0.069 | 4.444 | 4.626 | 1.00 |
+| `fd + sd` | 10.010 ± 0.000 | 10.010 | 10.010 | 2.21 ± 0.03 |
 
 <!-- BENCHMARK END -->
 
