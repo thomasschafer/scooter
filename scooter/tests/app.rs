@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use frep_core::line_reader::LineEnding;
 use frep_core::replace::ReplaceResult;
+use frep_core::search::SearchResult;
 use insta::assert_debug_snapshot;
 use scooter::app::EventHandlingResult;
 use scooter::app::Popup;
@@ -24,8 +25,6 @@ use scooter::{
     replace::{PerformingReplacementState, ReplaceState},
     test_with_both_regex_modes,
 };
-
-use frep_core::search::SearchResult;
 
 mod utils;
 

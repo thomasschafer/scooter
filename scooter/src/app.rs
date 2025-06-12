@@ -22,6 +22,7 @@ use tokio::{
 
 use frep_core::{
     replace::format_replacement_results,
+    search::{FileSearcher, SearchResult},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -34,8 +35,6 @@ use crate::{
     replace::{self, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
 };
-
-use frep_core::search::{FileSearcher, SearchResult};
 
 #[derive(Debug)]
 pub enum Event {

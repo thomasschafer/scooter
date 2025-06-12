@@ -1,9 +1,8 @@
 use anyhow::anyhow;
+use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use serde::{de, Deserialize, Deserializer};
 use std::{fs, path::PathBuf, sync::OnceLock};
 use syntect::highlighting::{Theme, ThemeSet};
-
-use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 
 pub const APP_NAME: &str = "scooter";
 
