@@ -20,18 +20,21 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use crate::{
-    config::{load_config, Config},
-    fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
-    utils::ceil_div,
+use frep_core::{
+    replace::format_replacement_results,
+    search::{FileSearcher, SearchResult},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
     },
 };
 
-use scooter_core::search::{FileSearcher, SearchResult};
+use crate::{
+    config::{load_config, Config},
+    fields::{FieldName, SearchFieldValues, SearchFields},
+    replace::{self, PerformingReplacementState, ReplaceState},
+    utils::ceil_div,
+};
 
 #[derive(Debug)]
 pub enum Event {
@@ -801,20 +804,21 @@ impl<'a> App {
 
     fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
         let search_config = SearchConfiguration {
-            search_text: self.search_fields.search().text.clone(),
-            replacement_text: self.search_fields.replace().text().to_string(),
+            search_text: self.search_fields.search().text(),
+            replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
             advanced_regex: self.search_fields.advanced_regex,
-            include_globs: self.search_fields.include_files().text().to_string(),
-            exclude_globs: self.search_fields.exclude_files().text().to_string(),
+            include_globs: Some(self.search_fields.include_files().text()),
+            exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
             include_hidden: self.include_hidden,
             directory: self.directory.clone(),
         };
 
-        let mut error_handler = AppErrorHandler::new(self);
+        let mut error_handler = AppErrorHandler::new();
         let result = validate_search_configuration(search_config, &mut error_handler)?;
+        error_handler.apply_to_app(self);
 
         match result {
             ValidationResult::Success(searcher) => Ok(Some(searcher)),
@@ -1050,48 +1054,66 @@ impl<'a> App {
     }
 }
 
-struct AppErrorHandler<'a> {
-    app: &'a mut App,
+#[allow(clippy::struct_field_names)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AppErrorHandler {
+    search_errors: Option<(String, String)>,
+    include_errors: Option<(String, String)>,
+    exclude_errors: Option<(String, String)>,
 }
 
-impl<'a> AppErrorHandler<'a> {
-    fn new(app: &'a mut App) -> Self {
-        Self { app }
+impl AppErrorHandler {
+    fn new() -> Self {
+        Self {
+            search_errors: None,
+            include_errors: None,
+            exclude_errors: None,
+        }
+    }
+
+    fn apply_to_app(&self, app: &mut App) {
+        if let Some((error, detail)) = &self.search_errors {
+            app.search_fields
+                .search_mut()
+                .set_error(error.clone(), detail.clone());
+        }
+
+        if let Some((error, detail)) = &self.include_errors {
+            app.search_fields
+                .include_files_mut()
+                .set_error(error.clone(), detail.clone());
+        }
+
+        if let Some((error, detail)) = &self.exclude_errors {
+            app.search_fields
+                .exclude_files_mut()
+                .set_error(error.clone(), detail.clone());
+        }
     }
 }
 
-impl ValidationErrorHandler for AppErrorHandler<'_> {
+impl ValidationErrorHandler for AppErrorHandler {
     fn handle_search_text_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .search_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.search_errors = Some((error.to_owned(), detail.to_string()));
     }
 
     fn handle_include_files_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .include_files_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.include_errors = Some((error.to_owned(), detail.to_string()));
     }
 
     fn handle_exclude_files_error(&mut self, error: &str, detail: &str) {
-        self.app
-            .search_fields
-            .exclude_files_mut()
-            .set_error(error.to_owned(), detail.to_string());
+        self.exclude_errors = Some((error.to_owned(), detail.to_string()));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use frep_core::replace::{ReplaceResult, ReplaceStats};
     use rand::Rng;
     use std::{env::current_dir, path::Path};
 
-    use crate::replace::ReplaceStats;
-
     use super::*;
-    use scooter_core::line_reader::LineEnding;
+    use frep_core::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();
@@ -1216,7 +1238,7 @@ mod tests {
             line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(replace::ReplaceResult::Success),
+            replace_result: Some(ReplaceResult::Success),
         }
     }
 
@@ -1240,7 +1262,7 @@ mod tests {
             line_ending: LineEnding::Lf,
             replacement: "bar".to_owned(),
             included: true,
-            replace_result: Some(replace::ReplaceResult::Error("error".to_owned())),
+            replace_result: Some(ReplaceResult::Error("error".to_owned())),
         }
     }
 
@@ -1265,7 +1287,7 @@ mod tests {
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results)
+            frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };
@@ -1292,7 +1314,7 @@ mod tests {
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
                 replace::split_results(search_complete_state.search_state.results);
-            replace::calculate_statistics(results)
+            frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
         };

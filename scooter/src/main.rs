@@ -19,7 +19,6 @@ mod replace;
 mod tui;
 mod ui;
 mod utils;
-mod validation;
 
 #[derive(Parser, Debug)]
 #[command(about = "Interactive find and replace TUI.")]

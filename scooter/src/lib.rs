@@ -8,4 +8,3 @@ pub mod replace;
 pub mod tui;
 pub mod ui;
 pub mod utils;
-pub mod validation;

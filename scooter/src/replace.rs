@@ -1,5 +1,4 @@
 use crossterm::event::KeyEvent;
-use crossterm::style::Stylize as _;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use std::{
@@ -19,12 +18,10 @@ use tokio::{
     task::JoinHandle,
 };
 
+use frep_core::replace::{replace_in_file, ReplaceResult};
+use frep_core::search::SearchResult;
+
 use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState};
-
-use scooter_core::replace::replace_in_file;
-use scooter_core::search::SearchResult;
-
-pub use scooter_core::replace::ReplaceResult;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplaceState {
@@ -168,7 +165,7 @@ pub fn perform_replacement(
 
         let _ = event_sender.send(Event::App(AppEvent::Rerender));
 
-        let stats = calculate_statistics(replacement_results);
+        let stats = frep_core::replace::calculate_statistics(replacement_results);
         // Ignore error: we may have gone back to the previous screen
         let _ = background_processing_sender.send(BackgroundProcessingEvent::ReplacementCompleted(
             ReplaceState {
@@ -181,91 +178,17 @@ pub fn perform_replacement(
     })
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReplaceStats {
-    pub num_successes: usize,
-    pub errors: Vec<SearchResult>,
-}
-
-pub fn calculate_statistics<I>(results: I) -> ReplaceStats
-where
-    I: IntoIterator<Item = SearchResult>,
-{
-    let mut num_successes = 0;
-    let mut errors = vec![];
-
-    results.into_iter().for_each(|res| {
-        assert!(
-            res.included,
-            "Expected only included results, found {res:?}"
-        );
-        match &res.replace_result {
-            Some(ReplaceResult::Success) => {
-                num_successes += 1;
-            }
-            None => {
-                let mut res = res.clone();
-                res.replace_result = Some(ReplaceResult::Error(
-                    "Failed to find search result in file".to_owned(),
-                ));
-                errors.push(res);
-            }
-            Some(ReplaceResult::Error(_)) => {
-                errors.push(res.clone());
-            }
-        }
-    });
-
-    ReplaceStats {
-        num_successes,
-        errors,
-    }
-}
-
 pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
     let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
     let num_ignored = excluded.len();
     (included, num_ignored)
 }
 
-pub fn format_replacement_results(
-    num_successes: usize,
-    num_ignored: Option<usize>,
-    errors: Option<&[SearchResult]>,
-) -> String {
-    let errors_display = if let Some(errors) = errors {
-        #[allow(clippy::format_collect)]
-        errors
-            .iter()
-            .map(|error| {
-                let (path, error) = error.display_error();
-                format!("\n{path}:\n  {}", error.red())
-            })
-            .collect::<String>()
-    } else {
-        String::new()
-    };
-
-    let maybe_ignored_str = match num_ignored {
-        Some(n) => format!("\nIgnored (lines): {n}"),
-        None => "".into(),
-    };
-    let maybe_errors_str = match errors {
-        Some(errors) => format!(
-            "\nErrors: {num_errors}{errors_display}",
-            num_errors = errors.len()
-        ),
-        None => "".into(),
-    };
-
-    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use scooter_core::line_reader::LineEnding;
+    use frep_core::line_reader::LineEnding;
     use std::path::PathBuf;
 
     fn create_search_result(
@@ -492,7 +415,7 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results);
+        let stats = frep_core::replace::calculate_statistics(results);
         assert_eq!(stats.num_successes, 3);
         assert_eq!(stats.errors.len(), 0);
     }
@@ -527,7 +450,7 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results);
+        let stats = frep_core::replace::calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
         assert_eq!(stats.errors.len(), 1);
         assert_eq!(stats.errors[0].path, error_result.path);
@@ -555,7 +478,7 @@ mod tests {
             ),
         ];
 
-        let stats = calculate_statistics(results);
+        let stats = frep_core::replace::calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
         assert_eq!(stats.errors.len(), 1);
         assert_eq!(stats.errors[0].path, PathBuf::from("file2.txt"));
@@ -565,40 +488,5 @@ mod tests {
                 "Failed to find search result in file".to_owned()
             ))
         );
-    }
-
-    #[test]
-    fn test_format_replacement_results_no_errors() {
-        let result = format_replacement_results(5, Some(2), Some(&[]));
-        assert_eq!(
-            result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
-        );
-    }
-
-    #[test]
-    fn test_format_replacement_results_with_errors() {
-        let error_result = create_search_result(
-            "file.txt",
-            10,
-            "line",
-            "replacement",
-            true,
-            Some(ReplaceResult::Error("Test error".to_string())),
-        );
-
-        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3"));
-        assert!(result.contains("Ignored (lines): 1"));
-        assert!(result.contains("Errors: 1"));
-        assert!(result.contains("file.txt:10"));
-        assert!(result.contains("Test error"));
-    }
-
-    #[test]
-    fn test_format_replacement_results_no_ignored_count() {
-        let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
-        assert!(!result.contains("Ignored (lines):"));
     }
 }
