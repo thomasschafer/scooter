@@ -13,12 +13,10 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.98"
-scooter-core = { version = "0.1.1", path = "../scooter-core" }
+# scooter-core = { version = "0.1.1", path = "../scooter-core" }
 clap = { version = "4.5.39", features = ["derive"] }
-crossbeam-channel = "0.5.15"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
-fancy-regex = "0.14.0"
 frep-core = "0.1.1"
 futures = "0.3.31"
 ignore = "0.4.23"

@@ -342,15 +342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-channel"
-version = "0.5.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1406,10 +1397,8 @@ version = "0.5.3"
 dependencies = [
  "anyhow",
  "clap",
- "crossbeam-channel",
  "crossterm 0.28.1",
  "etcetera",
- "fancy-regex",
  "frep-core",
  "futures",
  "ignore",
@@ -1420,7 +1409,6 @@ dependencies = [
  "rand 0.9.1",
  "ratatui",
  "regex",
- "scooter-core",
  "serde",
  "serial_test",
  "similar",
@@ -1435,16 +1423,6 @@ dependencies = [
 [[package]]
 name = "scooter-core"
 version = "0.1.1"
-dependencies = [
- "anyhow",
- "content_inspector",
- "fancy-regex",
- "frep-core",
- "ignore",
- "log",
- "regex",
- "tempfile",
-]
 
 [[package]]
 name = "scopeguard"
@@ -2185,7 +2163,6 @@ dependencies = [
  "anyhow",
  "clap",
  "pretty_assertions",
- "proc-macro2",
  "quote",
  "syn 2.0.101",
 ]
