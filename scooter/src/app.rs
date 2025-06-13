@@ -21,7 +21,6 @@ use tokio::{
 };
 
 use frep_core::{
-    replace::format_replacement_results,
     search::{FileSearcher, SearchResult},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
@@ -32,7 +31,7 @@ use frep_core::{
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, PerformingReplacementState, ReplaceState},
+    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
 };
 

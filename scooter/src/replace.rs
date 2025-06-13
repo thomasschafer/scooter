@@ -1,4 +1,5 @@
 use crossterm::event::KeyEvent;
+use crossterm::style::Stylize as _;
 use futures::future;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use std::{
@@ -182,6 +183,39 @@ pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
     let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
     let num_ignored = excluded.len();
     (included, num_ignored)
+}
+
+pub fn format_replacement_results(
+    num_successes: usize,
+    num_ignored: Option<usize>,
+    errors: Option<&[SearchResult]>,
+) -> String {
+    let errors_display = if let Some(errors) = errors {
+        #[allow(clippy::format_collect)]
+        errors
+            .iter()
+            .map(|error| {
+                let (path, error) = error.display_error();
+                format!("\n{path}:\n  {}", error.red())
+            })
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+
+    let maybe_ignored_str = match num_ignored {
+        Some(n) => format!("\nIgnored (lines): {n}"),
+        None => "".into(),
+    };
+    let maybe_errors_str = match errors {
+        Some(errors) => format!(
+            "\nErrors: {num_errors}{errors_display}",
+            num_errors = errors.len()
+        ),
+        None => "".into(),
+    };
+
+    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
 }
 
 #[cfg(test)]
@@ -488,5 +522,40 @@ mod tests {
                 "Failed to find search result in file".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_errors() {
+        let result = format_replacement_results(5, Some(2), Some(&[]));
+        assert_eq!(
+            result,
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+        );
+    }
+
+    #[test]
+    fn test_format_replacement_results_with_errors() {
+        let error_result = create_search_result(
+            "file.txt",
+            10,
+            "line",
+            "replacement",
+            true,
+            Some(ReplaceResult::Error("Test error".to_string())),
+        );
+
+        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
+        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Ignored (lines): 1"));
+        assert!(result.contains("Errors: 1"));
+        assert!(result.contains("file.txt:10"));
+        assert!(result.contains("Test error"));
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_ignored_count() {
+        let result = format_replacement_results(7, None, Some(&[]));
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert!(!result.contains("Ignored (lines):"));
     }
 }
