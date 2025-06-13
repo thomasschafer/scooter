@@ -24,6 +24,7 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
   - [Nix](#nix)
   - [AUR](#aur)
   - [Winget](#winget)
+  - [NetBSD](#netbsd)
   - [Prebuilt binaries](#prebuilt-binaries)
   - [Cargo](#cargo)
   - [Building from source](#building-from-source)
