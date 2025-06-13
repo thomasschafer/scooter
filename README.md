@@ -172,7 +172,7 @@ winget install thomasschafer.scooter
 
 Install from the official repositories with:
 
-```
+```sh
 pkgin install scooter
 ```
 
