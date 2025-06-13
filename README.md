@@ -167,6 +167,14 @@ Install from Winget with
 winget install thomasschafer.scooter
 ```
 
+### NetBSD
+
+Install from the official repositories with:
+
+```
+pkgin install scooter
+```
+
 ### Prebuilt binaries
 
 Download the appropriate binary for your system from the [releases page](https://github.com/thomasschafer/scooter/releases/latest):
