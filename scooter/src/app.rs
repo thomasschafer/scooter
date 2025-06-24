@@ -582,7 +582,7 @@ impl<'a> App {
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
                 let handle = replace::perform_replacement(
-                    search_state,
+                    search_state.results,
                     background_processing_sender.clone(),
                     cancelled.clone(),
                     replacements_completed.clone(),

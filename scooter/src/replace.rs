@@ -22,7 +22,7 @@ use tokio::{
 use frep_core::replace::{replace_in_file, ReplaceResult};
 use frep_core::search::SearchResult;
 
-use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, SearchState};
+use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplaceState {
@@ -103,7 +103,7 @@ impl PerformingReplacementState {
 }
 
 pub fn perform_replacement(
-    search_state: SearchState,
+    search_results: Vec<SearchResult>,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
@@ -112,44 +112,8 @@ pub fn perform_replacement(
     tokio::spawn(async move {
         cancelled.store(false, Ordering::Relaxed);
 
-        let (included, num_ignored) = split_results(search_state.results);
-
-        let mut replacements_handle = tokio::spawn(async move {
-            let mut path_groups = HashMap::<PathBuf, Vec<SearchResult>>::new();
-            for res in included {
-                path_groups.entry(res.path.clone()).or_default().push(res);
-            }
-
-            let semaphore = Arc::new(Semaphore::new(8));
-            let mut file_tasks = vec![];
-
-            for (_path, mut results) in path_groups {
-                if cancelled.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                let semaphore = semaphore.clone();
-                let replacements_completed_clone = replacements_completed.clone();
-                let task = tokio::spawn(async move {
-                    let permit = semaphore.acquire_owned().await.unwrap();
-                    if let Err(file_err) = replace_in_file(&mut results) {
-                        for res in &mut results {
-                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
-                        }
-                    }
-                    replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
-
-                    drop(permit);
-                    results
-                });
-                file_tasks.push(task);
-            }
-
-            future::join_all(file_tasks)
-                .await
-                .into_iter()
-                .flat_map(Result::unwrap)
-        });
+        let (mut replacements_handle, num_ignored) =
+            spawn_replace_included(search_results, cancelled, replacements_completed);
 
         let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
 
@@ -177,6 +141,55 @@ pub fn perform_replacement(
             },
         ));
     })
+}
+
+fn spawn_replace_included(
+    search_results: Vec<SearchResult>,
+    cancelled: Arc<AtomicBool>,
+    replacements_completed: Arc<AtomicUsize>,
+) -> (JoinHandle<impl Iterator<Item = SearchResult>>, usize) {
+    let (included, num_ignored) = split_results(search_results);
+
+    let replacements_handle = tokio::spawn(async move {
+        let path_groups = group_results(included);
+        let semaphore = Arc::new(Semaphore::new(8));
+        let mut file_tasks = vec![];
+        for (_path, mut results) in path_groups {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let semaphore = semaphore.clone();
+            let replacements_completed_clone = replacements_completed.clone();
+            let task = tokio::spawn(async move {
+                let permit = semaphore.acquire_owned().await.unwrap();
+                if let Err(file_err) = replace_in_file(&mut results) {
+                    for res in &mut results {
+                        res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+                    }
+                }
+                replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
+
+                drop(permit);
+                results
+            });
+            file_tasks.push(task);
+        }
+        future::join_all(file_tasks)
+            .await
+            .into_iter()
+            .flat_map(Result::unwrap)
+    });
+
+    (replacements_handle, num_ignored)
+}
+
+fn group_results(included: Vec<SearchResult>) -> HashMap<PathBuf, Vec<SearchResult>> {
+    let mut path_groups = HashMap::<PathBuf, Vec<SearchResult>>::new();
+    for res in included {
+        path_groups.entry(res.path.clone()).or_default().push(res);
+    }
+    path_groups
 }
 
 pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
