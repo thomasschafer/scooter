@@ -1409,6 +1409,7 @@ dependencies = [
  "rand 0.9.1",
  "ratatui",
  "regex",
+ "scooter-core",
  "serde",
  "serial_test",
  "similar",
@@ -1422,7 +1423,12 @@ dependencies = [
 
 [[package]]
 name = "scooter-core"
-version = "0.1.1"
+version = "0.1.2"
+dependencies = [
+ "frep-core",
+ "futures",
+ "tokio",
+]
 
 [[package]]
 name = "scopeguard"
