@@ -7,7 +7,7 @@ use std::{
         Arc,
     },
 };
-use tokio::{sync::Semaphore, task::JoinHandle};
+use tokio::sync::{mpsc, Semaphore};
 
 use frep_core::replace::{replace_in_file, ReplaceResult};
 use frep_core::search::SearchResult;
@@ -30,13 +30,15 @@ pub fn spawn_replace_included(
     search_results: Vec<SearchResult>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
-) -> (JoinHandle<impl Iterator<Item = SearchResult>>, usize) {
+) -> (mpsc::UnboundedReceiver<SearchResult>, usize) {
+    let (tx, rx) = mpsc::unbounded_channel();
     let (included, num_ignored) = split_results(search_results);
 
-    let replacements_handle = tokio::spawn(async move {
+    tokio::spawn(async move {
         let path_groups = group_results(included);
         let semaphore = Arc::new(Semaphore::new(8));
         let mut file_tasks = vec![];
+
         for (_path, mut results) in path_groups {
             if cancelled.load(Ordering::Relaxed) {
                 break;
@@ -44,6 +46,8 @@ pub fn spawn_replace_included(
 
             let semaphore = semaphore.clone();
             let replacements_completed_clone = replacements_completed.clone();
+            let tx = tx.clone();
+
             let task = tokio::spawn(async move {
                 let permit = semaphore.acquire_owned().await.unwrap();
                 if let Err(file_err) = replace_in_file(&mut results) {
@@ -53,18 +57,19 @@ pub fn spawn_replace_included(
                 }
                 replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
 
+                for result in results {
+                    tx.send(result).unwrap();
+                }
+
                 drop(permit);
-                results
             });
             file_tasks.push(task);
         }
-        future::join_all(file_tasks)
-            .await
-            .into_iter()
-            .flat_map(Result::unwrap)
+
+        future::join_all(file_tasks).await;
     });
 
-    (replacements_handle, num_ignored)
+    (rx, num_ignored)
 }
 
 #[cfg(test)]
