@@ -113,16 +113,18 @@ pub fn perform_replacement(
 
         let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
 
-        let replacement_results = loop {
+        let mut replacement_results = Vec::new();
+        loop {
             tokio::select! {
-                res = &mut replacements_handle => {
-                    break res.unwrap();
+                res = replacements_handle.recv() => match res {
+                    Some(res) => replacement_results.push(res),
+                    None => break,
                 },
                 _ = rerender_interval.tick() => {
                     let _ = event_sender.send(Event::App(AppEvent::Rerender));
                 }
             }
-        };
+        }
 
         let _ = event_sender.send(Event::App(AppEvent::Rerender));
 
