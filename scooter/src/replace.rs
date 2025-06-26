@@ -105,10 +105,14 @@ pub fn perform_replacement(
     tokio::spawn(async move {
         cancelled.store(false, Ordering::Relaxed);
 
-        let (mut replacements_handle, num_ignored) = scooter_core::replace::spawn_replace_included(
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let num_ignored = scooter_core::replace::spawn_replace_included(
             search_results,
             cancelled,
             replacements_completed,
+            move |result| {
+                let _ = tx.send(result); // Ignore error if receiver is dropped
+            },
         );
 
         let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
@@ -116,7 +120,7 @@ pub fn perform_replacement(
         let mut replacement_results = Vec::new();
         loop {
             tokio::select! {
-                res = replacements_handle.recv() => match res {
+                res = rx.recv() => match res {
                     Some(res) => replacement_results.push(res),
                     None => break,
                 },
