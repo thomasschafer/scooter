@@ -1,4 +1,3 @@
-use futures::future;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -6,11 +5,12 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    thread,
 };
-use tokio::sync::{mpsc, Semaphore};
 
 use frep_core::replace::{replace_in_file, ReplaceResult};
 use frep_core::search::SearchResult;
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 pub fn split_results(results: Vec<SearchResult>) -> (Vec<SearchResult>, usize) {
     let (included, excluded): (Vec<_>, Vec<_>) = results.into_iter().partition(|res| res.included);
@@ -26,50 +26,45 @@ fn group_results(included: Vec<SearchResult>) -> HashMap<PathBuf, Vec<SearchResu
     path_groups
 }
 
-pub fn spawn_replace_included(
+pub fn spawn_replace_included<T: Fn(SearchResult) + Send + Sync + 'static>(
     search_results: Vec<SearchResult>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
-) -> (mpsc::UnboundedReceiver<SearchResult>, usize) {
-    let (tx, rx) = mpsc::unbounded_channel();
+    on_completion: T,
+) -> usize {
     let (included, num_ignored) = split_results(search_results);
 
-    tokio::spawn(async move {
+    thread::spawn(move || {
         let path_groups = group_results(included);
-        let semaphore = Arc::new(Semaphore::new(8));
-        let mut file_tasks = vec![];
 
-        for (_path, mut results) in path_groups {
-            if cancelled.load(Ordering::Relaxed) {
-                break;
-            }
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
 
-            let semaphore = semaphore.clone();
-            let replacements_completed_clone = replacements_completed.clone();
-            let tx = tx.clone();
-
-            let task = tokio::spawn(async move {
-                let permit = semaphore.acquire_owned().await.unwrap();
-                if let Err(file_err) = replace_in_file(&mut results) {
-                    for res in &mut results {
-                        res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+        pool.install(|| {
+            path_groups
+                .into_par_iter()
+                .for_each(|(_path, mut results)| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return;
                     }
-                }
-                replacements_completed_clone.fetch_add(results.len(), Ordering::Relaxed);
 
-                for result in results {
-                    tx.send(result).unwrap();
-                }
+                    if let Err(file_err) = replace_in_file(&mut results) {
+                        for res in &mut results {
+                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
+                        }
+                    }
+                    replacements_completed.fetch_add(results.len(), Ordering::Relaxed);
 
-                drop(permit);
-            });
-            file_tasks.push(task);
-        }
-
-        future::join_all(file_tasks).await;
+                    for result in results {
+                        on_completion(result);
+                    }
+                });
+        });
     });
 
-    (rx, num_ignored)
+    num_ignored
 }
 
 #[cfg(test)]
