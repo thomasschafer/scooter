@@ -14,20 +14,6 @@ use syntect::{
 
 use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
 
-pub fn replace_start(s: &str, from: &str, to: &str) -> String {
-    if let Some(stripped) = s.strip_prefix(from) {
-        format!("{to}{stripped}")
-    } else {
-        s.to_string()
-    }
-}
-
-pub fn relative_path_from(root_dir: &Path, path: &Path) -> String {
-    let root_dir = root_dir.to_str().unwrap();
-    let path = path.to_str().unwrap().to_owned();
-    replace_start(&path, root_dir, ".")
-}
-
 pub fn group_by<I, T, F>(iter: I, predicate: F) -> Vec<Vec<T>>
 where
     I: IntoIterator<Item = T>,
@@ -378,39 +364,6 @@ mod tests {
     use std::io::Write;
     use syntect::highlighting::ThemeSet;
     use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_replace_start_matching_prefix() {
-        assert_eq!(replace_start("abac", "a", "z"), "zbac");
-    }
-
-    #[test]
-    fn test_replace_start_no_match() {
-        assert_eq!(replace_start("bac", "a", "z"), "bac");
-    }
-
-    #[test]
-    fn test_replace_start_empty_string() {
-        assert_eq!(replace_start("", "a", "z"), "");
-    }
-
-    #[test]
-    fn test_replace_start_longer_prefix() {
-        assert_eq!(
-            replace_start("hello world hello there", "hello", "hi"),
-            "hi world hello there"
-        );
-    }
-
-    #[test]
-    fn test_replace_start_whole_string() {
-        assert_eq!(replace_start("abc", "abc", "xyz"), "xyz");
-    }
-
-    #[test]
-    fn test_replace_start_empty_from() {
-        assert_eq!(replace_start("abc", "", "xyz"), "xyzabc");
-    }
 
     #[test]
     fn test_vec() {
