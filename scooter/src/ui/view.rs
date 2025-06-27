@@ -682,28 +682,22 @@ fn file_path_line<'a>(
     }
 
     let right_content = format!(" ({})", idx + 1);
-    let right_content_len = right_content.len();
+    let right_content_len = right_content.chars().count();
     let left_content = format!("[{}] ", if result.included { 'x' } else { ' ' },);
     let left_content_len = left_content.chars().count();
-    let centre_content = format!(
-        "{}:{}",
-        relative_path_from(base_path, &result.path),
-        result.line_number,
-    );
-    let centre_content_space =
-        (list_area_width as usize).saturating_sub(left_content_len + right_content_len);
-    let centre_content = if centre_content.len() > centre_content_space {
-        let truncated = last_n_chars(
-            &centre_content,
-            centre_content_space - TRUNCATION_PREFIX.chars().count(),
-        );
-        format!("{TRUNCATION_PREFIX}{truncated}").to_string()
-    } else {
-        centre_content
-    };
+    let mut path = relative_path_from(base_path, &result.path);
+    let line_num = format!(":{}", result.line_number);
+    let line_num_len = line_num.chars().count();
+    let path_space = (list_area_width as usize)
+        .saturating_sub(left_content_len + line_num_len + right_content_len);
+    if path.len() > path_space {
+        let truncated = last_n_chars(&path, path_space - TRUNCATION_PREFIX.chars().count());
+        path = format!("{TRUNCATION_PREFIX}{truncated}").to_string();
+    }
+    let path_len = path.chars().count();
     let spacers = " ".repeat(
         (list_area_width as usize)
-            .saturating_sub(left_content_len + centre_content.len() + right_content_len),
+            .saturating_sub(left_content_len + path_len + line_num_len + right_content_len),
     );
 
     let accessory_colour = if is_selected {
@@ -713,7 +707,8 @@ fn file_path_line<'a>(
     };
     Line::from(vec![
         Span::raw(left_content).style(accessory_colour),
-        Span::raw(centre_content),
+        Span::raw(path),
+        Span::raw(line_num).fg(Color::Blue),
         Span::raw(spacers),
         Span::raw(right_content).style(accessory_colour),
     ])
