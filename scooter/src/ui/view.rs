@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
     Frame,
 };
+use scooter_core::utils::relative_path_from;
 use similar::{Change, ChangeTag, TextDiff};
 use std::{
     cmp::min,
@@ -29,7 +30,7 @@ use crate::{
     replace::{PerformingReplacementState, ReplaceState},
     utils::{
         group_by, largest_range_centered_on, last_n_chars, read_lines_range,
-        read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
+        read_lines_range_highlighted, strip_control_chars, HighlightedLine,
     },
 };
 
