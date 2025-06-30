@@ -1432,7 +1432,6 @@ dependencies = [
  "scooter-core",
  "serde",
  "serial_test",
- "similar",
  "simple-log",
  "syntect",
  "tempfile",
@@ -1447,6 +1446,7 @@ version = "0.1.2"
 dependencies = [
  "frep-core",
  "rayon",
+ "similar",
 ]
 
 [[package]]
