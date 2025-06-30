@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::bail;
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
@@ -10,7 +10,7 @@ use ratatui::{
 };
 use scooter_core::{
     diff::{line_diff, Diff, DiffColour},
-    utils::relative_path_from,
+    utils::{relative_path_from, split_indexed_lines, strip_control_chars},
 };
 use std::{
     cmp::min,
@@ -30,13 +30,11 @@ use crate::{
     app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
-    utils::{
-        largest_range_centered_on, last_n_chars, read_lines_range, read_lines_range_highlighted,
-        strip_control_chars, HighlightedLine,
-    },
+    utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
 };
 
 use frep_core::search::SearchResult;
+use scooter_core::utils::read_lines_range;
 
 use super::colour::to_ratatui_colour;
 
@@ -535,37 +533,6 @@ fn build_preview_list<'a>(
                 .chain(after.iter().map(|(_, l)| to_line_plain(l))),
         ))
     }
-}
-
-#[allow(clippy::type_complexity)]
-fn split_indexed_lines<T>(
-    indexed_lines: Vec<(usize, T)>,
-    line_idx: usize,
-    num_lines_to_show: usize,
-) -> anyhow::Result<(Vec<(usize, T)>, (usize, T), Vec<(usize, T)>)> {
-    let file_start = indexed_lines.first().context("No lines found")?.0;
-    let file_end = indexed_lines.last().context("No lines found")?.0;
-    let (new_start, new_end) = largest_range_centered_on(
-        line_idx,
-        file_start,
-        file_end,
-        NonZeroUsize::new(num_lines_to_show).context("preview will have height 0")?,
-    )?;
-
-    let mut filtered_lines = indexed_lines
-        .into_iter()
-        .skip_while(|(idx, _)| *idx < new_start)
-        .take_while(|(idx, _)| *idx <= new_end)
-        .collect::<Vec<_>>();
-
-    let position = filtered_lines
-        .iter()
-        .position(|(idx, _)| *idx == line_idx)
-        .context("Couldn't find line in file")?;
-    let after = filtered_lines.split_off(position + 1);
-    let current = filtered_lines.pop().unwrap();
-
-    Ok((filtered_lines, current, after))
 }
 
 struct SearchResultLines<'a> {

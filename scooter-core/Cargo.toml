@@ -18,6 +18,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+anyhow = "1.0.98"
 frep-core = "0.1.2"
+log = "0.4.27"
 rayon = "1.10.0"
 similar = "2.7.0"
+
+[dev-dependencies]
+tempfile = "3.20.0"

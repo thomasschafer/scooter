@@ -1444,9 +1444,12 @@ dependencies = [
 name = "scooter-core"
 version = "0.1.2"
 dependencies = [
+ "anyhow",
  "frep-core",
+ "log",
  "rayon",
  "similar",
+ "tempfile",
 ]
 
 [[package]]
