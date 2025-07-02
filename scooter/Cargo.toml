@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.98"
-# scooter-core = { version = "0.1.1", path = "../scooter-core" }
+scooter-core = { version = "0.1.2", path = "../scooter-core" }
 clap = { version = "4.5.40", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
@@ -26,7 +26,6 @@ lru = "0.15.0"
 ratatui = "0.29.0"
 regex = "1.11.1"
 serde = "1.0.219"
-similar = "2.7.0"
 simple-log = "2.3.0"
 syntect = "5.2.0"
 tempfile = "3.20.0"

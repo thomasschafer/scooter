@@ -582,7 +582,7 @@ impl<'a> App {
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
                 let handle = replace::perform_replacement(
-                    search_state,
+                    search_state.results,
                     background_processing_sender.clone(),
                     cancelled.clone(),
                     replacements_completed.clone(),
@@ -1285,7 +1285,7 @@ mod tests {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
-                replace::split_results(search_complete_state.search_state.results);
+                scooter_core::replace::split_results(search_complete_state.search_state.results);
             frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");
@@ -1312,7 +1312,7 @@ mod tests {
         ]);
         let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
             let (results, _num_ignored) =
-                replace::split_results(search_complete_state.search_state.results);
+                scooter_core::replace::split_results(search_complete_state.search_state.results);
             frep_core::replace::calculate_statistics(results)
         } else {
             panic!("Expected SearchComplete");

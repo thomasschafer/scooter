@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::bail;
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
@@ -8,7 +8,10 @@ use ratatui::{
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
     Frame,
 };
-use similar::{Change, ChangeTag, TextDiff};
+use scooter_core::{
+    diff::{line_diff, Diff, DiffColour},
+    utils::{relative_path_from, split_indexed_lines, strip_control_chars},
+};
 use std::{
     cmp::min,
     fs, iter,
@@ -27,13 +30,11 @@ use crate::{
     app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
     fields::{Field, SearchField, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
-    utils::{
-        group_by, largest_range_centered_on, last_n_chars, read_lines_range,
-        read_lines_range_highlighted, relative_path_from, strip_control_chars, HighlightedLine,
-    },
+    utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
 };
 
 use frep_core::search::SearchResult;
+use scooter_core::utils::read_lines_range;
 
 use super::colour::to_ratatui_colour;
 
@@ -160,75 +161,23 @@ fn width(area: Rect, percentage: u16) -> Rect {
     area
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Diff {
-    pub text: String,
-    pub fg_colour: Color,
-    pub bg_colour: Option<Color>,
+fn diff_col_to_ratatui(colour: &DiffColour) -> Color {
+    match colour {
+        DiffColour::Red => Color::Red,
+        DiffColour::Green => Color::Green,
+        DiffColour::Black => Color::Black,
+    }
 }
 
 fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
     let diff_iter = diff.into_iter().map(|d| {
-        let mut style = Style::new().fg(d.fg_colour);
-        if let Some(bg) = d.bg_colour {
-            style = style.bg(bg);
+        let mut style = Style::new().fg(diff_col_to_ratatui(&d.fg_colour));
+        if let Some(bg) = &d.bg_colour {
+            style = style.bg(diff_col_to_ratatui(bg));
         }
         Span::styled(strip_control_chars(&d.text), style)
     });
     diff_iter.collect()
-}
-
-pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Diff>) {
-    let diff = TextDiff::configure()
-        .algorithm(similar::Algorithm::Myers)
-        .timeout(std::time::Duration::from_millis(100))
-        .diff_chars(old_line, new_line);
-
-    let mut old_spans = vec![Diff {
-        text: "- ".to_owned(),
-        fg_colour: Color::Red,
-        bg_colour: None,
-    }];
-    let mut new_spans = vec![Diff {
-        text: "+ ".to_owned(),
-        fg_colour: Color::Green,
-        bg_colour: None,
-    }];
-
-    for change_group in group_by(diff.iter_all_changes(), |c1, c2| c1.tag() == c2.tag()) {
-        let first_change = change_group.first().unwrap(); // group_by should never return an empty group
-        let text = change_group.iter().map(Change::value).collect();
-        match first_change.tag() {
-            ChangeTag::Delete => {
-                old_spans.push(Diff {
-                    text,
-                    fg_colour: Color::Black,
-                    bg_colour: Some(Color::Red),
-                });
-            }
-            ChangeTag::Insert => {
-                new_spans.push(Diff {
-                    text,
-                    fg_colour: Color::Black,
-                    bg_colour: Some(Color::Green),
-                });
-            }
-            ChangeTag::Equal => {
-                old_spans.push(Diff {
-                    text: text.clone(),
-                    fg_colour: Color::Red,
-                    bg_colour: None,
-                });
-                new_spans.push(Diff {
-                    text,
-                    fg_colour: Color::Green,
-                    bg_colour: None,
-                });
-            }
-        }
-    }
-
-    (old_spans, new_spans)
 }
 
 fn display_duration(duration: Duration) -> String {
@@ -584,37 +533,6 @@ fn build_preview_list<'a>(
                 .chain(after.iter().map(|(_, l)| to_line_plain(l))),
         ))
     }
-}
-
-#[allow(clippy::type_complexity)]
-fn split_indexed_lines<T>(
-    indexed_lines: Vec<(usize, T)>,
-    line_idx: usize,
-    num_lines_to_show: usize,
-) -> anyhow::Result<(Vec<(usize, T)>, (usize, T), Vec<(usize, T)>)> {
-    let file_start = indexed_lines.first().context("No lines found")?.0;
-    let file_end = indexed_lines.last().context("No lines found")?.0;
-    let (new_start, new_end) = largest_range_centered_on(
-        line_idx,
-        file_start,
-        file_end,
-        NonZeroUsize::new(num_lines_to_show).context("preview will have height 0")?,
-    )?;
-
-    let mut filtered_lines = indexed_lines
-        .into_iter()
-        .skip_while(|(idx, _)| *idx < new_start)
-        .take_while(|(idx, _)| *idx <= new_end)
-        .collect::<Vec<_>>();
-
-    let position = filtered_lines
-        .iter()
-        .position(|(idx, _)| *idx == line_idx)
-        .context("Couldn't find line in file")?;
-    let after = filtered_lines.split_off(position + 1);
-    let current = filtered_lines.pop().unwrap();
-
-    Ok((filtered_lines, current, after))
 }
 
 struct SearchResultLines<'a> {
@@ -1042,229 +960,7 @@ fn create_popup_block(title: &str) -> Block<'_> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
-
     use super::*;
-
-    #[test]
-    fn test_identical_lines() {
-        let (old_actual, new_actual) = line_diff("hello", "hello");
-
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-        ];
-
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-        ];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_single_char_difference() {
-        let (old_actual, new_actual) = line_diff("hello", "hallo");
-
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "h".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "e".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Red),
-            },
-            Diff {
-                text: "llo".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-        ];
-
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "h".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "a".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Green),
-            },
-            Diff {
-                text: "llo".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-        ];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_completely_different_strings() {
-        let (old_actual, new_actual) = line_diff("foo", "bar");
-
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "foo".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Red),
-            },
-        ];
-
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "bar".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Green),
-            },
-        ];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_empty_strings() {
-        let (old_actual, new_actual) = line_diff("", "");
-
-        let old_expected = vec![Diff {
-            text: "- ".to_owned(),
-            fg_colour: Color::Red,
-            bg_colour: None,
-        }];
-
-        let new_expected = vec![Diff {
-            text: "+ ".to_owned(),
-            fg_colour: Color::Green,
-            bg_colour: None,
-        }];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_addition_at_end() {
-        let (old_actual, new_actual) = line_diff("hello", "hello!");
-
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-        ];
-
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "!".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Green),
-            },
-        ];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
-
-    #[test]
-    fn test_addition_at_start() {
-        let (old_actual, new_actual) = line_diff("hello", "!hello");
-
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Red,
-                bg_colour: None,
-            },
-        ];
-
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "!".to_owned(),
-                fg_colour: Color::Black,
-                bg_colour: Some(Color::Green),
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: Color::Green,
-                bg_colour: None,
-            },
-        ];
-
-        assert_eq!(old_expected, old_actual);
-        assert_eq!(new_expected, new_actual);
-    }
 
     #[test]
     fn test_split_lines_centered() {

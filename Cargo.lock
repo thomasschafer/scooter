@@ -1292,6 +1292,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rayon"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1409,9 +1429,9 @@ dependencies = [
  "rand 0.9.1",
  "ratatui",
  "regex",
+ "scooter-core",
  "serde",
  "serial_test",
- "similar",
  "simple-log",
  "syntect",
  "tempfile",
@@ -1422,7 +1442,15 @@ dependencies = [
 
 [[package]]
 name = "scooter-core"
-version = "0.1.1"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "frep-core",
+ "log",
+ "rayon",
+ "similar",
+ "tempfile",
+]
 
 [[package]]
 name = "scopeguard"
