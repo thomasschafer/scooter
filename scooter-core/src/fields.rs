@@ -1,6 +1,8 @@
+use steel_derive::Steel;
 use unicode_width::UnicodeWidthStr;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+// TODO: make deriving Steel a feature
+#[derive(Clone, Debug, Eq, PartialEq, Steel)]
 pub struct TextField {
     pub text: String,
     pub cursor_idx: usize,
