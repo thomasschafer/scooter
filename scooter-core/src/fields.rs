@@ -146,4 +146,23 @@ impl TextField {
         self.text.clear();
         self.cursor_idx = 0;
     }
+
+    pub fn set_text(&mut self, text: &str) {
+        self.text = text.to_string();
+        self.cursor_idx = self.text.chars().count().min(self.cursor_idx);
+    }
+
+    pub fn insert_text(&mut self, text: &str) {
+        let index = self.byte_index();
+        self.text.insert_str(index, text);
+        self.cursor_idx += text.chars().count();
+    }
+
+    pub fn cursor_idx(&self) -> usize {
+        self.cursor_idx
+    }
+
+    pub fn set_cursor_idx(&mut self, idx: usize) {
+        self.cursor_idx = self.clamp_cursor(idx);
+    }
 }
