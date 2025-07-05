@@ -1,8 +1,9 @@
+#[cfg(feature = "steel")]
 use steel_derive::Steel;
 use unicode_width::UnicodeWidthStr;
 
-// TODO: make deriving Steel a feature
-#[derive(Clone, Debug, Eq, PartialEq, Steel)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "steel", derive(Steel))]
 pub struct TextField {
     pub text: String,
     pub cursor_idx: usize,
