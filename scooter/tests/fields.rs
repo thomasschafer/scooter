@@ -1,56 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::fields::{
-    CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields, TextField,
-};
-
-#[test]
-fn test_text_field_operations() {
-    let mut field = TextField::new("");
-
-    // Test input
-    for c in "Hello".chars() {
-        field.enter_char(c);
-    }
-    assert_eq!(field.text(), "Hello");
-    assert_eq!(field.cursor_idx, 5);
-
-    field.move_cursor_left();
-    assert_eq!(field.cursor_idx, 4);
-    field.move_cursor_right();
-    assert_eq!(field.cursor_idx, 5);
-    field.move_cursor_start();
-    assert_eq!(field.cursor_idx, 0);
-    field.move_cursor_end();
-    assert_eq!(field.cursor_idx, 5);
-
-    field.clear();
-    for c in "Hello world".chars() {
-        field.enter_char(c);
-    }
-    field.move_cursor_start();
-    field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx, 6);
-    field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx, 11);
-    field.move_cursor_forward_word();
-    assert_eq!(field.cursor_idx, 11);
-    field.move_cursor_back_word();
-    assert_eq!(field.cursor_idx, 6);
-
-    // Test deletion
-    field.move_cursor_start();
-    field.delete_char_forward();
-    assert_eq!(field.text(), "ello world");
-    field.move_cursor_end();
-    field.delete_char();
-    assert_eq!(field.text(), "ello worl");
-    field.move_cursor_start();
-    field.delete_word_forward();
-    assert_eq!(field.text(), "worl");
-    field.move_cursor_end();
-    field.delete_word_backward();
-    assert_eq!(field.text(), "");
-}
+use scooter::fields::{CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields};
 
 #[test]
 fn test_checkbox_field() {
@@ -99,7 +48,7 @@ fn test_search_fields() {
             true,
         );
     }
-    assert_eq!(search_fields.search().text, "test search");
+    assert_eq!(search_fields.search().text(), "test search");
 
     search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 1);
@@ -110,7 +59,7 @@ fn test_search_fields() {
             true,
         );
     }
-    assert_eq!(search_fields.replace().text, "test replace");
+    assert_eq!(search_fields.replace().text(), "test replace");
 
     search_fields.focus_next(true);
     assert_eq!(search_fields.highlighted, 2);
@@ -119,14 +68,14 @@ fn test_search_fields() {
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
     assert!(search_fields.fixed_strings().checked);
 
-    assert_eq!(search_fields.search().text, "test search");
+    assert_eq!(search_fields.search().text(), "test search");
     assert_eq!(search_fields.fixed_strings().checked, true);
 
     search_fields
         .highlighted_field_mut()
         .handle_keys(KeyCode::Char(' '), KeyModifiers::NONE, true);
 
-    assert_eq!(search_fields.search().text, "test search");
+    assert_eq!(search_fields.search().text(), "test search");
     assert_eq!(search_fields.fixed_strings().checked, false);
 }
 

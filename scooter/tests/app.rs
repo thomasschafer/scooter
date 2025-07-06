@@ -108,11 +108,11 @@ async fn test_back_from_results() {
         state: KeyEventState::NONE,
     });
     assert!(res != EventHandlingResult::Exit(None));
-    assert_eq!(app.search_fields.search().text, "foo");
-    assert_eq!(app.search_fields.replace().text, "bar");
+    assert_eq!(app.search_fields.search().text(), "foo");
+    assert_eq!(app.search_fields.replace().text(), "bar");
     assert!(app.search_fields.fixed_strings().checked);
-    assert_eq!(app.search_fields.include_files().text, "pattern");
-    assert_eq!(app.search_fields.exclude_files().text, "");
+    assert_eq!(app.search_fields.include_files().text(), "pattern");
+    assert_eq!(app.search_fields.exclude_files().text(), "");
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
@@ -1873,7 +1873,7 @@ async fn test_ctrl_u_unlocks_all_fields() {
     };
 
     app.handle_key_event(&x_char_event);
-    assert_eq!(app.search_fields.search().text, "search"); // Shouldn't have changed - all fields locked
+    assert_eq!(app.search_fields.search().text(), "search"); // Shouldn't have changed - all fields locked
 
     let ctrl_u_event = KeyEvent {
         code: KeyCode::Char('u'),
@@ -1889,5 +1889,5 @@ async fn test_ctrl_u_unlocks_all_fields() {
     }
 
     app.handle_key_event(&x_char_event);
-    assert_eq!(app.search_fields.search().text, "searchx");
+    assert_eq!(app.search_fields.search().text(), "searchx");
 }
