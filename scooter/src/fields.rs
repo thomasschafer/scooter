@@ -30,7 +30,7 @@ impl TextField {
     }
 
     pub fn cursor_pos(&self) -> usize {
-        self.core_text_field.cursor_pos()
+        self.core_text_field.visual_cursor_pos()
     }
 
     pub fn set_error(&mut self, short: String, long: String) {

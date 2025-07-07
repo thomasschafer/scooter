@@ -5,8 +5,8 @@ use unicode_width::UnicodeWidthStr;
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "steel", derive(Steel))]
 pub struct TextField {
-    pub text: String,
-    pub cursor_idx: usize,
+    text: String,
+    cursor_idx: usize,
 }
 
 impl TextField {
@@ -21,7 +21,7 @@ impl TextField {
         &self.text
     }
 
-    pub fn cursor_pos(&self) -> usize {
+    pub fn visual_cursor_pos(&self) -> usize {
         let prefix: String = self.text.chars().take(self.cursor_idx).collect();
         UnicodeWidthStr::width(prefix.as_str())
     }
@@ -58,7 +58,7 @@ impl TextField {
         self.move_cursor_right();
     }
 
-    fn byte_index(&mut self) -> usize {
+    fn byte_index(&self) -> usize {
         self.text
             .char_indices()
             .map(|(i, _)| i)
