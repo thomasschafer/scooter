@@ -93,7 +93,7 @@ scooter \
 ```
 
 Note that, by default, pre-populated fields are disabled in the UI. To make these fields editable by default, you can set `search.disable_prepopulated_fields` to `false` in your config - see [here](#disable_prepopulated_fields).
-You can also temporarily unlock the pre-populated fields with `ctrl+u`.
+You can also temporarily unlock the pre-populated fields with `<alt>+u`.
 
 When pre-populating the fields in this way, you can skip the initial search screen entirely and jump straight to searching with the `--immediate-search` flag, e.g.:
 

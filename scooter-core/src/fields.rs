@@ -166,7 +166,7 @@ impl TextField {
         self.cursor_idx = self.clamp_cursor(idx);
     }
 
-    pub fn delete_line_backwards(&mut self) {
+    pub fn delete_to_start(&mut self) {
         self.text = self.text.chars().skip(self.cursor_idx).collect();
         self.cursor_idx = 0;
     }

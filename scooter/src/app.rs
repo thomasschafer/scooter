@@ -665,7 +665,7 @@ impl<'a> App {
 
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
+            (KeyCode::Char('u'), KeyModifiers::ALT) => {
                 self.unlock_prepopulated_fields();
             }
             (KeyCode::Enter, _) => {
@@ -928,7 +928,7 @@ impl<'a> App {
                 if self.config.search.disable_prepopulated_fields
                     && self.search_fields.fields.iter().any(|f| f.set_by_cli)
                 {
-                    keys.push(("<C-u>", "unlock pre-populated fields", Show::FullOnly));
+                    keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
                 }
                 keys
             }

@@ -49,7 +49,7 @@ impl TextField {
             }
             (KeyCode::Char('u'), KeyModifiers::CONTROL)
             | (KeyCode::Backspace, KeyModifiers::META) => {
-                self.core_text_field.delete_line_backwards();
+                self.core_text_field.delete_to_start();
             }
             (KeyCode::Backspace, _) => {
                 self.core_text_field.delete_char();
