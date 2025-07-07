@@ -165,6 +165,11 @@ impl TextField {
     pub fn set_cursor_idx(&mut self, idx: usize) {
         self.cursor_idx = self.clamp_cursor(idx);
     }
+
+    pub fn delete_line_backwards(&mut self) {
+        self.text = self.text.chars().skip(self.cursor_idx).collect();
+        self.cursor_idx = 0;
+    }
 }
 
 // TODO: add more tests
