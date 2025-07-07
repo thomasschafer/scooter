@@ -149,7 +149,7 @@ impl TextField {
 
     pub fn set_text(&mut self, text: &str) {
         self.text = text.to_string();
-        self.cursor_idx = self.text.chars().count().min(self.cursor_idx);
+        self.cursor_idx = self.clamp_cursor(text.chars().count());
     }
 
     pub fn insert_text(&mut self, text: &str) {
