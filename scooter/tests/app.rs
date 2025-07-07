@@ -108,11 +108,11 @@ async fn test_back_from_results() {
         state: KeyEventState::NONE,
     });
     assert!(res != EventHandlingResult::Exit(None));
-    assert_eq!(app.search_fields.search().text, "foo");
-    assert_eq!(app.search_fields.replace().text, "bar");
+    assert_eq!(app.search_fields.search().text(), "foo");
+    assert_eq!(app.search_fields.replace().text(), "bar");
     assert!(app.search_fields.fixed_strings().checked);
-    assert_eq!(app.search_fields.include_files().text, "pattern");
-    assert_eq!(app.search_fields.exclude_files().text, "");
+    assert_eq!(app.search_fields.include_files().text(), "pattern");
+    assert_eq!(app.search_fields.exclude_files().text(), "");
     assert!(matches!(app.current_screen, Screen::SearchFields));
 }
 
@@ -1756,7 +1756,7 @@ async fn test_keymaps_popup() {
 }
 
 #[tokio::test]
-async fn test_unlock_prepopulated_fields_via_ctrl_u() {
+async fn test_unlock_prepopulated_fields_via_alt_u() {
     let search_field_values = SearchFieldValues {
         search: FieldValue::new("test_search", true),
         replace: FieldValue::new("", false),
@@ -1784,7 +1784,7 @@ async fn test_unlock_prepopulated_fields_via_ctrl_u() {
 
     let key_event = KeyEvent {
         code: KeyCode::Char('u'),
-        modifiers: KeyModifiers::CONTROL,
+        modifiers: KeyModifiers::ALT,
         kind: crossterm::event::KeyEventKind::Press,
         state: crossterm::event::KeyEventState::NONE,
     };
@@ -1844,7 +1844,7 @@ async fn test_keybinding_integration_with_disabled_fields() {
 }
 
 #[tokio::test]
-async fn test_ctrl_u_unlocks_all_fields() {
+async fn test_alt_u_unlocks_all_fields() {
     let search_field_values = SearchFieldValues {
         search: FieldValue::new("search", true),
         replace: FieldValue::new("replace", true),
@@ -1873,21 +1873,21 @@ async fn test_ctrl_u_unlocks_all_fields() {
     };
 
     app.handle_key_event(&x_char_event);
-    assert_eq!(app.search_fields.search().text, "search"); // Shouldn't have changed - all fields locked
+    assert_eq!(app.search_fields.search().text(), "search"); // Shouldn't have changed - all fields locked
 
-    let ctrl_u_event = KeyEvent {
+    let alt_u_event = KeyEvent {
         code: KeyCode::Char('u'),
-        modifiers: KeyModifiers::CONTROL,
+        modifiers: KeyModifiers::ALT,
         kind: crossterm::event::KeyEventKind::Press,
         state: crossterm::event::KeyEventState::NONE,
     };
 
-    app.handle_key_event(&ctrl_u_event);
+    app.handle_key_event(&alt_u_event);
 
     for field in &app.search_fields.fields {
         assert!(!field.set_by_cli);
     }
 
     app.handle_key_event(&x_char_event);
-    assert_eq!(app.search_fields.search().text, "searchx");
+    assert_eq!(app.search_fields.search().text(), "searchx");
 }
