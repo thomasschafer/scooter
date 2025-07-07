@@ -28,7 +28,7 @@ log = "0.4.27"
 rayon = "1.10.0"
 similar = "2.7.0"
 unicode-width = "0.1.11"
-steel-core = { git = "https://github.com/mattwparas/steel.git", version = "0.7.0", features = [
+steel-core = { version = "0.7.0", features = [
   "dylibs",
   "sync",
 ], optional = true }
