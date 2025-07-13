@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "scooter"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1909,7 +1909,7 @@ dependencies = [
  "rand 0.9.1",
  "ratatui",
  "regex",
- "scooter-core",
+ "scooter-core 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serial_test",
  "simple-log",
@@ -1932,6 +1932,20 @@ dependencies = [
  "steel-core",
  "steel-derive",
  "tempfile",
+ "unicode-width 0.1.14",
+]
+
+[[package]]
+name = "scooter-core"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "979413e77c90639a78d8780b7becc17ac03bb9c268f8442e3dbcece6c62226af"
+dependencies = [
+ "anyhow",
+ "frep-core",
+ "log",
+ "rayon",
+ "similar",
  "unicode-width 0.1.14",
 ]
 
