@@ -144,7 +144,7 @@ brew install scooter
 
 ### Nix
 
-Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=scooter), currently on the unstable channel.
+Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?show=scooter).
 
 ### AUR
 
