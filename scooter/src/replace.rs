@@ -64,9 +64,6 @@ impl ReplaceState {
 
 #[derive(Debug)]
 pub struct PerformingReplacementState {
-    pub handle: JoinHandle<()>,
-    #[allow(dead_code)]
-    pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     pub cancelled: Arc<AtomicBool>,
     pub replacement_started: Instant,
@@ -76,16 +73,12 @@ pub struct PerformingReplacementState {
 
 impl PerformingReplacementState {
     pub fn new(
-        handle: JoinHandle<()>,
-        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
         cancelled: Arc<AtomicBool>,
         num_replacements_completed: Arc<AtomicUsize>,
         total_replacements: usize,
     ) -> Self {
         Self {
-            handle,
-            processing_sender,
             processing_receiver,
             cancelled,
             replacement_started: Instant::now(),

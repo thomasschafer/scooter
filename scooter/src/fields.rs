@@ -344,11 +344,6 @@ impl SearchFields {
         }
     }
 
-    pub fn with_advanced_regex(mut self, advanced_regex: bool) -> Self {
-        self.advanced_regex = advanced_regex;
-        self
-    }
-
     pub fn highlighted_field(&self) -> &SearchField {
         &self.fields[self.highlighted]
     }
