@@ -4,8 +4,10 @@ use frep_core::replace::ReplaceResult;
 use frep_core::search::SearchResult;
 use insta::assert_debug_snapshot;
 use scooter::app::EventHandlingResult;
+use scooter::app::FocussedSection;
 use scooter::app::Popup;
 use scooter::app::Screen;
+use scooter::app::SearchFieldsState;
 use serial_test::serial;
 use std::env::current_dir;
 use std::fs;
@@ -20,7 +22,7 @@ use tempfile::TempDir;
 use tokio::sync::mpsc;
 
 use scooter::{
-    app::{App, AppError, AppRunConfig, SearchCompleteState, SearchInProgressState, SearchState},
+    app::{App, AppError, AppRunConfig, SearchState},
     fields::{FieldValue, SearchFieldValues, SearchFields},
     replace::{PerformingReplacementState, ReplaceState},
     test_with_both_regex_modes,
@@ -73,7 +75,7 @@ async fn test_app_reset() {
 
     app.reset();
 
-    assert!(matches!(app.current_screen, Screen::SearchFields));
+    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
 }
 
 #[tokio::test]
@@ -84,10 +86,10 @@ async fn test_back_from_results() {
         &AppRunConfig::default(),
     );
     let (_sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-        SearchState::new(receiver),
-        Instant::now(),
-    ));
+    app.current_screen = Screen::SearchFields(SearchFieldsState {
+        focussed_section: FocussedSection::SearchResults,
+        search_state: Some(SearchState::new(receiver, Arc::new(AtomicBool::new(false)))),
+    });
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
             search: FieldValue::new("foo", false),
@@ -113,21 +115,19 @@ async fn test_back_from_results() {
     assert!(app.search_fields.fixed_strings().checked);
     assert_eq!(app.search_fields.include_files().text(), "pattern");
     assert_eq!(app.search_fields.exclude_files().text(), "");
-    assert!(matches!(app.current_screen, Screen::SearchFields));
+    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
 }
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
         current_dir().unwrap(),
-        &SearchFieldValues::default(),
+        search_fields,
         &AppRunConfig::default(),
     );
-    app.current_screen = Screen::SearchFields;
-    app.search_fields = SearchFields::with_values(search_fields, true);
 
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit(None));
-    assert!(matches!(app.current_screen, Screen::SearchFields));
+    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(&KeyEvent {
@@ -222,51 +222,25 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
 
 #[tokio::test]
 async fn test_help_popup_on_search_fields() {
-    test_help_popup_on_screen(Screen::SearchFields);
+    test_help_popup_on_screen(Screen::SearchFields(SearchFieldsState::default()));
 }
 
 #[tokio::test]
-async fn test_help_popup_on_search_in_progress() {
+async fn test_help_popup_on_search_results() {
     let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    let initial_screen = Screen::SearchProgressing(SearchInProgressState::new(
-        tokio::spawn(async {}),
-        receiver,
-        cancelled,
-    ));
+    let initial_screen = Screen::SearchFields(SearchFieldsState {
+        focussed_section: FocussedSection::SearchResults,
+        search_state: Some(SearchState::new(receiver, cancelled)),
+    });
     test_help_popup_on_screen(initial_screen);
 }
 
 #[tokio::test]
-async fn test_help_popup_on_search_complete() {
-    let results = (0..100)
-        .map(|i| SearchResult {
-            path: PathBuf::from(format!("test{i}.txt")),
-            line_number: 1,
-            line: format!("test line {i}").to_string(),
-            line_ending: LineEnding::Lf,
-            replacement: format!("replacement {i}").to_string(),
-            included: true,
-            replace_result: None,
-        })
-        .collect();
-    let (_sender, receiver) = mpsc::unbounded_channel();
-    let mut search_state = SearchState::new(receiver);
-    search_state.results = results;
-
-    test_help_popup_on_screen(Screen::SearchComplete(SearchCompleteState::new(
-        search_state,
-        Instant::now(),
-    )));
-}
-
-#[tokio::test]
 async fn test_help_popup_on_performing_replacement() {
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let initial_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
-        tokio::spawn(async {}),
-        sender,
         receiver,
         cancelled,
         Arc::new(AtomicUsize::new(0)),
@@ -350,12 +324,15 @@ async fn search_and_replace_test(
     assert!(res != EventHandlingResult::Exit(None));
 
     process_bp_events(&mut app).await;
-    assert!(wait_for_screen!(&app, Screen::SearchComplete));
+    assert!(wait_until_search_complete(&app));
 
-    if let Screen::SearchComplete(state) = &mut app.current_screen {
+    if let Screen::SearchFields(SearchFieldsState {
+        search_state: Some(state),
+        ..
+    }) = &mut app.current_screen
+    {
         for (file_path, num_expected_matches) in &expected_matches {
             let num_actual_matches = state
-                .search_state
                 .results
                 .iter()
                 .filter(|result| {
@@ -373,10 +350,10 @@ async fn search_and_replace_test(
             );
         }
 
-        assert_eq!(state.search_state.results.len(), total_num_expected_matches);
+        assert_eq!(state.results.len(), total_num_expected_matches);
     } else {
         panic!(
-            "Expected SearchComplete results, found {:?}",
+            "Expected SearchComplete results with Some search state, found {:?}",
             app.current_screen
         );
     }
@@ -396,6 +373,22 @@ async fn search_and_replace_test(
             app.current_screen
         );
     }
+}
+
+fn wait_until_search_complete(app: &App) -> bool {
+    wait_until(
+        || {
+            if let Screen::SearchFields(ref state) = app.current_screen {
+                state
+                    .search_state
+                    .as_ref()
+                    .is_some_and(SearchState::search_has_completed)
+            } else {
+                false
+            }
+        },
+        Duration::from_secs(1),
+    )
 }
 
 test_with_both_regex_modes!(
@@ -867,10 +860,10 @@ test_with_both_regex_modes!(
 
         let res = app.perform_search_if_valid();
         assert!(res != EventHandlingResult::Exit(None));
-        assert!(matches!(app.current_screen, Screen::SearchFields));
+        assert!(matches!(app.current_screen, Screen::SearchFields(_)));
         process_bp_events(&mut app).await;
-        assert!(!wait_for_screen!(&app, Screen::SearchComplete)); // We shouldn't get to the SearchComplete page, so assert that we never get there
-        assert!(matches!(app.current_screen, Screen::SearchFields));
+        assert!(!wait_until_search_complete(&app)); // We shouldn't get to the SearchComplete page, so assert that we never get there
+        assert!(matches!(app.current_screen, Screen::SearchFields(_)));
         Ok(())
     }
 );
@@ -1627,7 +1620,7 @@ async fn test_keymaps_search_fields() {
         &AppRunConfig::default(),
     );
 
-    assert!(matches!(app.current_screen, Screen::SearchFields));
+    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
 
     assert_debug_snapshot!("search_fields_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_fields_all_keymaps", app.keymaps_all());
@@ -1641,11 +1634,14 @@ async fn test_keymaps_search_complete() {
         &AppRunConfig::default(),
     );
 
+    let cancelled = Arc::new(AtomicBool::new(false));
     let (_sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-        SearchState::new(receiver),
-        std::time::Instant::now(),
-    ));
+    let mut search_state = SearchState::new(receiver, cancelled);
+    search_state.set_search_completed_now();
+    app.current_screen = Screen::SearchFields(SearchFieldsState {
+        search_state: Some(search_state),
+        focussed_section: FocussedSection::SearchResults,
+    });
 
     assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_complete_all_keymaps", app.keymaps_all());
@@ -1659,13 +1655,13 @@ async fn test_keymaps_search_progressing() {
         &AppRunConfig::default(),
     );
 
-    let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    app.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
-        tokio::spawn(async {}),
-        receiver,
-        cancelled,
-    ));
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let search_state = SearchState::new(receiver, cancelled);
+    app.current_screen = Screen::SearchFields(SearchFieldsState {
+        search_state: Some(search_state),
+        focussed_section: FocussedSection::SearchResults,
+    });
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_progressing_all_keymaps", app.keymaps_all());
@@ -1679,11 +1675,9 @@ async fn test_keymaps_performing_replacement() {
         &AppRunConfig::default(),
     );
 
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     app.current_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
-        tokio::spawn(async {}),
-        sender,
         receiver,
         cancelled,
         Arc::new(AtomicUsize::new(0)),

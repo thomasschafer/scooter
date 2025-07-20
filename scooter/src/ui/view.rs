@@ -800,33 +800,34 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 
     let base_path = &app.directory;
     match &mut app.current_screen {
-        Screen::SearchFields => render_search_view(frame, app, content_area),
-        Screen::SearchProgressing(ref mut s) => {
-            render_confirmation_view(
-                frame,
-                false,
-                &mut s.search_state,
-                s.search_started.elapsed(),
-                base_path,
-                content_area,
-                app.config.get_theme(),
-                app.config.style.true_color,
-                app.event_sender.clone(),
-            );
-        }
-        Screen::SearchComplete(ref mut state) => {
-            render_confirmation_view(
-                frame,
-                true,
-                &mut state.search_state,
-                state.search_time_taken,
-                base_path,
-                content_area,
-                app.config.get_theme(),
-                app.config.style.true_color,
-                app.event_sender.clone(),
-            );
-        }
+        // TODO
+        Screen::SearchFields(_) => render_search_view(frame, app, content_area),
+        // Screen::SearchProgressing(ref mut s) => {
+        //     render_confirmation_view(
+        //         frame,
+        //         false,
+        //         &mut s.search_state,
+        //         s.search_started.elapsed(),
+        //         base_path,
+        //         content_area,
+        //         app.config.get_theme(),
+        //         app.config.style.true_color,
+        //         app.event_sender.clone(),
+        //     );
+        // }
+        // Screen::SearchComplete(ref mut state) => {
+        //     render_confirmation_view(
+        //         frame,
+        //         true,
+        //         &mut state.search_state,
+        //         state.search_time_taken,
+        //         base_path,
+        //         content_area,
+        //         app.config.get_theme(),
+        //         app.config.style.true_color,
+        //         app.event_sender.clone(),
+        //     );
+        // }
         Screen::PerformingReplacement(state) => {
             render_performing_replacement_view(frame, content_area, state);
         }

@@ -88,23 +88,41 @@ enum Selected {
 
 #[derive(Debug)]
 pub struct SearchState {
-    // TODO: make the view logic with scrolling etc. into a generic component
     pub results: Vec<SearchResult>,
+
     selected: Selected,
+    // TODO: make the view logic with scrolling etc. into a generic component
     pub(crate) view_offset: usize,           // Updated by UI, not app
     pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
+
     processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+
+    pub(crate) last_render: Instant,
+    pub(crate) search_started: Instant,
+    pub(crate) search_completed: Option<Instant>,
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 impl SearchState {
-    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
+    pub fn new(
+        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             results: vec![],
             selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: None,
             processing_receiver,
+            last_render: Instant::now(),
+            search_started: Instant::now(),
+            search_completed: None,
+            cancelled,
         }
+    }
+
+    pub fn search_has_completed(&self) -> bool {
+        self.search_completed.is_some()
     }
 
     pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> EventHandlingResult {
@@ -302,75 +320,67 @@ impl SearchState {
             }
         }
     }
-}
 
-#[derive(Debug)]
-pub struct SearchInProgressState {
-    pub search_state: SearchState,
-    pub(crate) last_render: Instant,
-    pub(crate) search_started: Instant,
-    handle: JoinHandle<()>,
-    pub(crate) cancelled: Arc<AtomicBool>,
-}
-
-impl SearchInProgressState {
-    pub fn new(
-        handle: JoinHandle<()>,
-        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
-            search_state: SearchState::new(processing_receiver),
-            last_render: Instant::now(),
-            search_started: Instant::now(),
-            handle,
-            cancelled,
-        }
+    pub fn set_search_completed_now(&mut self) {
+        self.search_completed = Some(Instant::now());
     }
 }
 
-#[derive(Debug)]
-pub struct SearchCompleteState {
-    pub search_state: SearchState,
-    pub(crate) search_time_taken: Duration,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FocussedSection {
+    SearchFields,
+    SearchResults,
 }
 
-impl SearchCompleteState {
-    pub fn new(search_state: SearchState, search_started: Instant) -> Self {
+#[derive(Debug)]
+pub struct SearchFieldsState {
+    pub focussed_section: FocussedSection,
+    pub search_state: Option<SearchState>, // Becomes Some when search begins
+}
+
+impl Default for SearchFieldsState {
+    fn default() -> Self {
         Self {
-            search_state,
-            search_time_taken: search_started.elapsed(),
+            focussed_section: FocussedSection::SearchFields,
+            search_state: None,
         }
     }
 }
 
 #[derive(Debug)]
 pub enum Screen {
-    SearchFields,
-    SearchProgressing(SearchInProgressState),
-    SearchComplete(SearchCompleteState),
+    SearchFields(SearchFieldsState),
     PerformingReplacement(PerformingReplacementState),
     Results(ReplaceState),
 }
 
 impl Screen {
-    fn search_results_mut(&mut self) -> &mut SearchState {
-        match self {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state,
-            _ => panic!("Expected SearchInProgress or SearchComplete, found {self:?}",),
-        }
-    }
-
     fn name(&self) -> &str {
         // TODO: is there a better way of doing this?
         match &self {
-            Screen::SearchFields => "SearchFields",
-            Screen::SearchProgressing(_) => "SearchProgressing",
-            Screen::SearchComplete(_) => "SearchComplete",
+            Screen::SearchFields { .. } => "SearchFields",
             Screen::PerformingReplacement(_) => "PerformingReplacement",
             Screen::Results(_) => "Results",
         }
+    }
+
+    // TODO: delete
+    // fn unwrap_search_fields_state(&self) -> &SearchFieldsState {
+    //     let Screen::SearchFields(ref search_fields_state) = self else {
+    //         panic!(
+    //             "Expected current_screen to be SearchFields, found {}",
+    //             self.name()
+    //         );
+    //     };
+    //     search_fields_state
+    // }
+
+    fn unwrap_search_fields_state_mut(&mut self) -> &mut SearchFieldsState {
+        let name = self.name().to_owned();
+        let Screen::SearchFields(ref mut search_fields_state) = self else {
+            panic!("Expected current_screen to be SearchFields, found {name}");
+        };
+        search_fields_state
     }
 }
 
@@ -410,6 +420,7 @@ impl Default for AppRunConfig {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
@@ -421,6 +432,7 @@ pub struct App {
     immediate_replace: bool,
     print_results: bool,
     popup: Option<Popup>,
+    advanced_regex: bool,
 }
 
 impl<'a> App {
@@ -435,11 +447,10 @@ impl<'a> App {
         let search_fields = SearchFields::with_values(
             search_field_values,
             config.search.disable_prepopulated_fields,
-        )
-        .with_advanced_regex(app_run_config.advanced_regex);
+        );
 
         let mut app = Self {
-            current_screen: Screen::SearchFields,
+            current_screen: Screen::SearchFields(SearchFieldsState::default()),
             search_fields,
             directory,
             include_hidden: app_run_config.include_hidden,
@@ -449,6 +460,7 @@ impl<'a> App {
             event_sender,
             immediate_replace: app_run_config.immediate_replace,
             print_results: app_run_config.print_results,
+            advanced_regex: app_run_config.advanced_regex,
         };
 
         if app_run_config.immediate_search {
@@ -469,22 +481,20 @@ impl<'a> App {
     }
 
     fn cancel_search(&mut self) {
-        if let Screen::SearchProgressing(SearchInProgressState {
-            handle, cancelled, ..
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(SearchState { cancelled, .. }),
+            ..
         }) = &mut self.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
-            handle.abort();
         }
     }
 
     fn cancel_replacement(&mut self) {
-        if let Screen::PerformingReplacement(PerformingReplacementState {
-            handle, cancelled, ..
-        }) = &mut self.current_screen
+        if let Screen::PerformingReplacement(PerformingReplacementState { cancelled, .. }) =
+            &mut self.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
-            handle.abort();
         }
     }
 
@@ -501,7 +511,7 @@ impl<'a> App {
             self.event_sender.clone(),
             &AppRunConfig {
                 include_hidden: self.include_hidden,
-                advanced_regex: self.search_fields.advanced_regex,
+                advanced_regex: self.advanced_regex,
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
@@ -511,27 +521,18 @@ impl<'a> App {
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
         match &mut self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState {
-                search_state:
-                    SearchState {
-                        processing_receiver,
-                        ..
-                    },
-                ..
-            })
-            | Screen::SearchComplete(SearchCompleteState {
-                search_state:
-                    SearchState {
-                        processing_receiver,
-                        ..
-                    },
-                ..
-            })
-            | Screen::PerformingReplacement(PerformingReplacementState {
+            Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
+                if let Some(search_state) = search_state {
+                    search_state.processing_receiver.recv().await
+                } else {
+                    None
+                }
+            }
+            Screen::PerformingReplacement(PerformingReplacementState {
                 processing_receiver,
                 ..
             }) => processing_receiver.recv().await,
-            _ => None,
+            Screen::Results(_) => None,
         }
     }
 
@@ -548,21 +549,22 @@ impl<'a> App {
         let cancelled = Arc::new(AtomicBool::new(false));
 
         match self.validate_fields().unwrap() {
+            // TODO: should we do something here?
             None => {
-                self.current_screen = Screen::SearchFields;
+                //     self.current_screen = Screen::SearchFields;
             }
             Some(parsed_fields) => {
-                let handle = Self::spawn_update_search_results(
+                Self::spawn_update_search_results(
                     parsed_fields,
                     &background_processing_sender,
                     self.event_sender.clone(),
                     cancelled.clone(),
                 );
-                self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
-                    handle,
-                    background_processing_receiver,
-                    cancelled,
-                ));
+                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                    return EventHandlingResult::None;
+                };
+                search_fields_state.search_state =
+                    Some(SearchState::new(background_processing_receiver, cancelled));
             }
         }
 
@@ -570,19 +572,26 @@ impl<'a> App {
     }
 
     pub fn trigger_replacement(&mut self) {
+        let temp_placeholder = Screen::SearchFields(SearchFieldsState {
+            search_state: None,
+            focussed_section: FocussedSection::SearchFields,
+        });
         match mem::replace(
             &mut self.current_screen,
-            Screen::SearchFields, // Temporary placeholder - will get reset if we are not on `SearchComplete` screen
+            temp_placeholder, // Will get reset if we are not on `SearchComplete` screen
         ) {
-            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => {
                 let (background_processing_sender, background_processing_receiver) =
                     mpsc::unbounded_channel();
                 let cancelled = Arc::new(AtomicBool::new(false));
-                let total_replacements = search_state.results.iter().filter(|r| r.included).count();
+                let total_replacements = state.results.iter().filter(|r| r.included).count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
-                let handle = replace::perform_replacement(
-                    search_state.results,
+                replace::perform_replacement(
+                    state.results,
                     background_processing_sender.clone(),
                     cancelled.clone(),
                     replacements_completed.clone(),
@@ -591,8 +600,6 @@ impl<'a> App {
 
                 self.current_screen =
                     Screen::PerformingReplacement(PerformingReplacementState::new(
-                        handle,
-                        background_processing_sender,
                         background_processing_receiver,
                         cancelled,
                         replacements_completed,
@@ -610,13 +617,12 @@ impl<'a> App {
         match event {
             BackgroundProcessingEvent::AddSearchResults(mut results) => {
                 let mut rerender = false;
-                if let Screen::SearchProgressing(search_in_progress_state) =
-                    &mut self.current_screen
+                if let Screen::SearchFields(SearchFieldsState {
+                    search_state: Some(search_in_progress_state),
+                    ..
+                }) = &mut self.current_screen
                 {
-                    search_in_progress_state
-                        .search_state
-                        .results
-                        .append(&mut results);
+                    search_in_progress_state.results.append(&mut results);
 
                     // Slightly random duration so that time taken isn't a round number
                     if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
@@ -631,16 +637,12 @@ impl<'a> App {
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
-                if let Screen::SearchProgressing(SearchInProgressState {
-                    search_state,
-                    search_started,
+                if let Screen::SearchFields(SearchFieldsState {
+                    search_state: Some(state),
                     ..
-                }) = mem::replace(&mut self.current_screen, Screen::SearchFields)
+                }) = &mut self.current_screen
                 {
-                    self.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-                        search_state,
-                        search_started,
-                    ));
+                    state.set_search_completed_now();
                     if self.immediate_replace {
                         self.trigger_replacement();
                     }
@@ -698,15 +700,11 @@ impl<'a> App {
 
     /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
     fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
-        if !matches!(
-            self.current_screen,
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-        ) {
-            panic!(
-                "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
-                self.current_screen
-            );
-        }
+        assert!(
+            matches!(self.current_screen, Screen::SearchFields(_)),
+            "Expected current_screen to be SearchFields, found {}",
+            self.current_screen.name()
+        );
 
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
@@ -715,7 +713,9 @@ impl<'a> App {
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
-                self.current_screen = Screen::SearchFields;
+                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                search_fields_state.search_state = None;
+                // TODO: move focus back
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
@@ -729,16 +729,16 @@ impl<'a> App {
                 Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('e'), KeyModifiers::NONE) => {
-                let selected = self
-                    .current_screen
-                    .search_results_mut()
-                    .primary_selected_field_mut();
-                self.event_sender
-                    .send(Event::LaunchEditor((
-                        selected.path.clone(),
-                        selected.line_number,
-                    )))
-                    .unwrap();
+                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
+                    let selected = search_in_progress_state.primary_selected_field_mut();
+                    self.event_sender
+                        .send(Event::LaunchEditor((
+                            selected.path.clone(),
+                            selected.line_number,
+                        )))
+                        .unwrap();
+                }
                 Some(EventHandlingResult::Rerender)
             }
             _ => None,
@@ -782,17 +782,24 @@ impl<'a> App {
         }
 
         match &mut self.current_screen {
-            Screen::SearchFields => self.handle_key_searching(key),
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                if let Some(res) = self.try_handle_key_search(key) {
-                    res
-                } else {
-                    match &mut self.current_screen {
-                        Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
-                            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state.handle_key(key),
-                        screen => panic!(
-                            "Expected current_screen to be SearchProgressing or SearchComplete, found {screen:?}",
-                        ),
+            Screen::SearchFields(search_fields_state) => {
+                match search_fields_state.focussed_section {
+                    FocussedSection::SearchFields => self.handle_key_searching(key),
+                    FocussedSection::SearchResults => {
+                        if let Some(res) = self.try_handle_key_search(key) {
+                            res
+                        } else {
+                            match self
+                                .current_screen
+                                .unwrap_search_fields_state_mut()
+                                .search_state
+                            {
+                                Some(ref mut state) => state.handle_key(key),
+                                None => {
+                                    panic!("Focussed on search results but search_state is None")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -917,44 +924,52 @@ impl<'a> App {
             CompactOnly,
         }
 
-        let current_screen_keys = match self.current_screen {
-            Screen::SearchFields => {
-                let mut keys = vec![
-                    ("<enter>", "search", Show::Both),
-                    ("<tab>", "focus next", Show::Both),
-                    ("<S-tab>", "focus previous", Show::FullOnly),
-                    ("<space>", "toggle checkbox", Show::FullOnly),
-                ];
-                if self.config.search.disable_prepopulated_fields
-                    && self.search_fields.fields.iter().any(|f| f.set_by_cli)
-                {
-                    keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
+        // TODO: update these, including:
+        // - back/forward between SearchFields and SearchResults
+        let current_screen_keys = match &self.current_screen {
+            Screen::SearchFields(search_fields_state) => {
+                match search_fields_state.focussed_section {
+                    FocussedSection::SearchFields => {
+                        let mut keys = vec![
+                            ("<enter>", "search", Show::Both),
+                            ("<tab>", "focus next", Show::Both),
+                            ("<S-tab>", "focus previous", Show::FullOnly),
+                            ("<space>", "toggle checkbox", Show::FullOnly),
+                        ];
+                        if self.config.search.disable_prepopulated_fields
+                            && self.search_fields.fields.iter().any(|f| f.set_by_cli)
+                        {
+                            keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
+                        }
+                        keys
+                    }
+                    FocussedSection::SearchResults => {
+                        let mut keys = vec![
+                            ("<space>", "toggle", Show::Both),
+                            ("a", "toggle all", Show::FullOnly),
+                            ("v", "toggle multi-select mode", Show::FullOnly),
+                            ("<A-;>", "flip multi-select direction", Show::FullOnly),
+                            ("e", "open in editor", Show::FullOnly),
+                            ("<C-o>", "back", Show::Both),
+                            ("j", "up", Show::FullOnly),
+                            ("k", "down", Show::FullOnly),
+                            ("<C-u>", "up half a page", Show::FullOnly),
+                            ("<C-d>", "down half a page", Show::FullOnly),
+                            ("<C-b>", "up a full page", Show::FullOnly),
+                            ("<C-f>", "down a full page", Show::FullOnly),
+                            ("g", "jump to top", Show::FullOnly),
+                            ("G", "jump to bottom", Show::FullOnly),
+                        ];
+                        if search_fields_state
+                            .search_state
+                            .as_ref()
+                            .is_some_and(SearchState::search_has_completed)
+                        {
+                            keys.push(("<enter>", "replace selected", Show::Both));
+                        }
+                        keys
+                    }
                 }
-                keys
-            }
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
-                    vec![("<enter>", "replace selected", Show::Both)]
-                } else {
-                    vec![]
-                };
-                keys.append(&mut vec![
-                    ("<space>", "toggle", Show::Both),
-                    ("a", "toggle all", Show::FullOnly),
-                    ("v", "toggle multi-select mode", Show::FullOnly),
-                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
-                    ("e", "open in editor", Show::FullOnly),
-                    ("<C-o>", "back", Show::Both),
-                    ("j", "up", Show::FullOnly),
-                    ("k", "down", Show::FullOnly),
-                    ("<C-u>", "up half a page", Show::FullOnly),
-                    ("<C-d>", "down half a page", Show::FullOnly),
-                    ("<C-b>", "up a full page", Show::FullOnly),
-                    ("<C-f>", "down a full page", Show::FullOnly),
-                    ("g", "jump to top", Show::FullOnly),
-                    ("G", "jump to bottom", Show::FullOnly),
-                ]);
-                keys
             }
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(ref replace_state) => {
@@ -966,13 +981,14 @@ impl<'a> App {
             }
         };
 
-        let is_search_screen = matches!(
-            self.current_screen,
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-        );
+        let on_search_results = if let Screen::SearchFields(ref s) = self.current_screen {
+            s.focussed_section == FocussedSection::SearchResults
+        } else {
+            false
+        };
         let esc_help = format!(
             "quit / close popup{}",
-            if is_search_screen {
+            if on_search_results {
                 " / exit multi-select"
             } else {
                 ""
@@ -983,7 +999,7 @@ impl<'a> App {
             (
                 "<C-r>",
                 "reset",
-                if is_search_screen {
+                if on_search_results {
                     Show::FullOnly
                 } else {
                     Show::Both
@@ -1025,20 +1041,20 @@ impl<'a> App {
 
     fn multiselect_enabled(&self) -> bool {
         match &self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                search_state.multiselect_enabled()
-            }
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => state.multiselect_enabled(),
             _ => false,
         }
     }
 
     fn toggle_multiselect_mode(&mut self) {
         match &mut self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                search_state.toggle_multiselect_mode();
-            }
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => state.toggle_multiselect_mode(),
             _ => panic!(
                 "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
@@ -1158,6 +1174,10 @@ mod tests {
             view_offset: 0,
             num_displayed: Some(5),
             processing_receiver,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            last_render: Instant::now(),
+            search_started: Instant::now(),
+            search_completed: None,
         }
     }
 
@@ -1273,22 +1293,25 @@ mod tests {
             event_sender,
             &AppRunConfig::default(),
         );
-        app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-            build_test_search_state_with_results(results),
-            Instant::now(),
-        ));
+        app.current_screen = Screen::SearchFields(SearchFieldsState {
+            search_state: Some(build_test_search_state_with_results(results)),
+            focussed_section: FocussedSection::SearchResults,
+        });
         app
     }
 
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
         let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, _num_ignored) =
-                scooter_core::replace::split_results(search_complete_state.search_state.results);
+        let stats = if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(state),
+            ..
+        }) = app.current_screen
+        {
+            let (results, _num_ignored) = scooter_core::replace::split_results(state.results);
             frep_core::replace::calculate_statistics(results)
         } else {
-            panic!("Expected SearchComplete");
+            panic!("Expected SearchFields with Some search_state");
         };
 
         assert_eq!(
@@ -1310,12 +1333,15 @@ mod tests {
             error_result.clone(),
             ignored_result(),
         ]);
-        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, _num_ignored) =
-                scooter_core::replace::split_results(search_complete_state.search_state.results);
+        let stats = if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(state),
+            ..
+        }) = app.current_screen
+        {
+            let (results, _num_ignored) = scooter_core::replace::split_results(state.results);
             frep_core::replace::calculate_statistics(results)
         } else {
-            panic!("Expected SearchComplete");
+            panic!("Expected SearchFields with Some search_state");
         };
 
         assert_eq!(
