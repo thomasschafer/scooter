@@ -27,8 +27,9 @@ use syntect::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{App, AppError, AppEvent, Event, Popup, Screen, SearchState},
-    fields::{Field, SearchField, NUM_SEARCH_FIELDS},
+    app::{App, AppError, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
+    config::Config,
+    fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
     utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
 };
@@ -112,34 +113,44 @@ impl SearchField {
     }
 }
 
-fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let area = default_width(area);
-    let areas: [Rect; NUM_SEARCH_FIELDS] = Layout::vertical(iter::repeat_n(
-        Constraint::Length(3),
-        app.search_fields.fields.len(),
+static SEARCH_FIELD_HEIGHT: u16 = 3;
+static NUM_SEARCH_FIELDS_TRUNCATED: u16 = 2;
+
+fn render_search_fields(
+    frame: &mut Frame<'_>,
+    search_fields: &SearchFields,
+    config: &Config,
+    show_popup: bool,
+    num_search_fields_to_render: u16,
+    is_focussed: bool,
+    area: Rect,
+) {
+    let areas = Layout::vertical(iter::repeat_n(
+        Constraint::Length(SEARCH_FIELD_HEIGHT),
+        num_search_fields_to_render as usize,
     ))
     .flex(Flex::Center)
-    .areas(area);
+    .split(area);
 
-    app.search_fields
+    search_fields
         .fields
         .iter()
-        .zip(areas)
+        .zip(areas.iter())
         .enumerate()
-        .for_each(|(idx, (search_field, field_area))| {
+        .for_each(|(idx, (search_field, &field_area))| {
             search_field.render(
                 frame,
                 field_area,
-                idx == app.search_fields.highlighted,
-                app.config.search.disable_prepopulated_fields,
+                is_focussed && idx == search_fields.highlighted,
+                config.search.disable_prepopulated_fields,
             );
         });
 
-    if !app.show_popup() {
-        let field = app.search_fields.highlighted_field();
-        if !field.set_by_cli || !app.config.search.disable_prepopulated_fields {
+    if is_focussed && !show_popup {
+        let field = search_fields.highlighted_field();
+        if !field.set_by_cli || !config.search.disable_prepopulated_fields {
             if let Some(cursor_pos) = field.cursor_pos() {
-                let highlighted_area = areas[app.search_fields.highlighted];
+                let highlighted_area = areas[search_fields.highlighted];
 
                 frame.set_cursor_position(Position {
                     x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
@@ -151,7 +162,8 @@ fn render_search_view(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 fn default_width(area: Rect) -> Rect {
-    width(area, 80)
+    let width_percentage = if area.width >= 300 { 80 } else { 90 };
+    width(area, width_percentage)
 }
 
 fn width(area: Rect, percentage: u16) -> Rect {
@@ -187,7 +199,7 @@ fn display_duration(duration: Duration) -> String {
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn render_confirmation_view(
+fn render_search_results(
     frame: &mut Frame<'_>,
     is_complete: bool,
     search_state: &mut SearchState,
@@ -197,9 +209,9 @@ fn render_confirmation_view(
     theme: Option<&Theme>,
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
+    area_is_focussed: bool,
 ) {
-    let split_view = area.width >= 110;
-    let area = width(area, 90);
+    let small_screen = area.width <= 110;
 
     let [num_results_area, results_area, _] = Layout::vertical([
         Constraint::Length(2),
@@ -219,10 +231,10 @@ fn render_confirmation_view(
         time_taken,
     );
 
-    let num_to_render = if split_view {
-        results_area.height as usize
-    } else {
+    let num_to_render = if small_screen {
         5
+    } else {
+        results_area.height as usize
     };
 
     search_state.num_displayed = Some(num_to_render);
@@ -239,15 +251,7 @@ fn render_confirmation_view(
         );
     }
 
-    let (list_area, preview_area) = if split_view {
-        let [list_area, _, preview_area] = Layout::horizontal([
-            Constraint::Fill(2),
-            Constraint::Length(1),
-            Constraint::Fill(3),
-        ])
-        .areas(results_area);
-        (list_area, preview_area)
-    } else {
+    let (list_area, preview_area) = if small_screen {
         let [list_area, _, preview_area] = Layout::vertical([
             #[allow(clippy::cast_possible_truncation)]
             Constraint::Length(num_to_render as u16),
@@ -256,10 +260,23 @@ fn render_confirmation_view(
         ])
         .areas(results_area);
         (list_area, preview_area)
+    } else {
+        let [list_area, _, preview_area] = Layout::horizontal([
+            Constraint::Fill(2),
+            Constraint::Length(1),
+            Constraint::Fill(3),
+        ])
+        .areas(results_area);
+        (list_area, preview_area)
     };
 
-    let search_results =
-        build_search_results(search_state, base_path, list_area.width, num_to_render);
+    let search_results = build_search_results(
+        search_state,
+        base_path,
+        list_area.width,
+        num_to_render,
+        area_is_focussed,
+    );
     let search_results_list = search_results
         .iter()
         .map(|SearchResultLines { file_path, .. }| ListItem::new(file_path.clone()));
@@ -327,6 +344,7 @@ fn build_search_results<'a>(
     base_path: &Path,
     width: u16,
     num_to_render: usize,
+    area_is_focussed: bool,
 ) -> Vec<SearchResultLines<'a>> {
     search_state
         .results
@@ -342,6 +360,7 @@ fn build_search_results<'a>(
                 result,
                 base_path,
                 width,
+                area_is_focussed,
             )
         })
         .collect()
@@ -550,6 +569,7 @@ fn search_result<'a>(
     result: &'a SearchResult,
     base_path: &Path,
     list_area_width: u16,
+    area_is_focussed: bool,
 ) -> SearchResultLines<'a> {
     let (old_line, new_line) = line_diff(&result.line, &result.replacement);
     let old_line = old_line
@@ -569,6 +589,7 @@ fn search_result<'a>(
             is_selected,
             is_primary_selected,
             list_area_width,
+            area_is_focussed,
         ),
         old_line_diff: diff_to_line(old_line),
         new_line_diff: diff_to_line(new_line),
@@ -586,9 +607,10 @@ fn file_path_line<'a>(
     is_selected: bool,
     is_primary_selected: bool,
     list_area_width: u16,
+    area_is_focussed: bool,
 ) -> Line<'a> {
     let mut file_path_style = Style::new();
-    if is_selected {
+    if area_is_focussed && is_selected {
         file_path_style = file_path_style
             .bg(match (result.included, is_primary_selected) {
                 (true, true) => Color::Blue,
@@ -618,7 +640,7 @@ fn file_path_line<'a>(
             .saturating_sub(left_content_len + path_len + line_num_len + right_content_len),
     );
 
-    let accessory_colour = if is_selected {
+    let accessory_colour = if area_is_focussed && is_selected {
         Color::Indexed(255)
     } else {
         Color::Blue
@@ -799,35 +821,54 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     render_key_hints(app, frame, footer_area);
 
     let base_path = &app.directory;
+    let show_popup = app.show_popup();
     match &mut app.current_screen {
         // TODO
-        Screen::SearchFields(_) => render_search_view(frame, app, content_area),
-        // Screen::SearchProgressing(ref mut s) => {
-        //     render_confirmation_view(
-        //         frame,
-        //         false,
-        //         &mut s.search_state,
-        //         s.search_started.elapsed(),
-        //         base_path,
-        //         content_area,
-        //         app.config.get_theme(),
-        //         app.config.style.true_color,
-        //         app.event_sender.clone(),
-        //     );
-        // }
-        // Screen::SearchComplete(ref mut state) => {
-        //     render_confirmation_view(
-        //         frame,
-        //         true,
-        //         &mut state.search_state,
-        //         state.search_time_taken,
-        //         base_path,
-        //         content_area,
-        //         app.config.get_theme(),
-        //         app.config.style.true_color,
-        //         app.event_sender.clone(),
-        //     );
-        // }
+        Screen::SearchFields(ref mut search_fields_state) => {
+            // TODO: only show search and replace fields when results are focussed
+            let num_search_fields_to_render = match search_fields_state.focussed_section {
+                FocussedSection::SearchFields => NUM_SEARCH_FIELDS,
+                FocussedSection::SearchResults => NUM_SEARCH_FIELDS_TRUNCATED,
+            };
+            let area = default_width(content_area);
+            let [fields, _, results] = Layout::vertical([
+                Constraint::Length(num_search_fields_to_render * SEARCH_FIELD_HEIGHT),
+                Constraint::Length(1),
+                Constraint::Fill(1),
+            ])
+            .flex(Flex::Center)
+            .areas(area);
+
+            render_search_fields(
+                frame,
+                &app.search_fields,
+                &app.config,
+                show_popup,
+                num_search_fields_to_render,
+                search_fields_state.focussed_section == FocussedSection::SearchFields,
+                fields,
+            );
+
+            if let Some(ref mut state) = &mut search_fields_state.search_state {
+                let (is_complete, elapsed) = if let Some(completed) = state.search_completed {
+                    (true, completed.duration_since(state.search_started))
+                } else {
+                    (false, state.search_started.elapsed())
+                };
+                render_search_results(
+                    frame,
+                    is_complete,
+                    state,
+                    elapsed,
+                    base_path,
+                    results,
+                    app.config.get_theme(),
+                    app.config.style.true_color,
+                    app.event_sender.clone(),
+                    search_fields_state.focussed_section == FocussedSection::SearchResults,
+                );
+            }
+        }
         Screen::PerformingReplacement(state) => {
             render_performing_replacement_view(frame, content_area, state);
         }
