@@ -336,6 +336,7 @@ pub enum FocussedSection {
 pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
+    pub last_search_request: Option<Instant>,
 }
 
 impl Default for SearchFieldsState {
@@ -343,6 +344,7 @@ impl Default for SearchFieldsState {
         Self {
             focussed_section: FocussedSection::SearchFields,
             search_state: None,
+            last_search_request: None,
         }
     }
 }
@@ -544,6 +546,10 @@ impl<'a> App {
     }
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
+        // TODO(autosearch): anything else to do here?
+
+        // TODO(autosearch): only show popup if hit enter
+
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -560,7 +566,11 @@ impl<'a> App {
             };
             search_fields_state.search_state =
                 Some(SearchState::new(background_processing_receiver, cancelled));
-            search_fields_state.focussed_section = FocussedSection::SearchResults;
+        } else {
+            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                return EventHandlingResult::None;
+            };
+            search_fields_state.focussed_section = FocussedSection::SearchFields;
         }
 
         EventHandlingResult::Rerender
@@ -570,6 +580,7 @@ impl<'a> App {
         let temp_placeholder = Screen::SearchFields(SearchFieldsState {
             search_state: None,
             focussed_section: FocussedSection::SearchFields,
+            last_search_request: None,
         });
         match mem::replace(
             &mut self.current_screen,
@@ -666,9 +677,10 @@ impl<'a> App {
                 self.unlock_prepopulated_fields();
             }
             (KeyCode::Enter, _) => {
-                self.event_sender
-                    .send(Event::App(AppEvent::PerformSearch))
-                    .unwrap();
+                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                    return EventHandlingResult::None;
+                };
+                search_fields_state.focussed_section = FocussedSection::SearchResults;
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
                 self.search_fields
@@ -688,6 +700,25 @@ impl<'a> App {
                     modifiers,
                     self.config.search.disable_prepopulated_fields,
                 );
+
+                // TODO(autosearch): this is wrong - I want the last keypress, not search
+                // what happens if it's the last keypress??
+                // i.e. enqueue then delete if needed
+                // Debounce search requests
+                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                    return EventHandlingResult::None;
+                };
+                let should_search = match search_fields_state.last_search_request {
+                    None => true,
+                    Some(last_time) => last_time.elapsed() >= Duration::from_millis(500),
+                };
+
+                if should_search {
+                    search_fields_state.last_search_request = Some(Instant::now());
+                    self.event_sender
+                        .send(Event::App(AppEvent::PerformSearch))
+                        .unwrap();
+                }
             }
         }
         EventHandlingResult::Rerender
@@ -1291,6 +1322,7 @@ mod tests {
         app.current_screen = Screen::SearchFields(SearchFieldsState {
             search_state: Some(build_test_search_state_with_results(results)),
             focussed_section: FocussedSection::SearchResults,
+            last_search_request: None,
         });
         app
     }

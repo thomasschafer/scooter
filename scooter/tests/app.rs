@@ -89,6 +89,7 @@ async fn test_back_from_results() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(receiver, Arc::new(AtomicBool::new(false)))),
+        last_search_request: None,
     });
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
@@ -232,6 +233,7 @@ async fn test_help_popup_on_search_results() {
     let initial_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(receiver, cancelled)),
+        last_search_request: None,
     });
     test_help_popup_on_screen(initial_screen);
 }
@@ -1641,6 +1643,7 @@ async fn test_keymaps_search_complete() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
+        last_search_request: None,
     });
 
     assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
@@ -1661,6 +1664,7 @@ async fn test_keymaps_search_progressing() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
+        last_search_request: None,
     });
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
