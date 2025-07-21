@@ -508,7 +508,8 @@ fn build_preview_list<'a>(
             event_sender,
         )?;
         // `num_lines_to_show - 1` because diff takes up 2 lines
-        let Ok((before, cur, after)) = split_indexed_lines(lines, line_idx, num_lines_to_show - 1)
+        let Ok((before, cur, after)) =
+            split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
         else {
             bail!("File has changed since search (lines have changed)");
         };
