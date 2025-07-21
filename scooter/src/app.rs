@@ -565,6 +565,7 @@ impl<'a> App {
                 };
                 search_fields_state.search_state =
                     Some(SearchState::new(background_processing_receiver, cancelled));
+                search_fields_state.focussed_section = FocussedSection::SearchResults;
             }
         }
 
@@ -698,7 +699,7 @@ impl<'a> App {
         EventHandlingResult::Rerender
     }
 
-    /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
+    /// Should only be called on `Screen::SearchFields`
     fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
         assert!(
             matches!(self.current_screen, Screen::SearchFields(_)),
@@ -714,8 +715,7 @@ impl<'a> App {
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
                 let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
-                search_fields_state.search_state = None;
-                // TODO: move focus back
+                search_fields_state.focussed_section = FocussedSection::SearchFields;
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();

@@ -205,11 +205,11 @@ impl SearchField {
     }
 }
 
-pub const NUM_SEARCH_FIELDS: usize = 7;
+pub const NUM_SEARCH_FIELDS: u16 = 7;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchFields {
-    pub fields: [SearchField; NUM_SEARCH_FIELDS],
+    pub fields: [SearchField; NUM_SEARCH_FIELDS as usize],
     pub highlighted: usize,
     pub advanced_regex: bool,
 }
