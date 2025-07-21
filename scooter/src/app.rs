@@ -548,25 +548,19 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        match self.validate_fields().unwrap() {
-            // TODO: should we do something here?
-            None => {
-                //     self.current_screen = Screen::SearchFields;
-            }
-            Some(parsed_fields) => {
-                Self::spawn_update_search_results(
-                    parsed_fields,
-                    &background_processing_sender,
-                    self.event_sender.clone(),
-                    cancelled.clone(),
-                );
-                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                    return EventHandlingResult::None;
-                };
-                search_fields_state.search_state =
-                    Some(SearchState::new(background_processing_receiver, cancelled));
-                search_fields_state.focussed_section = FocussedSection::SearchResults;
-            }
+        if let Some(parsed_fields) = self.validate_fields().unwrap() {
+            Self::spawn_update_search_results(
+                parsed_fields,
+                &background_processing_sender,
+                self.event_sender.clone(),
+                cancelled.clone(),
+            );
+            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                return EventHandlingResult::None;
+            };
+            search_fields_state.search_state =
+                Some(SearchState::new(background_processing_receiver, cancelled));
+            search_fields_state.focussed_section = FocussedSection::SearchResults;
         }
 
         EventHandlingResult::Rerender
@@ -924,14 +918,15 @@ impl<'a> App {
             CompactOnly,
         }
 
-        // TODO: update these, including:
+        // TODO(autosearch): update these, including:
         // - back/forward between SearchFields and SearchResults
+        // - <more>
         let current_screen_keys = match &self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 match search_fields_state.focussed_section {
                     FocussedSection::SearchFields => {
                         let mut keys = vec![
-                            ("<enter>", "search", Show::Both),
+                            ("<enter>", "jump to results", Show::Both),
                             ("<tab>", "focus next", Show::Both),
                             ("<S-tab>", "focus previous", Show::FullOnly),
                             ("<space>", "toggle checkbox", Show::FullOnly),
@@ -950,7 +945,7 @@ impl<'a> App {
                             ("v", "toggle multi-select mode", Show::FullOnly),
                             ("<A-;>", "flip multi-select direction", Show::FullOnly),
                             ("e", "open in editor", Show::FullOnly),
-                            ("<C-o>", "back", Show::Both),
+                            ("<C-o>", "back to search fields", Show::Both),
                             ("j", "up", Show::FullOnly),
                             ("k", "down", Show::FullOnly),
                             ("<C-u>", "up half a page", Show::FullOnly),
