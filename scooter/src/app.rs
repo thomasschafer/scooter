@@ -715,7 +715,7 @@ impl<'a> App {
                 }
                 let event_sender = self.event_sender.clone();
                 search_fields_state.debounce_timer = Some(tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                     let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
                 }));
             }
