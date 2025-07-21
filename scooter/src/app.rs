@@ -336,7 +336,7 @@ pub enum FocussedSection {
 pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
-    pub last_search_request: Option<Instant>,
+    pub debounce_timer: Option<JoinHandle<()>>,
 }
 
 impl Default for SearchFieldsState {
@@ -344,7 +344,7 @@ impl Default for SearchFieldsState {
         Self {
             focussed_section: FocussedSection::SearchFields,
             search_state: None,
-            last_search_request: None,
+            debounce_timer: None,
         }
     }
 }
@@ -580,7 +580,7 @@ impl<'a> App {
         let temp_placeholder = Screen::SearchFields(SearchFieldsState {
             search_state: None,
             focussed_section: FocussedSection::SearchFields,
-            last_search_request: None,
+            debounce_timer: None,
         });
         match mem::replace(
             &mut self.current_screen,
@@ -691,6 +691,11 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
+                // TODO(autosearch): refresh replacement results only when replacing
+                // - if search has completed, just iterate and replace
+                // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
+                // - need to ensure we keep the scroll position and all toggle state
+
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
@@ -701,24 +706,18 @@ impl<'a> App {
                     self.config.search.disable_prepopulated_fields,
                 );
 
-                // TODO(autosearch): this is wrong - I want the last keypress, not search
-                // what happens if it's the last keypress??
-                // i.e. enqueue then delete if needed
                 // Debounce search requests
                 let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
                     return EventHandlingResult::None;
                 };
-                let should_search = match search_fields_state.last_search_request {
-                    None => true,
-                    Some(last_time) => last_time.elapsed() >= Duration::from_millis(500),
-                };
-
-                if should_search {
-                    search_fields_state.last_search_request = Some(Instant::now());
-                    self.event_sender
-                        .send(Event::App(AppEvent::PerformSearch))
-                        .unwrap();
+                if let Some(timer) = search_fields_state.debounce_timer.take() {
+                    timer.abort();
                 }
+                let event_sender = self.event_sender.clone();
+                search_fields_state.debounce_timer = Some(tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                }));
             }
         }
         EventHandlingResult::Rerender
