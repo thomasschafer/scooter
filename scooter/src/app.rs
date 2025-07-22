@@ -21,7 +21,8 @@ use tokio::{
 };
 
 use frep_core::{
-    search::{FileSearcher, SearchResult},
+    replace::add_replacement,
+    search::{FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -88,7 +89,7 @@ enum Selected {
 
 #[derive(Debug)]
 pub struct SearchState {
-    pub results: Vec<SearchResult>,
+    pub results: Vec<SearchResultWithReplacement>,
 
     selected: Selected,
     // TODO: make the view logic with scrolling etc. into a generic component
@@ -232,17 +233,20 @@ impl SearchState {
     }
 
     fn toggle_selected_inclusion(&mut self) {
-        let all_included = self.selected_fields().iter().all(|res| res.included);
+        let all_included = self
+            .selected_fields()
+            .iter()
+            .all(|res| res.search_result.included);
         self.selected_fields_mut().iter_mut().for_each(|selected| {
-            selected.included = !all_included;
+            selected.search_result.included = !all_included;
         });
     }
 
     fn toggle_all_selected(&mut self) {
-        let all_included = self.results.iter().all(|res| res.included);
+        let all_included = self.results.iter().all(|res| res.search_result.included);
         self.results
             .iter_mut()
-            .for_each(|res| res.included = !all_included);
+            .for_each(|res| res.search_result.included = !all_included);
     }
 
     // TODO: add tests
@@ -253,7 +257,7 @@ impl SearchState {
         }
     }
 
-    fn selected_fields(&self) -> &[SearchResult] {
+    fn selected_fields(&self) -> &[SearchResultWithReplacement] {
         if self.results.is_empty() {
             return &[];
         }
@@ -261,7 +265,7 @@ impl SearchState {
         &self.results[low..=high]
     }
 
-    fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+    fn selected_fields_mut(&mut self) -> &mut [SearchResultWithReplacement] {
         if self.results.is_empty() {
             return &mut [];
         }
@@ -269,7 +273,7 @@ impl SearchState {
         &mut self.results[low..=high]
     }
 
-    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResult {
+    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResultWithReplacement {
         let sel = self.primary_selected_pos();
         &mut self.results[sel]
     }
@@ -422,10 +426,17 @@ impl Default for AppRunConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ParsedFields {
+    search: SearchType,
+    replace: String,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
+    pub parsed_fields: Option<ParsedFields>,
     pub directory: PathBuf,
     pub config: Config,
     pub event_sender: UnboundedSender<Event>,
@@ -454,6 +465,7 @@ impl<'a> App {
         let mut app = Self {
             current_screen: Screen::SearchFields(SearchFieldsState::default()),
             search_fields,
+            parsed_fields: None,
             directory,
             include_hidden: app_run_config.include_hidden,
             config,
@@ -555,6 +567,10 @@ impl<'a> App {
         let cancelled = Arc::new(AtomicBool::new(false));
 
         if let Some(parsed_fields) = self.validate_fields().unwrap() {
+            self.parsed_fields = Some(ParsedFields {
+                search: parsed_fields.search().clone(),
+                replace: parsed_fields.replace().clone(),
+            });
             Self::spawn_update_search_results(
                 parsed_fields,
                 &background_processing_sender,
@@ -593,7 +609,11 @@ impl<'a> App {
                 let (background_processing_sender, background_processing_receiver) =
                     mpsc::unbounded_channel();
                 let cancelled = Arc::new(AtomicBool::new(false));
-                let total_replacements = state.results.iter().filter(|r| r.included).count();
+                let total_replacements = state
+                    .results
+                    .iter()
+                    .filter(|r| r.search_result.included)
+                    .count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
                 replace::perform_replacement(
@@ -621,14 +641,26 @@ impl<'a> App {
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
-            BackgroundProcessingEvent::AddSearchResults(mut results) => {
+            BackgroundProcessingEvent::AddSearchResults(results) => {
                 let mut rerender = false;
                 if let Screen::SearchFields(SearchFieldsState {
                     search_state: Some(search_in_progress_state),
                     ..
                 }) = &mut self.current_screen
                 {
-                    search_in_progress_state.results.append(&mut results);
+                    // TODO(autosave): add replacement here?
+                    search_in_progress_state.results.append(
+                        &mut results
+                            .into_iter()
+                            .map(|r| {
+                                add_replacement(
+                                    r,
+                                    &self.parsed_fields.as_ref().expect("parsed_fields should not be None when adding search results").search,
+                                    &self.parsed_fields.as_ref().expect("parsed_fields should not be None when adding search results").replace,
+                                )
+                            })
+                            .collect(),
+                    );
 
                     // Slightly random duration so that time taken isn't a round number
                     if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
@@ -758,8 +790,8 @@ impl<'a> App {
                     let selected = search_in_progress_state.primary_selected_field_mut();
                     self.event_sender
                         .send(Event::LaunchEditor((
-                            selected.path.clone(),
-                            selected.line_number,
+                            selected.search_result.path.clone(),
+                            selected.search_result.line_number,
                         )))
                         .unwrap();
                 }
@@ -1148,9 +1180,12 @@ impl ValidationErrorHandler for AppErrorHandler {
 
 #[cfg(test)]
 mod tests {
-    use frep_core::replace::{ReplaceResult, ReplaceStats};
+    use frep_core::{
+        replace::{ReplaceResult, ReplaceStats},
+        search::SearchResultWithReplacement,
+    };
     use rand::Rng;
-    use std::{env::current_dir, path::Path};
+    use std::path::Path;
 
     use super::*;
     use frep_core::line_reader::LineEnding;
@@ -1160,27 +1195,31 @@ mod tests {
         rng.random_range(1..10000)
     }
 
-    fn search_result(included: bool) -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included,
+            },
             replacement: "bar".to_owned(),
-            included,
             replace_result: None,
         }
     }
 
-    fn build_test_results(num_results: usize) -> Vec<SearchResult> {
+    fn build_test_results(num_results: usize) -> Vec<SearchResultWithReplacement> {
         (0..num_results)
-            .map(|i| SearchResult {
-                path: PathBuf::from(format!("test{i}.txt")),
-                line_number: 1,
-                line: format!("test line {i}").to_string(),
-                line_ending: LineEnding::Lf,
+            .map(|i| SearchResultWithReplacement {
+                search_result: SearchResult {
+                    path: PathBuf::from(format!("test{i}.txt")),
+                    line_number: 1,
+                    line: format!("test line {i}").to_string(),
+                    line_ending: LineEnding::Lf,
+                    included: true,
+                },
                 replacement: format!("replacement {i}").to_string(),
-                included: true,
                 replace_result: None,
             })
             .collect()
@@ -1191,7 +1230,9 @@ mod tests {
         build_test_search_state_with_results(results)
     }
 
-    fn build_test_search_state_with_results(results: Vec<SearchResult>) -> SearchState {
+    fn build_test_search_state_with_results(
+        results: Vec<SearchResultWithReplacement>,
+    ) -> SearchState {
         let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
         SearchState {
             results,
@@ -1209,16 +1250,16 @@ mod tests {
     #[test]
     fn test_toggle_all_selected_when_all_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(true),
-            search_result(true),
-            search_result(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(true),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![false, false, false]
         );
@@ -1227,16 +1268,16 @@ mod tests {
     #[test]
     fn test_toggle_all_selected_when_none_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(false),
-            search_result(false),
-            search_result(false),
+            search_result_with_replacement(false),
+            search_result_with_replacement(false),
+            search_result_with_replacement(false),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true]
         );
@@ -1245,16 +1286,16 @@ mod tests {
     #[test]
     fn test_toggle_all_selected_when_some_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(true),
-            search_result(false),
-            search_result(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(false),
+            search_result_with_replacement(true),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true]
         );
@@ -1268,77 +1309,62 @@ mod tests {
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![] as Vec<bool>
         );
     }
 
-    fn success_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn success_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
             replacement: "bar".to_owned(),
-            included: true,
             replace_result: Some(ReplaceResult::Success),
         }
     }
 
-    fn ignored_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn ignored_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: false,
+            },
             replacement: "bar".to_owned(),
-            included: false,
             replace_result: None,
         }
     }
 
-    fn error_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn error_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
             replacement: "bar".to_owned(),
-            included: true,
             replace_result: Some(ReplaceResult::Error("error".to_owned())),
         }
     }
 
-    fn build_test_app(results: Vec<SearchResult>) -> App {
-        let (event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(
-            current_dir().unwrap(),
-            &SearchFieldValues::default(),
-            event_sender,
-            &AppRunConfig::default(),
-        );
-        app.current_screen = Screen::SearchFields(SearchFieldsState {
-            search_state: Some(build_test_search_state_with_results(results)),
-            focussed_section: FocussedSection::SearchResults,
-            last_search_request: None,
-        });
-        app
-    }
-
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
-        let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(state),
-            ..
-        }) = app.current_screen
-        {
-            let (results, _num_ignored) = scooter_core::replace::split_results(state.results);
-            frep_core::replace::calculate_statistics(results)
-        } else {
-            panic!("Expected SearchFields with Some search_state");
-        };
+        let search_results_with_replacements =
+            vec![success_result(), success_result(), success_result()];
+
+        let (results, _num_ignored) =
+            scooter_core::replace::split_results(search_results_with_replacements);
+        let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1352,23 +1378,17 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_statistics_with_ignores_and_errors() {
         let error_result = error_result();
-        let app = build_test_app(vec![
+        let search_results_with_replacements = vec![
             success_result(),
             ignored_result(),
             success_result(),
             error_result.clone(),
             ignored_result(),
-        ]);
-        let stats = if let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(state),
-            ..
-        }) = app.current_screen
-        {
-            let (results, _num_ignored) = scooter_core::replace::split_results(state.results);
-            frep_core::replace::calculate_statistics(results)
-        } else {
-            panic!("Expected SearchFields with Some search_state");
-        };
+        ];
+
+        let (results, _num_ignored) =
+            scooter_core::replace::split_results(search_results_with_replacements);
+        let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1382,7 +1402,11 @@ mod tests {
     #[tokio::test]
     async fn test_search_state_toggling() {
         fn included(state: &SearchState) -> Vec<bool> {
-            state.results.iter().map(|r| r.included).collect::<Vec<_>>()
+            state
+                .results
+                .iter()
+                .map(|r| r.search_result.included)
+                .collect::<Vec<_>>()
         }
 
         let mut state = build_test_search_state(3);
@@ -1573,7 +1597,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true, true, true, true]
         );
@@ -1582,7 +1606,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, false, false, false, true]
         );
@@ -1606,7 +1630,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![false, true, false, false, false, true]
         );

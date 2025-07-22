@@ -34,7 +34,7 @@ use crate::{
     utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
 };
 
-use frep_core::search::SearchResult;
+use frep_core::search::SearchResultWithReplacement;
 use scooter_core::utils::read_lines_range;
 
 use super::colour::to_ratatui_colour;
@@ -495,13 +495,13 @@ fn build_preview_list<'a>(
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
-    let line_idx = selected.search_result.line_number - 1;
+    let line_idx = selected.result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
     if let Some(theme) = syntax_highlighting_theme {
         let lines = read_lines_range_highlighted_with_cache(
-            &selected.search_result.path,
+            &selected.result.search_result.path,
             start,
             end,
             theme,
@@ -513,7 +513,7 @@ fn build_preview_list<'a>(
         else {
             bail!("File has changed since search (lines have changed)");
         };
-        if *cur.1.iter().map(|(_, s)| s).join("") != selected.search_result.line {
+        if *cur.1.iter().map(|(_, s)| s).join("") != selected.result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
 
@@ -537,10 +537,10 @@ fn build_preview_list<'a>(
             Ok(list)
         }
     } else {
-        let lines = read_lines_range(&selected.search_result.path, start, end)?;
+        let lines = read_lines_range(&selected.result.search_result.path, start, end)?;
         let (before, cur, after) =
             split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
-        assert_eq!(*cur.1, selected.search_result.line);
+        assert_eq!(*cur.1, selected.result.search_result.line);
 
         Ok(List::new(
             before
@@ -560,19 +560,19 @@ struct SearchResultLines<'a> {
     old_line_diff: Line<'static>,
     new_line_diff: Line<'static>,
     is_primary_selected: bool,
-    search_result: &'a SearchResult,
+    result: &'a SearchResultWithReplacement,
 }
 
 fn search_result<'a>(
     idx: usize,
     is_selected: bool,
     is_primary_selected: bool,
-    result: &'a SearchResult,
+    result: &'a SearchResultWithReplacement,
     base_path: &Path,
     list_area_width: u16,
     area_is_focussed: bool,
 ) -> SearchResultLines<'a> {
-    let (old_line, new_line) = line_diff(&result.line, &result.replacement);
+    let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
     let old_line = old_line
         .iter()
         .take(list_area_width as usize)
@@ -595,7 +595,7 @@ fn search_result<'a>(
         old_line_diff: diff_to_line(old_line),
         new_line_diff: diff_to_line(new_line),
         is_primary_selected,
-        search_result: result,
+        result,
     }
 }
 
@@ -603,7 +603,7 @@ static TRUNCATION_PREFIX: &str = "…";
 
 fn file_path_line<'a>(
     idx: usize,
-    result: &SearchResult,
+    result: &SearchResultWithReplacement,
     base_path: &Path,
     is_selected: bool,
     is_primary_selected: bool,
@@ -613,7 +613,7 @@ fn file_path_line<'a>(
     let mut file_path_style = Style::new();
     if area_is_focussed && is_selected {
         file_path_style = file_path_style
-            .bg(match (result.included, is_primary_selected) {
+            .bg(match (result.search_result.included, is_primary_selected) {
                 (true, true) => Color::Blue,
                 (true, false) => Color::Indexed(26),
                 (false, true) => Color::Red,
@@ -624,10 +624,17 @@ fn file_path_line<'a>(
 
     let right_content = format!(" ({})", idx + 1);
     let right_content_len = right_content.chars().count();
-    let left_content = format!("[{}] ", if result.included { 'x' } else { ' ' },);
+    let left_content = format!(
+        "[{}] ",
+        if result.search_result.included {
+            'x'
+        } else {
+            ' '
+        },
+    );
     let left_content_len = left_content.chars().count();
-    let mut path = relative_path_from(base_path, &result.path);
-    let line_num = format!(":{}", result.line_number);
+    let mut path = relative_path_from(base_path, &result.search_result.path);
+    let line_num = format!(":{}", result.search_result.line_number);
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);
@@ -789,7 +796,7 @@ fn render_performing_replacement_view(
     );
 }
 
-fn error_result(result: &SearchResult) -> [ratatui::widgets::ListItem<'static>; 3] {
+fn error_result(result: &SearchResultWithReplacement) -> [ratatui::widgets::ListItem<'static>; 3] {
     let (path_display, error) = result.display_error();
 
     [

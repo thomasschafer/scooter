@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifi
 use frep_core::line_reader::LineEnding;
 use frep_core::replace::ReplaceResult;
 use frep_core::search::SearchResult;
+use frep_core::search::SearchResultWithReplacement;
 use insta::assert_debug_snapshot;
 use scooter::app::EventHandlingResult;
 use scooter::app::FocussedSection;
@@ -36,13 +37,15 @@ async fn test_replace_state() {
         num_successes: 2,
         num_ignored: 1,
         errors: (1..3)
-            .map(|n| SearchResult {
-                path: PathBuf::from(format!("error-{n}.txt")),
-                line_number: 1,
-                line: format!("line {n}"),
-                line_ending: LineEnding::Lf,
+            .map(|n| SearchResultWithReplacement {
+                search_result: SearchResult {
+                    path: PathBuf::from(format!("error-{n}.txt")),
+                    line_number: 1,
+                    line: format!("line {n}"),
+                    line_ending: LineEnding::Lf,
+                    included: true,
+                },
                 replacement: format!("error replacement {n}"),
-                included: true,
                 replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
             })
             .collect::<Vec<_>>(),
@@ -89,7 +92,7 @@ async fn test_back_from_results() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(receiver, Arc::new(AtomicBool::new(false)))),
-        last_search_request: None,
+        debounce_timer: None,
     });
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
@@ -233,7 +236,7 @@ async fn test_help_popup_on_search_results() {
     let initial_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(receiver, cancelled)),
-        last_search_request: None,
+        debounce_timer: None,
     });
     test_help_popup_on_screen(initial_screen);
 }
@@ -338,7 +341,7 @@ async fn search_and_replace_test(
                 .results
                 .iter()
                 .filter(|result| {
-                    let result_path = result.path.to_str().unwrap();
+                    let result_path = result.search_result.path.to_str().unwrap();
                     let file_path = file_path.to_str().unwrap();
                     result_path == temp_dir.path().join(file_path).to_string_lossy()
                 })
@@ -1643,7 +1646,7 @@ async fn test_keymaps_search_complete() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
-        last_search_request: None,
+        debounce_timer: None,
     });
 
     assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
@@ -1664,7 +1667,7 @@ async fn test_keymaps_search_progressing() {
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
-        last_search_request: None,
+        debounce_timer: None,
     });
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
@@ -1706,13 +1709,15 @@ async fn test_keymaps_results() {
     let replace_state_with_errors = ReplaceState {
         num_successes: 5,
         num_ignored: 2,
-        errors: vec![SearchResult {
-            path: PathBuf::from("error.txt"),
-            line_number: 1,
-            line: "test line".to_string(),
-            line_ending: LineEnding::Lf,
+        errors: vec![SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: PathBuf::from("error.txt"),
+                line_number: 1,
+                line: "test line".to_string(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
             replacement: "replacement".to_string(),
-            included: true,
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
         }],
         replacement_errors_pos: 0,
