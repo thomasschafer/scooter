@@ -22,9 +22,7 @@ use tokio::{
 
 use frep_core::{
     replace::{add_replacement, replacement_if_match},
-    search::{
-        FileSearcher, FileSearcherConfig, SearchResult, SearchResultWithReplacement, SearchType,
-    },
+    search::{FileSearcher, FileSearcherConfig, SearchResult, SearchResultWithReplacement},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -276,9 +274,15 @@ impl SearchState {
         &mut self.results[low..=high]
     }
 
-    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResultWithReplacement {
+    pub(crate) fn primary_selected_field_mut(
+        &mut self,
+    ) -> Option<&mut SearchResultWithReplacement> {
         let sel = self.primary_selected_pos();
-        &mut self.results[sel]
+        if !self.results.is_empty() {
+            Some(&mut self.results[sel])
+        } else {
+            None
+        }
     }
 
     pub(crate) fn primary_selected_pos(&self) -> usize {
@@ -431,17 +435,11 @@ impl Default for AppRunConfig {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ParsedFields {
-    search: SearchType,
-    replace: String,
-}
-
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    pub parsed_fields: Option<ParsedFields>,
+    pub parsed_fields: Option<FileSearcherConfig>,
     pub directory: PathBuf,
     pub config: Config,
     pub event_sender: UnboundedSender<Event>,
@@ -572,69 +570,56 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        // TODO(autosearch): move this into key handler?
-        if let Some(search_config) = self.validate_fields().unwrap() {
-            self.parsed_fields = Some(ParsedFields {
-                search: search_config.search.clone(),
-                replace: search_config.replace.clone(),
-            });
-            let file_searcher = FileSearcher::new(search_config);
+        let file_searcher = FileSearcher::new(
+            self.parsed_fields
+                .clone()
+                .expect("Fields should have been parsed"),
+        );
 
-            Self::spawn_update_search_results(
-                file_searcher,
-                &background_processing_sender,
-                self.event_sender.clone(),
-                cancelled.clone(),
-            );
-            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                return EventHandlingResult::None;
-            };
-            search_fields_state.search_state =
-                Some(SearchState::new(background_processing_receiver, cancelled));
-        } else {
-            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                return EventHandlingResult::None;
-            };
-            // search_fields_state.focussed_section = FocussedSection::SearchFields; // TODO(autosave): delete? We should already be in search fields
-        }
+        Self::spawn_update_search_results(
+            file_searcher,
+            &background_processing_sender,
+            self.event_sender.clone(),
+            cancelled.clone(),
+        );
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return EventHandlingResult::None;
+        };
+        search_fields_state.search_state =
+            Some(SearchState::new(background_processing_receiver, cancelled));
 
         EventHandlingResult::Rerender
     }
 
     fn update_replacements(&mut self) -> EventHandlingResult {
         // TODO(autosearch): refresh replacement results only when replacing
-        // - if search has completed, just iterate and replace
         // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
-        // - need to ensure we keep the scroll position and all toggle state
-        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow
+        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow. Maybe:
+        //    - replace in chunks
+        //    - cancel chunked replacement if a new replacement or search has started
+        //    - how do we ensure that all replacements have completed by the time we try to replace?
         // - ADD TESTS
 
-        // TODO(autosearch): move this into key handler?
-        if let Some(search_config) = self.validate_fields().unwrap() {
-            self.parsed_fields = Some(ParsedFields {
-                search: search_config.search.clone(),
-                replace: search_config.replace.clone(),
+        let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(ref mut s),
+            ..
+        }) = self.current_screen
+        else {
+            return EventHandlingResult::None;
+        };
+        let parsed_fields = self
+            .parsed_fields
+            .as_ref()
+            .expect("Fields should have been parsed");
+        for res in &mut s.results {
+            res.replacement = replacement_if_match(
+                &res.search_result.line,
+                &parsed_fields.search,
+                &parsed_fields.replace,
+            )
+            .unwrap_or_else(|| {
+                panic!("Called add_replacement with non-matching search result {res:?}")
             });
-            let Screen::SearchFields(SearchFieldsState {
-                search_state: Some(ref mut s),
-                ..
-            }) = self.current_screen
-            else {
-                return EventHandlingResult::None;
-            };
-            for res in &mut s.results {
-                res.replacement = replacement_if_match(
-                    &res.search_result.line,
-                    &search_config.search,
-                    &search_config.replace,
-                )
-                .expect("Called add_replacement with non-matching search result {search_result:?}");
-            }
-        } else {
-            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                return EventHandlingResult::None;
-            };
-            // search_fields_state.focussed_section = FocussedSection::SearchFields; // TODO(autosave): delete? We should already be in search fields
         }
 
         EventHandlingResult::Rerender
@@ -753,10 +738,18 @@ impl<'a> App {
                 self.unlock_prepopulated_fields();
             }
             (KeyCode::Enter, _) => {
-                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                    return EventHandlingResult::None;
-                };
-                search_fields_state.focussed_section = FocussedSection::SearchResults;
+                if !self.errors().is_empty() {
+                    self.set_popup(Popup::Error);
+                } else {
+                    let Screen::SearchFields(ref mut search_fields_state) = self.current_screen
+                    else {
+                        panic!(
+                            "Expected SearchFields, found {:?}",
+                            self.current_screen.name()
+                        );
+                    };
+                    search_fields_state.focussed_section = FocussedSection::SearchResults;
+                }
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
                 self.search_fields
@@ -777,10 +770,29 @@ impl<'a> App {
                     self.config.search.disable_prepopulated_fields,
                 );
 
+                let Some(search_config) = self.validate_fields().unwrap() else {
+                    return EventHandlingResult::Rerender;
+                };
+                self.parsed_fields = Some(search_config.clone());
+
                 let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
                     return EventHandlingResult::None;
                 };
                 if let FieldName::Replace = self.search_fields.highlighted_field().name {
+                    if let Some(ref mut state) = search_fields_state.search_state {
+                        // Immediately update replacement on selected fields - the remainder will be updated async
+                        if let Some(highlighted) = state.primary_selected_field_mut() {
+                            highlighted.replacement = replacement_if_match(
+                                &highlighted.search_result.line,
+                                &search_config.search,
+                                &search_config.replace,
+                            )
+                            .unwrap_or_else(|| {
+                                panic!("Called add_replacement with non-matching search result {highlighted:?}")
+                            });
+                        }
+                    }
+
                     // TODO(autosearch): deduplicate this?
 
                     // Debounce replacement requests
@@ -840,7 +852,9 @@ impl<'a> App {
             (KeyCode::Char('e'), KeyModifiers::NONE) => {
                 let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
                 if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
-                    let selected = search_in_progress_state.primary_selected_field_mut();
+                    let selected = search_in_progress_state
+                        .primary_selected_field_mut()
+                        .expect("Expected to find selected field");
                     self.event_sender
                         .send(Event::LaunchEditor((
                             selected.search_result.path.clone(),
@@ -937,10 +951,7 @@ impl<'a> App {
 
         match result {
             ValidationResult::Success(search_config) => Ok(Some(search_config)),
-            ValidationResult::ValidationErrors => {
-                self.set_popup(Popup::Error);
-                Ok(None)
-            }
+            ValidationResult::ValidationErrors => Ok(None),
         }
     }
 
