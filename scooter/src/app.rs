@@ -21,8 +21,10 @@ use tokio::{
 };
 
 use frep_core::{
-    replace::add_replacement,
-    search::{FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
+    replace::{add_replacement, replacement_if_match},
+    search::{
+        FileSearcher, FileSearcherConfig, SearchResult, SearchResultWithReplacement, SearchType,
+    },
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -46,6 +48,7 @@ pub enum Event {
 pub enum AppEvent {
     Rerender,
     PerformSearch,
+    UpdateReplacements,
 }
 
 #[derive(Debug)]
@@ -340,7 +343,8 @@ pub enum FocussedSection {
 pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
-    pub debounce_timer: Option<JoinHandle<()>>,
+    pub search_debounce_timer: Option<JoinHandle<()>>,
+    pub replace_debounce_timer: Option<JoinHandle<()>>,
 }
 
 impl Default for SearchFieldsState {
@@ -348,7 +352,8 @@ impl Default for SearchFieldsState {
         Self {
             focussed_section: FocussedSection::SearchFields,
             search_state: None,
-            debounce_timer: None,
+            search_debounce_timer: None,
+            replace_debounce_timer: None,
         }
     }
 }
@@ -554,6 +559,7 @@ impl<'a> App {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
+            AppEvent::UpdateReplacements => self.update_replacements(),
         }
     }
 
@@ -566,13 +572,16 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        if let Some(parsed_fields) = self.validate_fields().unwrap() {
+        // TODO(autosearch): move this into key handler?
+        if let Some(search_config) = self.validate_fields().unwrap() {
             self.parsed_fields = Some(ParsedFields {
-                search: parsed_fields.search().clone(),
-                replace: parsed_fields.replace().clone(),
+                search: search_config.search.clone(),
+                replace: search_config.replace.clone(),
             });
+            let file_searcher = FileSearcher::new(search_config);
+
             Self::spawn_update_search_results(
-                parsed_fields,
+                file_searcher,
                 &background_processing_sender,
                 self.event_sender.clone(),
                 cancelled.clone(),
@@ -586,18 +595,53 @@ impl<'a> App {
             let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
                 return EventHandlingResult::None;
             };
-            search_fields_state.focussed_section = FocussedSection::SearchFields;
+            // search_fields_state.focussed_section = FocussedSection::SearchFields; // TODO(autosave): delete? We should already be in search fields
+        }
+
+        EventHandlingResult::Rerender
+    }
+
+    fn update_replacements(&mut self) -> EventHandlingResult {
+        // TODO(autosearch): refresh replacement results only when replacing
+        // - if search has completed, just iterate and replace
+        // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
+        // - need to ensure we keep the scroll position and all toggle state
+        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow
+        // - ADD TESTS
+
+        // TODO(autosearch): move this into key handler?
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.parsed_fields = Some(ParsedFields {
+                search: search_config.search.clone(),
+                replace: search_config.replace.clone(),
+            });
+            let Screen::SearchFields(SearchFieldsState {
+                search_state: Some(ref mut s),
+                ..
+            }) = self.current_screen
+            else {
+                return EventHandlingResult::None;
+            };
+            for res in &mut s.results {
+                res.replacement = replacement_if_match(
+                    &res.search_result.line,
+                    &search_config.search,
+                    &search_config.replace,
+                )
+                .expect("Called add_replacement with non-matching search result {search_result:?}");
+            }
+        } else {
+            let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                return EventHandlingResult::None;
+            };
+            // search_fields_state.focussed_section = FocussedSection::SearchFields; // TODO(autosave): delete? We should already be in search fields
         }
 
         EventHandlingResult::Rerender
     }
 
     pub fn trigger_replacement(&mut self) {
-        let temp_placeholder = Screen::SearchFields(SearchFieldsState {
-            search_state: None,
-            focussed_section: FocussedSection::SearchFields,
-            debounce_timer: None,
-        });
+        let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
             &mut self.current_screen,
             temp_placeholder, // Will get reset if we are not on `SearchComplete` screen
@@ -723,11 +767,6 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
-                // TODO(autosearch): refresh replacement results only when replacing
-                // - if search has completed, just iterate and replace
-                // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
-                // - need to ensure we keep the scroll position and all toggle state
-
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
@@ -738,18 +777,32 @@ impl<'a> App {
                     self.config.search.disable_prepopulated_fields,
                 );
 
-                // Debounce search requests
                 let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
                     return EventHandlingResult::None;
                 };
-                if let Some(timer) = search_fields_state.debounce_timer.take() {
-                    timer.abort();
+                if let FieldName::Replace = self.search_fields.highlighted_field().name {
+                    // TODO(autosearch): deduplicate this?
+
+                    // Debounce replacement requests
+                    if let Some(timer) = search_fields_state.replace_debounce_timer.take() {
+                        timer.abort();
+                    }
+                    let event_sender = self.event_sender.clone();
+                    search_fields_state.replace_debounce_timer = Some(tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        let _ = event_sender.send(Event::App(AppEvent::UpdateReplacements));
+                    }));
+                } else {
+                    // Debounce search requests
+                    if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+                        timer.abort();
+                    }
+                    let event_sender = self.event_sender.clone();
+                    search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                    }));
                 }
-                let event_sender = self.event_sender.clone();
-                search_fields_state.debounce_timer = Some(tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(300)).await;
-                    let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
-                }));
             }
         }
         EventHandlingResult::Rerender
@@ -864,7 +917,7 @@ impl<'a> App {
         }
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
+    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -883,7 +936,7 @@ impl<'a> App {
         error_handler.apply_to_app(self);
 
         match result {
-            ValidationResult::Success(searcher) => Ok(Some(searcher)),
+            ValidationResult::Success(search_config) => Ok(Some(search_config)),
             ValidationResult::ValidationErrors => {
                 self.set_popup(Popup::Error);
                 Ok(None)
@@ -892,7 +945,7 @@ impl<'a> App {
     }
 
     pub fn spawn_update_search_results(
-        parsed_fields: FileSearcher,
+        file_searcher: FileSearcher,
         sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
@@ -901,7 +954,7 @@ impl<'a> App {
         tokio::spawn(async move {
             let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.walk_files(Some(&cancelled), || {
+                file_searcher.walk_files(Some(&cancelled), || {
                     let sender = sender_for_search.clone();
                     Box::new(move |results| {
                         // Ignore error - likely state reset, thread about to be killed
