@@ -40,6 +40,7 @@ use crate::{
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
+    TriggerReplacement,
 }
 
 #[derive(Debug)]
@@ -711,7 +712,9 @@ impl<'a> App {
                 {
                     state.set_search_completed_now();
                     if self.immediate_replace {
-                        self.trigger_replacement();
+                        self.event_sender
+                            .send(Event::TriggerReplacement)
+                            .expect("Failed to send event");
                     }
                 }
                 EventHandlingResult::Rerender
@@ -802,7 +805,9 @@ impl<'a> App {
                     let event_sender = self.event_sender.clone();
                     search_fields_state.replace_debounce_timer = Some(tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(300)).await;
-                        let _ = event_sender.send(Event::App(AppEvent::UpdateReplacements));
+                        event_sender
+                            .send(Event::App(AppEvent::UpdateReplacements))
+                            .expect("Failed to send event");
                     }));
                 } else {
                     // Debounce search requests
@@ -812,7 +817,9 @@ impl<'a> App {
                     let event_sender = self.event_sender.clone();
                     search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(300)).await;
-                        let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                        event_sender
+                            .send(Event::App(AppEvent::PerformSearch))
+                            .expect("Failed to send event");
                     }));
                 }
             }
@@ -830,7 +837,9 @@ impl<'a> App {
 
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
-                self.trigger_replacement();
+                self.event_sender
+                    .send(Event::TriggerReplacement)
+                    .expect("Failed to send event");
                 Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
@@ -860,7 +869,7 @@ impl<'a> App {
                             selected.search_result.path.clone(),
                             selected.search_result.line_number,
                         )))
-                        .unwrap();
+                        .expect("Failed to send event");
                 }
                 Some(EventHandlingResult::Rerender)
             }
