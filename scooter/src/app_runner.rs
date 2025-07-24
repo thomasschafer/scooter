@@ -223,7 +223,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
                         }
                         Event::App(app_event) => {
-                            self.app.handle_app_event(&app_event)
+                            self.app.handle_app_event(app_event)
                         }
                         Event::TriggerReplacement => {
                             if self.event_receiver.is_empty() {
