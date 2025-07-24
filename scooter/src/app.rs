@@ -40,13 +40,20 @@ use crate::{
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
-    TriggerReplacement,
+    PerformReplacement,
 }
 
 #[derive(Debug)]
 pub enum AppEvent {
     Rerender,
     PerformSearch,
+}
+
+#[derive(Debug)]
+pub enum BackgroundProcessingEvent {
+    AddSearchResults(Vec<SearchResult>),
+    SearchCompleted,
+    ReplacementCompleted(ReplaceState),
     UpdateReplacements {
         start: usize,
         end: usize,
@@ -55,13 +62,6 @@ pub enum AppEvent {
     UpdateAllReplacements {
         cancelled: Arc<AtomicBool>,
     },
-}
-
-#[derive(Debug)]
-pub enum BackgroundProcessingEvent {
-    AddSearchResults(Vec<SearchResult>),
-    SearchCompleted,
-    ReplacementCompleted(ReplaceState),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -106,6 +106,7 @@ pub struct SearchState {
     pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
 
     processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+    processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 
     pub(crate) last_render: Instant,
     pub(crate) search_started: Instant,
@@ -115,6 +116,7 @@ pub struct SearchState {
 
 impl SearchState {
     pub fn new(
+        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
         cancelled: Arc<AtomicBool>,
     ) -> Self {
@@ -123,6 +125,7 @@ impl SearchState {
             selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: None,
+            processing_sender,
             processing_receiver,
             last_render: Instant::now(),
             search_started: Instant::now(),
@@ -563,18 +566,10 @@ impl<'a> App {
         }
     }
 
-    pub fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
+    pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
-            AppEvent::UpdateAllReplacements { cancelled } => {
-                self.update_all_replacements(cancelled)
-            }
-            AppEvent::UpdateReplacements {
-                start,
-                end,
-                cancelled,
-            } => self.update_replacements(start, end, cancelled),
         }
     }
 
@@ -602,8 +597,11 @@ impl<'a> App {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
             return EventHandlingResult::None;
         };
-        search_fields_state.search_state =
-            Some(SearchState::new(background_processing_receiver, cancelled));
+        search_fields_state.search_state = Some(SearchState::new(
+            background_processing_sender,
+            background_processing_receiver,
+            cancelled,
+        ));
 
         EventHandlingResult::Rerender
     }
@@ -622,18 +620,18 @@ impl<'a> App {
         };
 
         #[allow(clippy::items_after_statements)]
-        static STEP: usize = 1000;
+        static STEP: usize = 983; // Slightly random so that increments seem more natural in UI
 
         let num_results = s.results.len();
         for start in (0..num_results).step_by(STEP) {
             let end = (start + STEP - 1).min(num_results - 1);
-            self.event_sender
-                .send(Event::App(AppEvent::UpdateReplacements {
+            let _ = s
+                .processing_sender
+                .send(BackgroundProcessingEvent::UpdateReplacements {
                     start,
                     end,
                     cancelled: cancelled.clone(),
-                }))
-                .expect("Failed to send event");
+                });
         }
 
         EventHandlingResult::Rerender
@@ -683,6 +681,10 @@ impl<'a> App {
     }
 
     pub fn trigger_replacement(&mut self) {
+        let _ = self.event_sender.send(Event::PerformReplacement);
+    }
+
+    pub fn perform_replacement(&mut self) {
         let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
             &mut self.current_screen,
@@ -783,9 +785,7 @@ impl<'a> App {
                 {
                     state.set_search_completed_now();
                     if self.immediate_replace {
-                        self.event_sender
-                            .send(Event::TriggerReplacement)
-                            .expect("Failed to send event");
+                        self.trigger_replacement();
                     }
                 }
                 EventHandlingResult::Rerender
@@ -803,9 +803,18 @@ impl<'a> App {
                     EventHandlingResult::Rerender
                 }
             }
+            BackgroundProcessingEvent::UpdateAllReplacements { cancelled } => {
+                self.update_all_replacements(cancelled)
+            }
+            BackgroundProcessingEvent::UpdateReplacements {
+                start,
+                end,
+                cancelled,
+            } => self.update_replacements(start, end, cancelled),
         }
     }
 
+    /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Char('u'), KeyModifiers::ALT) => {
@@ -872,23 +881,25 @@ impl<'a> App {
                                 highlighted.replacement = updated;
                             }
                         }
-                    }
 
-                    // TODO(autosearch): deduplicate this?
+                        // TODO(autosearch): deduplicate this?
 
-                    // Debounce replacement requests
-                    if let Some(timer) = search_fields_state.replace_debounce_timer.take() {
-                        timer.abort();
+                        // Debounce replacement requests
+                        if let Some(timer) = search_fields_state.replace_debounce_timer.take() {
+                            timer.abort();
+                        }
+                        let sender = state.processing_sender.clone();
+                        let cancelled = Arc::new(AtomicBool::new(false));
+                        search_fields_state.update_replacement_cancelled = cancelled.clone();
+                        search_fields_state.replace_debounce_timer =
+                            Some(tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(300)).await;
+                                let _ =
+                                    sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
+                                        cancelled,
+                                    });
+                            }));
                     }
-                    let event_sender = self.event_sender.clone();
-                    let cancelled = Arc::new(AtomicBool::new(false));
-                    search_fields_state.update_replacement_cancelled = cancelled.clone();
-                    search_fields_state.replace_debounce_timer = Some(tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(300)).await;
-                        event_sender
-                            .send(Event::App(AppEvent::UpdateAllReplacements { cancelled }))
-                            .expect("Failed to send event");
-                    }));
                 } else {
                     // Debounce search requests
                     if let Some(timer) = search_fields_state.search_debounce_timer.take() {
@@ -907,7 +918,7 @@ impl<'a> App {
         EventHandlingResult::Rerender
     }
 
-    /// Should only be called on `Screen::SearchFields`
+    /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
     fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
         assert!(
             matches!(self.current_screen, Screen::SearchFields(_)),
@@ -917,9 +928,7 @@ impl<'a> App {
 
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
-                self.event_sender
-                    .send(Event::TriggerReplacement)
-                    .expect("Failed to send event");
+                self.trigger_replacement();
                 Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
@@ -1277,6 +1286,36 @@ impl<'a> App {
             field.set_by_cli = false;
         }
     }
+
+    pub fn is_search_complete(&self) -> bool {
+        matches!(
+            self.current_screen,
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(SearchState {
+                    search_completed: Some(_),
+                    ..
+                }),
+                ..
+            })
+        )
+    }
+
+    pub fn bp_events_in_progress(&self) -> bool {
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state:
+                Some(SearchState {
+                    processing_receiver,
+                    ..
+                }),
+            ..
+        }) = &self.current_screen
+        {
+            if !processing_receiver.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[allow(clippy::struct_field_names)]
@@ -1386,13 +1425,14 @@ mod tests {
     fn build_test_search_state_with_results(
         results: Vec<SearchResultWithReplacement>,
     ) -> SearchState {
-        let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
+        let (processing_sender, processing_receiver) = mpsc::unbounded_channel();
         SearchState {
             results,
             selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: Some(5),
             processing_receiver,
+            processing_sender,
             cancelled: Arc::new(AtomicBool::new(false)),
             last_render: Instant::now(),
             search_started: Instant::now(),

@@ -223,14 +223,29 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
                         }
                         Event::App(app_event) => {
-                            self.app.handle_app_event(app_event)
+                            self.app.handle_app_event(&app_event)
                         }
-                        Event::TriggerReplacement => {
-                            if self.event_receiver.is_empty() {
-                                // Only trigger replacement if there are no in-progress operations, which may include
-                                // events to update replacements (`UpdateReplacements`)
-                                self.app.trigger_replacement();
+                        Event::PerformReplacement => {
+                            if !self.app.is_search_complete() {
+                                self.app.add_error(AppError {
+                                    name: "Search still in progress".to_string(),
+                                    long: "Try again when search is complete".to_string(),
+                                });
+                            } else if self.app.bp_events_in_progress() {
+                                // TODO(autosave): add an indicator to the UI when replacement preview is being updated (show num and %), then we can split this out from the case of other events
+                                self.app.add_error(AppError {
+                                    name: "Updating replacement preview".to_string(),
+                                    long: "Try again when complete".to_string(),
+                                });
+                            } else if !self.event_receiver.is_empty() {
+                                self.app.add_error(AppError {
+                                    name: "Background processing in progress".to_string(),
+                                    long: "Try again in a moment".to_string(),
+                                });
+                            } else {
+                                self.app.perform_replacement();
                             }
+
                             EventHandlingResult::Rerender
                         }
                     }
