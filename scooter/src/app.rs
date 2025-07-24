@@ -47,7 +47,14 @@ pub enum Event {
 pub enum AppEvent {
     Rerender,
     PerformSearch,
-    UpdateReplacements,
+    UpdateReplacements {
+        start: usize,
+        end: usize,
+        cancelled: Arc<AtomicBool>,
+    },
+    UpdateAllReplacements {
+        cancelled: Arc<AtomicBool>,
+    },
 }
 
 #[derive(Debug)]
@@ -350,6 +357,7 @@ pub struct SearchFieldsState {
     pub search_state: Option<SearchState>, // Becomes Some when search begins
     pub search_debounce_timer: Option<JoinHandle<()>>,
     pub replace_debounce_timer: Option<JoinHandle<()>>,
+    pub update_replacement_cancelled: Arc<AtomicBool>,
 }
 
 impl Default for SearchFieldsState {
@@ -359,6 +367,7 @@ impl Default for SearchFieldsState {
             search_state: None,
             search_debounce_timer: None,
             replace_debounce_timer: None,
+            update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -554,11 +563,18 @@ impl<'a> App {
         }
     }
 
-    pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
+    pub fn handle_app_event(&mut self, event: AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
             AppEvent::PerformSearch => self.perform_search_if_valid(),
-            AppEvent::UpdateReplacements => self.update_replacements(),
+            AppEvent::UpdateAllReplacements { cancelled } => {
+                self.update_all_replacements(cancelled)
+            }
+            AppEvent::UpdateReplacements {
+                start,
+                end,
+                cancelled,
+            } => self.update_replacements(start, end, cancelled),
         }
     }
 
@@ -592,7 +608,44 @@ impl<'a> App {
         EventHandlingResult::Rerender
     }
 
-    fn update_replacements(&mut self) -> EventHandlingResult {
+    #[allow(clippy::needless_pass_by_value)]
+    fn update_all_replacements(&mut self, cancelled: Arc<AtomicBool>) -> EventHandlingResult {
+        if cancelled.load(Ordering::Relaxed) {
+            return EventHandlingResult::None;
+        }
+        let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(ref mut s),
+            ..
+        }) = self.current_screen
+        else {
+            return EventHandlingResult::None;
+        };
+
+        #[allow(clippy::items_after_statements)]
+        static STEP: usize = 1000;
+
+        let num_results = s.results.len();
+        for start in (0..num_results).step_by(STEP) {
+            let end = (start + STEP - 1).min(num_results - 1);
+            self.event_sender
+                .send(Event::App(AppEvent::UpdateReplacements {
+                    start,
+                    end,
+                    cancelled: cancelled.clone(),
+                }))
+                .expect("Failed to send event");
+        }
+
+        EventHandlingResult::Rerender
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn update_replacements(
+        &mut self,
+        start: usize,
+        end: usize,
+        cancelled: Arc<AtomicBool>,
+    ) -> EventHandlingResult {
         // TODO(autosearch): refresh replacement results only when replacing
         // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
         // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow. Maybe:
@@ -601,6 +654,9 @@ impl<'a> App {
         //    - how do we ensure that all replacements have completed by the time we try to replace?
         // - ADD TESTS
 
+        if cancelled.load(Ordering::Relaxed) {
+            return EventHandlingResult::None;
+        }
         let Screen::SearchFields(SearchFieldsState {
             search_state: Some(ref mut s),
             ..
@@ -612,15 +668,15 @@ impl<'a> App {
             .parsed_fields
             .as_ref()
             .expect("Fields should have been parsed");
-        for res in &mut s.results {
-            res.replacement = replacement_if_match(
+        for res in &mut s.results[start..=end] {
+            match replacement_if_match(
                 &res.search_result.line,
                 &parsed_fields.search,
                 &parsed_fields.replace,
-            )
-            .unwrap_or_else(|| {
-                panic!("Called add_replacement with non-matching search result {res:?}")
-            });
+            ) {
+                Some(replacement) => res.replacement = replacement,
+                None => return EventHandlingResult::Rerender,
+            }
         }
 
         EventHandlingResult::Rerender
@@ -679,18 +735,33 @@ impl<'a> App {
                 }) = &mut self.current_screen
                 {
                     // TODO(autosave): add replacement here?
-                    search_in_progress_state.results.append(
-                        &mut results
-                            .into_iter()
-                            .map(|r| {
-                                add_replacement(
-                                    r,
-                                    &self.parsed_fields.as_ref().expect("parsed_fields should not be None when adding search results").search,
-                                    &self.parsed_fields.as_ref().expect("parsed_fields should not be None when adding search results").replace,
+                    let mut results_with_replacements = Vec::new();
+                    for res in results {
+                        let updated = add_replacement(
+                            res,
+                            &self
+                                .parsed_fields
+                                .as_ref()
+                                .expect(
+                                    "parsed_fields should not be None when adding search results",
                                 )
-                            })
-                            .collect(),
-                    );
+                                .search,
+                            &self
+                                .parsed_fields
+                                .as_ref()
+                                .expect(
+                                    "parsed_fields should not be None when adding search results",
+                                )
+                                .replace,
+                        );
+                        let Some(updated) = updated else {
+                            return EventHandlingResult::Rerender;
+                        };
+                        results_with_replacements.push(updated);
+                    }
+                    search_in_progress_state
+                        .results
+                        .append(&mut results_with_replacements);
 
                     // Slightly random duration so that time taken isn't a round number
                     if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
@@ -763,6 +834,14 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
+                // TODO: tidy this up? also check cancellation works - log events?
+                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+                    return EventHandlingResult::None;
+                };
+                search_fields_state
+                    .update_replacement_cancelled
+                    .store(true, Ordering::Relaxed);
+
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
                     self.search_fields.search_mut().clear_error();
@@ -785,14 +864,13 @@ impl<'a> App {
                     if let Some(ref mut state) = search_fields_state.search_state {
                         // Immediately update replacement on selected fields - the remainder will be updated async
                         if let Some(highlighted) = state.primary_selected_field_mut() {
-                            highlighted.replacement = replacement_if_match(
+                            if let Some(updated) = replacement_if_match(
                                 &highlighted.search_result.line,
                                 &search_config.search,
                                 &search_config.replace,
-                            )
-                            .unwrap_or_else(|| {
-                                panic!("Called add_replacement with non-matching search result {highlighted:?}")
-                            });
+                            ) {
+                                highlighted.replacement = updated;
+                            }
                         }
                     }
 
@@ -803,10 +881,12 @@ impl<'a> App {
                         timer.abort();
                     }
                     let event_sender = self.event_sender.clone();
+                    let cancelled = Arc::new(AtomicBool::new(false));
+                    search_fields_state.update_replacement_cancelled = cancelled.clone();
                     search_fields_state.replace_debounce_timer = Some(tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(300)).await;
                         event_sender
-                            .send(Event::App(AppEvent::UpdateReplacements))
+                            .send(Event::App(AppEvent::UpdateAllReplacements { cancelled }))
                             .expect("Failed to send event");
                     }));
                 } else {
