@@ -88,10 +88,14 @@ async fn test_back_from_results() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
     );
-    let (_sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
-        search_state: Some(SearchState::new(receiver, Arc::new(AtomicBool::new(false)))),
+        search_state: Some(SearchState::new(
+            sender,
+            receiver,
+            Arc::new(AtomicBool::new(false)),
+        )),
         search_debounce_timer: None,
         replace_debounce_timer: None,
         update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
@@ -233,11 +237,11 @@ async fn test_help_popup_on_search_fields() {
 
 #[tokio::test]
 async fn test_help_popup_on_search_results() {
-    let (_sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let initial_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
-        search_state: Some(SearchState::new(receiver, cancelled)),
+        search_state: Some(SearchState::new(sender, receiver, cancelled)),
         search_debounce_timer: None,
         replace_debounce_timer: None,
         update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
@@ -1644,8 +1648,8 @@ async fn test_keymaps_search_complete() {
     );
 
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (_sender, receiver) = mpsc::unbounded_channel();
-    let mut search_state = SearchState::new(receiver, cancelled);
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let mut search_state = SearchState::new(sender, receiver, cancelled);
     search_state.set_search_completed_now();
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
@@ -1668,8 +1672,8 @@ async fn test_keymaps_search_progressing() {
     );
 
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (_sender, receiver) = mpsc::unbounded_channel();
-    let search_state = SearchState::new(receiver, cancelled);
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let search_state = SearchState::new(sender, receiver, cancelled);
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
