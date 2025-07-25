@@ -319,14 +319,7 @@ fn render_num_results(
     } else {
         " [Still searching...]"
     };
-    let mid_content = if let Some((complete, total)) = num_replacements_updates_in_progress {
-        format!(
-            "[Updating preview: {complete}/{total} ({perc:.2}%)]",
-            perc = ((complete as f64) / (total as f64)) * (100 as f64)
-        )
-    } else {
-        String::new()
-    };
+    let mid_content = preview_update_status(num_replacements_updates_in_progress);
     let right_content = format!(" [Time taken: {}]", display_duration(time_taken));
     let num_total_spacers = (area.width as usize).saturating_sub(
         left_content_1.len() + left_content_2.len() + mid_content.len() + right_content.len(),
@@ -350,6 +343,20 @@ fn render_num_results(
         ]),
         area,
     );
+}
+
+fn preview_update_status(num_replacements_updates_in_progress: Option<(usize, usize)>) -> String {
+    if let Some((complete, total)) = num_replacements_updates_in_progress {
+        // Avoid flickering - only show if it will take some time
+        if total > 50000 {
+            return format!(
+                "[Updating preview: {complete}/{total} ({perc:.2}%)]",
+                perc = ((complete as f64) / (total as f64)) * (100 as f64)
+            );
+        }
+    }
+
+    String::new()
 }
 
 fn build_search_results<'a>(

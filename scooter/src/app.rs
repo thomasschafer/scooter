@@ -356,10 +356,10 @@ pub enum FocussedSection {
 
 #[derive(Debug)]
 pub struct PreviewUpdateStatus {
-    pub replace_debounce_timer: JoinHandle<()>,
-    pub update_replacement_cancelled: Arc<AtomicBool>,
-    pub replacements_updated: usize,
-    pub total_replacements_to_update: usize,
+    replace_debounce_timer: JoinHandle<()>,
+    update_replacement_cancelled: Arc<AtomicBool>,
+    replacements_updated: usize,
+    total_replacements_to_update: usize,
 }
 
 impl PreviewUpdateStatus {
@@ -404,6 +404,16 @@ impl SearchFieldsState {
                 None
             }
         })
+    }
+
+    pub fn cancel_preview_updates(&mut self) {
+        if let Some(ref mut state) = self.preview_update_state {
+            state.replace_debounce_timer.abort();
+            state
+                .update_replacement_cancelled
+                .store(true, Ordering::Relaxed);
+        }
+        self.preview_update_state = None;
     }
 }
 
@@ -834,7 +844,8 @@ impl<'a> App {
                 {
                     state.set_search_completed_now();
                     if self.immediate_replace {
-                        // TODO: wait for background processing to complete
+                        // TODO(autosearch): if !self.immediate_search, wait for enter, and call trigger_replacement in enter handler
+                        // TODO(autosearch): wait for background processing to complete?
                         self.trigger_replacement();
                     }
                 }
@@ -915,15 +926,13 @@ impl<'a> App {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
             return Some(EventHandlingResult::None);
         };
-        if let Some(ref mut state) = search_fields_state.preview_update_state {
-            state
-                .update_replacement_cancelled
-                .store(true, Ordering::Relaxed);
-        }
         if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
             // TODO: ideally this should only happen when the field is checked, but for now this will do
             self.search_fields.search_mut().clear_error();
         }
+
+        search_fields_state.cancel_preview_updates();
+
         self.search_fields.highlighted_field_mut().handle_keys(
             code,
             modifiers,
@@ -958,9 +967,6 @@ impl<'a> App {
                 // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
 
                 // Debounce replacement requests
-                if let Some(ref mut state) = search_fields_state.preview_update_state {
-                    state.replace_debounce_timer.abort();
-                }
                 let sender = state.processing_sender.clone();
                 let cancelled = Arc::new(AtomicBool::new(false));
                 let cancelled_clone = cancelled.clone();
