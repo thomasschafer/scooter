@@ -225,6 +225,29 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         Event::App(app_event) => {
                             self.app.handle_app_event(&app_event)
                         }
+                        Event::PerformReplacement => {
+                            if !self.app.is_search_complete() {
+                                self.app.add_error(AppError {
+                                    name: "Search still in progress".to_string(),
+                                    long: "Try again when search is complete".to_string(),
+                                });
+                            } else if !self.app.is_preview_updated() {
+                                // TODO(autosave): add an indicator to the UI when replacement preview is being updated (show num and %), then we can split this out from the case of other events
+                                self.app.add_error(AppError {
+                                    name: "Updating replacement preview".to_string(),
+                                    long: "Try again when complete".to_string(),
+                                });
+                            } else if !self.app.background_processing_reciever().is_some_and(|r| r.is_empty()) {
+                                self.app.add_error(AppError {
+                                    name: "Background processing in progress".to_string(),
+                                    long: "Try again in a moment".to_string(),
+                                });
+                            } else {
+                                self.app.perform_replacement();
+                            }
+
+                            EventHandlingResult::Rerender
+                        }
                     }
                 }
                 Some(event) = self.app.background_processing_recv() => {

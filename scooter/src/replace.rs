@@ -13,7 +13,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use frep_core::search::SearchResult;
+use frep_core::search::SearchResultWithReplacement;
 
 use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult};
 
@@ -21,7 +21,7 @@ use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult
 pub struct ReplaceState {
     pub num_successes: usize,
     pub num_ignored: usize,
-    pub errors: Vec<SearchResult>,
+    pub errors: Vec<SearchResultWithReplacement>,
     pub replacement_errors_pos: usize,
 }
 
@@ -64,9 +64,6 @@ impl ReplaceState {
 
 #[derive(Debug)]
 pub struct PerformingReplacementState {
-    pub handle: JoinHandle<()>,
-    #[allow(dead_code)]
-    pub processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     pub cancelled: Arc<AtomicBool>,
     pub replacement_started: Instant,
@@ -76,16 +73,12 @@ pub struct PerformingReplacementState {
 
 impl PerformingReplacementState {
     pub fn new(
-        handle: JoinHandle<()>,
-        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
         cancelled: Arc<AtomicBool>,
         num_replacements_completed: Arc<AtomicUsize>,
         total_replacements: usize,
     ) -> Self {
         Self {
-            handle,
-            processing_sender,
             processing_receiver,
             cancelled,
             replacement_started: Instant::now(),
@@ -96,7 +89,7 @@ impl PerformingReplacementState {
 }
 
 pub fn perform_replacement(
-    search_results: Vec<SearchResult>,
+    search_results: Vec<SearchResultWithReplacement>,
     background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
@@ -148,7 +141,7 @@ pub fn perform_replacement(
 pub fn format_replacement_results(
     num_successes: usize,
     num_ignored: Option<usize>,
-    errors: Option<&[SearchResult]>,
+    errors: Option<&[SearchResultWithReplacement]>,
 ) -> String {
     let errors_display = if let Some(errors) = errors {
         #[allow(clippy::format_collect)]
@@ -182,24 +175,30 @@ pub fn format_replacement_results(
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use frep_core::{line_reader::LineEnding, replace::ReplaceResult};
+    use frep_core::{
+        line_reader::LineEnding,
+        replace::ReplaceResult,
+        search::{SearchResult, SearchResultWithReplacement},
+    };
     use std::path::PathBuf;
 
-    fn create_search_result(
+    fn create_search_result_with_replacement(
         path: &str,
         line_number: usize,
         line: &str,
         replacement: &str,
         included: bool,
         replace_result: Option<ReplaceResult>,
-    ) -> SearchResult {
-        SearchResult {
-            path: PathBuf::from(path),
-            line_number,
-            line: line.to_string(),
-            line_ending: LineEnding::Lf,
+    ) -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: PathBuf::from(path),
+                line_number,
+                line: line.to_string(),
+                line_ending: LineEnding::Lf,
+                included,
+            },
             replacement: replacement.to_string(),
-            included,
             replace_result,
         }
     }
@@ -210,7 +209,7 @@ mod tests {
             num_successes: 5,
             num_ignored: 2,
             errors: vec![
-                create_search_result(
+                create_search_result_with_replacement(
                     "file1.txt",
                     1,
                     "error1",
@@ -218,7 +217,7 @@ mod tests {
                     true,
                     Some(ReplaceResult::Error("err1".to_string())),
                 ),
-                create_search_result(
+                create_search_result_with_replacement(
                     "file2.txt",
                     2,
                     "error2",
@@ -226,7 +225,7 @@ mod tests {
                     true,
                     Some(ReplaceResult::Error("err2".to_string())),
                 ),
-                create_search_result(
+                create_search_result_with_replacement(
                     "file3.txt",
                     3,
                     "error3",
@@ -254,7 +253,7 @@ mod tests {
             num_successes: 5,
             num_ignored: 2,
             errors: vec![
-                create_search_result(
+                create_search_result_with_replacement(
                     "file1.txt",
                     1,
                     "error1",
@@ -262,7 +261,7 @@ mod tests {
                     true,
                     Some(ReplaceResult::Error("err1".to_string())),
                 ),
-                create_search_result(
+                create_search_result_with_replacement(
                     "file2.txt",
                     2,
                     "error2",
@@ -270,7 +269,7 @@ mod tests {
                     true,
                     Some(ReplaceResult::Error("err2".to_string())),
                 ),
-                create_search_result(
+                create_search_result_with_replacement(
                     "file3.txt",
                     3,
                     "error3",
@@ -298,7 +297,7 @@ mod tests {
             num_successes: 5,
             num_ignored: 2,
             errors: vec![
-                create_search_result(
+                create_search_result_with_replacement(
                     "file1.txt",
                     1,
                     "error1",
@@ -306,7 +305,7 @@ mod tests {
                     true,
                     Some(ReplaceResult::Error("err1".to_string())),
                 ),
-                create_search_result(
+                create_search_result_with_replacement(
                     "file2.txt",
                     2,
                     "error2",
@@ -355,7 +354,7 @@ mod tests {
     #[test]
     fn test_calculate_statistics_all_success() {
         let results = vec![
-            create_search_result(
+            create_search_result_with_replacement(
                 "file1.txt",
                 1,
                 "line1",
@@ -363,7 +362,7 @@ mod tests {
                 true,
                 Some(ReplaceResult::Success),
             ),
-            create_search_result(
+            create_search_result_with_replacement(
                 "file2.txt",
                 2,
                 "line2",
@@ -371,7 +370,7 @@ mod tests {
                 true,
                 Some(ReplaceResult::Success),
             ),
-            create_search_result(
+            create_search_result_with_replacement(
                 "file3.txt",
                 3,
                 "line3",
@@ -388,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_calculate_statistics_with_errors() {
-        let error_result = create_search_result(
+        let error_result = create_search_result_with_replacement(
             "file2.txt",
             2,
             "line2",
@@ -397,7 +396,7 @@ mod tests {
             Some(ReplaceResult::Error("test error".to_string())),
         );
         let results = vec![
-            create_search_result(
+            create_search_result_with_replacement(
                 "file1.txt",
                 1,
                 "line1",
@@ -406,7 +405,7 @@ mod tests {
                 Some(ReplaceResult::Success),
             ),
             error_result.clone(),
-            create_search_result(
+            create_search_result_with_replacement(
                 "file3.txt",
                 3,
                 "line3",
@@ -419,13 +418,16 @@ mod tests {
         let stats = frep_core::replace::calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
         assert_eq!(stats.errors.len(), 1);
-        assert_eq!(stats.errors[0].path, error_result.path);
+        assert_eq!(
+            stats.errors[0].search_result.path,
+            error_result.search_result.path
+        );
     }
 
     #[test]
     fn test_calculate_statistics_with_none_results() {
         let results = vec![
-            create_search_result(
+            create_search_result_with_replacement(
                 "file1.txt",
                 1,
                 "line1",
@@ -433,8 +435,8 @@ mod tests {
                 true,
                 Some(ReplaceResult::Success),
             ),
-            create_search_result("file2.txt", 2, "line2", "repl2", true, None), // This should be treated as an error
-            create_search_result(
+            create_search_result_with_replacement("file2.txt", 2, "line2", "repl2", true, None), // This should be treated as an error
+            create_search_result_with_replacement(
                 "file3.txt",
                 3,
                 "line3",
@@ -447,7 +449,10 @@ mod tests {
         let stats = frep_core::replace::calculate_statistics(results);
         assert_eq!(stats.num_successes, 2);
         assert_eq!(stats.errors.len(), 1);
-        assert_eq!(stats.errors[0].path, PathBuf::from("file2.txt"));
+        assert_eq!(
+            stats.errors[0].search_result.path,
+            PathBuf::from("file2.txt")
+        );
         assert_eq!(
             stats.errors[0].replace_result,
             Some(ReplaceResult::Error(
@@ -467,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_format_replacement_results_with_errors() {
-        let error_result = create_search_result(
+        let error_result = create_search_result_with_replacement(
             "file.txt",
             10,
             "line",
