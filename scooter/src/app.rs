@@ -664,6 +664,8 @@ impl<'a> App {
         EventHandlingResult::Rerender
     }
 
+    // NOTE: ideally we'd move this replacement work (including calls to `update_replacements`) off the main thread, but
+    // this would be complex - I think it's fine for now as it is
     #[allow(clippy::needless_pass_by_value)]
     fn update_all_replacements(&mut self, cancelled: Arc<AtomicBool>) -> EventHandlingResult {
         if cancelled.load(Ordering::Relaxed) {
@@ -705,8 +707,7 @@ impl<'a> App {
         end: usize,
         cancelled: Arc<AtomicBool>,
     ) -> EventHandlingResult {
-        // TODO(autosearch): refresh replacement results only when replacing
-        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow. How can we offload this work and otherwise speed up?
+        // TODO(autosearch):
         // - ADD TESTS - e.g. in large repo: type something in, view results, go back and change, then perform replacement, verify that all results are updated
 
         if cancelled.load(Ordering::Relaxed) {
@@ -815,10 +816,9 @@ impl<'a> App {
                                 )
                                 .replace,
                         );
-                        let Some(updated) = updated else {
-                            return EventHandlingResult::Rerender;
-                        };
-                        results_with_replacements.push(updated);
+                        if let Some(updated) = updated {
+                            results_with_replacements.push(updated);
+                        }
                     }
                     search_in_progress_state
                         .results
