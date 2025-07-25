@@ -882,7 +882,7 @@ impl<'a> App {
                             }
                         }
 
-                        // TODO(autosearch): deduplicate this?
+                        // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
 
                         // Debounce replacement requests
                         if let Some(timer) = search_fields_state.replace_debounce_timer.take() {
@@ -908,9 +908,7 @@ impl<'a> App {
                     let event_sender = self.event_sender.clone();
                     search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(300)).await;
-                        event_sender
-                            .send(Event::App(AppEvent::PerformSearch))
-                            .expect("Failed to send event");
+                        let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
                     }));
                 }
             }
