@@ -231,7 +231,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                                     name: "Search still in progress".to_string(),
                                     long: "Try again when search is complete".to_string(),
                                 });
-                            } else if self.app.bp_events_in_progress() {
+                            } else if !self.app.is_preview_updated() {
                                 // TODO(autosave): add an indicator to the UI when replacement preview is being updated (show num and %), then we can split this out from the case of other events
                                 self.app.add_error(AppError {
                                     name: "Updating replacement preview".to_string(),

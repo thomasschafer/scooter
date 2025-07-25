@@ -576,8 +576,6 @@ impl<'a> App {
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
         // TODO(autosearch): anything else to do here?
 
-        // TODO(autosearch): only show popup if hit enter
-
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -823,6 +821,11 @@ impl<'a> App {
             (KeyCode::Enter, _) => {
                 if !self.errors().is_empty() {
                     self.set_popup(Popup::Error);
+                } else if self.search_fields.search().text().is_empty() {
+                    self.add_error(AppError {
+                        name: "Search field must not be empty".to_string(),
+                        long: "Please enter some search text".to_string(),
+                    });
                 } else {
                     let Screen::SearchFields(ref mut search_fields_state) = self.current_screen
                     else {
@@ -905,11 +908,14 @@ impl<'a> App {
                     if let Some(timer) = search_fields_state.search_debounce_timer.take() {
                         timer.abort();
                     }
-                    let event_sender = self.event_sender.clone();
-                    search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(300)).await;
-                        let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
-                    }));
+                    if !self.search_fields.search().text().is_empty() {
+                        let event_sender = self.event_sender.clone();
+                        search_fields_state.search_debounce_timer =
+                            Some(tokio::spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(300)).await;
+                                let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                            }));
+                    }
                 }
             }
         }
@@ -1286,33 +1292,39 @@ impl<'a> App {
     }
 
     pub fn is_search_complete(&self) -> bool {
-        matches!(
-            self.current_screen,
-            Screen::SearchFields(SearchFieldsState {
-                search_state: Some(SearchState {
-                    search_completed: Some(_),
-                    ..
-                }),
-                ..
-            })
-        )
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(state),
+            search_debounce_timer,
+            ..
+        }) = &self.current_screen
+        {
+            state.search_has_completed()
+                && search_debounce_timer
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+        } else {
+            false
+        }
     }
 
-    pub fn bp_events_in_progress(&self) -> bool {
+    pub fn is_preview_updated(&self) -> bool {
         if let Screen::SearchFields(SearchFieldsState {
             search_state:
                 Some(SearchState {
                     processing_receiver,
                     ..
                 }),
+            replace_debounce_timer,
             ..
         }) = &self.current_screen
         {
-            if !processing_receiver.is_empty() {
-                return true;
-            }
+            processing_receiver.is_empty()
+                && replace_debounce_timer
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+        } else {
+            false
         }
-        false
     }
 }
 
