@@ -355,12 +355,33 @@ pub enum FocussedSection {
 }
 
 #[derive(Debug)]
+pub struct PreviewUpdateStatus {
+    pub replace_debounce_timer: JoinHandle<()>,
+    pub update_replacement_cancelled: Arc<AtomicBool>,
+    pub replacements_updated: usize,
+    pub total_replacements_to_update: usize,
+}
+
+impl PreviewUpdateStatus {
+    fn new(
+        replace_debounce_timer: JoinHandle<()>,
+        update_replacement_cancelled: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            replace_debounce_timer,
+            update_replacement_cancelled,
+            replacements_updated: 0,
+            total_replacements_to_update: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
     pub search_debounce_timer: Option<JoinHandle<()>>,
-    pub replace_debounce_timer: Option<JoinHandle<()>>,
-    pub update_replacement_cancelled: Arc<AtomicBool>,
+    pub preview_update_state: Option<PreviewUpdateStatus>, // TODO: should this live in search state?
 }
 
 impl Default for SearchFieldsState {
@@ -369,9 +390,20 @@ impl Default for SearchFieldsState {
             focussed_section: FocussedSection::SearchFields,
             search_state: None,
             search_debounce_timer: None,
-            replace_debounce_timer: None,
-            update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
+            preview_update_state: None,
         }
+    }
+}
+
+impl SearchFieldsState {
+    pub fn replacements_in_progress(&self) -> Option<(usize, usize)> {
+        self.preview_update_state.as_ref().and_then(|p| {
+            if p.replacements_updated != p.total_replacements_to_update {
+                Some((p.replacements_updated, p.total_replacements_to_update))
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -610,26 +642,29 @@ impl<'a> App {
             return EventHandlingResult::None;
         }
         let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(ref mut s),
+            search_state: Some(search_state),
+            preview_update_state: Some(preview_update_state),
             ..
-        }) = self.current_screen
+        }) = &mut self.current_screen
         else {
             return EventHandlingResult::None;
         };
 
-        #[allow(clippy::items_after_statements)]
-        static STEP: usize = 983; // Slightly random so that increments seem more natural in UI
+        preview_update_state.total_replacements_to_update = search_state.results.len();
 
-        let num_results = s.results.len();
+        #[allow(clippy::items_after_statements)]
+        static STEP: usize = 7919; // Slightly random so that increments seem more natural in UI
+
+        let num_results = search_state.results.len();
         for start in (0..num_results).step_by(STEP) {
             let end = (start + STEP - 1).min(num_results - 1);
-            let _ = s
-                .processing_sender
-                .send(BackgroundProcessingEvent::UpdateReplacements {
+            let _ = search_state.processing_sender.send(
+                BackgroundProcessingEvent::UpdateReplacements {
                     start,
                     end,
                     cancelled: cancelled.clone(),
-                });
+                },
+            );
         }
 
         EventHandlingResult::Rerender
@@ -643,20 +678,17 @@ impl<'a> App {
         cancelled: Arc<AtomicBool>,
     ) -> EventHandlingResult {
         // TODO(autosearch): refresh replacement results only when replacing
-        // - what happens if we start typing in the replacement field mid-way through a search? Need to ensure future results have correct replacement
-        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow. Maybe:
-        //    - replace in chunks
-        //    - cancel chunked replacement if a new replacement or search has started
-        //    - how do we ensure that all replacements have completed by the time we try to replace?
-        // - ADD TESTS
+        // - DON'T BLOCK THE MAIN THREAD WHEN DOING THIS - it's slow. How can we offload this work and otherwise speed up?
+        // - ADD TESTS - e.g. in large repo: type something in, view results, go back and change, then perform replacement, verify that all results are updated
 
         if cancelled.load(Ordering::Relaxed) {
             return EventHandlingResult::None;
         }
         let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(ref mut s),
+            search_state: Some(search_state),
+            preview_update_state: Some(preview_update_state),
             ..
-        }) = self.current_screen
+        }) = &mut self.current_screen
         else {
             return EventHandlingResult::None;
         };
@@ -664,7 +696,7 @@ impl<'a> App {
             .parsed_fields
             .as_ref()
             .expect("Fields should have been parsed");
-        for res in &mut s.results[start..=end] {
+        for res in &mut search_state.results[start..=end] {
             match replacement_if_match(
                 &res.search_result.line,
                 &parsed_fields.search,
@@ -674,6 +706,7 @@ impl<'a> App {
                 None => return EventHandlingResult::Rerender,
             }
         }
+        preview_update_state.replacements_updated += end - start + 1;
 
         EventHandlingResult::Rerender
     }
@@ -850,9 +883,11 @@ impl<'a> App {
                 let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
                     return EventHandlingResult::None;
                 };
-                search_fields_state
-                    .update_replacement_cancelled
-                    .store(true, Ordering::Relaxed);
+                if let Some(ref mut state) = search_fields_state.preview_update_state {
+                    state
+                        .update_replacement_cancelled
+                        .store(true, Ordering::Relaxed);
+                }
 
                 if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
                     // TODO: ideally this should only happen when the field is checked, but for now this will do
@@ -888,20 +923,20 @@ impl<'a> App {
                         // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
 
                         // Debounce replacement requests
-                        if let Some(timer) = search_fields_state.replace_debounce_timer.take() {
-                            timer.abort();
+                        if let Some(ref mut state) = search_fields_state.preview_update_state {
+                            state.replace_debounce_timer.abort();
                         }
                         let sender = state.processing_sender.clone();
                         let cancelled = Arc::new(AtomicBool::new(false));
-                        search_fields_state.update_replacement_cancelled = cancelled.clone();
-                        search_fields_state.replace_debounce_timer =
-                            Some(tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(300)).await;
-                                let _ =
-                                    sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
-                                        cancelled,
-                                    });
-                            }));
+                        let cancelled_clone = cancelled.clone();
+                        let handle = tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                            let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
+                                cancelled: cancelled_clone,
+                            });
+                        });
+                        search_fields_state.preview_update_state =
+                            Some(PreviewUpdateStatus::new(handle, cancelled));
                     }
                 } else {
                     // Debounce search requests
@@ -1314,14 +1349,14 @@ impl<'a> App {
                     processing_receiver,
                     ..
                 }),
-            replace_debounce_timer,
+            preview_update_state,
             ..
         }) = &self.current_screen
         {
             processing_receiver.is_empty()
-                && replace_debounce_timer
+                && preview_update_state
                     .as_ref()
-                    .is_none_or(tokio::task::JoinHandle::is_finished)
+                    .is_none_or(|p| p.replace_debounce_timer.is_finished())
         } else {
             false
         }
