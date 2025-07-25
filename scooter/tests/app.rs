@@ -97,8 +97,7 @@ async fn test_back_from_results() {
             Arc::new(AtomicBool::new(false)),
         )),
         search_debounce_timer: None,
-        replace_debounce_timer: None,
-        update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
+        preview_update_state: None,
     });
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
@@ -243,8 +242,7 @@ async fn test_help_popup_on_search_results() {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(sender, receiver, cancelled)),
         search_debounce_timer: None,
-        replace_debounce_timer: None,
-        update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
+        preview_update_state: None,
     });
     test_help_popup_on_screen(initial_screen);
 }
@@ -1655,8 +1653,7 @@ async fn test_keymaps_search_complete() {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
         search_debounce_timer: None,
-        replace_debounce_timer: None,
-        update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
+        preview_update_state: None,
     });
 
     assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
@@ -1678,8 +1675,7 @@ async fn test_keymaps_search_progressing() {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
         search_debounce_timer: None,
-        replace_debounce_timer: None,
-        update_replacement_cancelled: Arc::new(AtomicBool::new(false)),
+        preview_update_state: None,
     });
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());

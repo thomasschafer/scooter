@@ -210,6 +210,7 @@ fn render_search_results(
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
     area_is_focussed: bool,
+    preview_update_status: Option<(usize, usize)>,
 ) {
     let small_screen = area.width <= 110;
 
@@ -229,6 +230,7 @@ fn render_search_results(
         num_results,
         is_complete,
         time_taken,
+        preview_update_status,
     );
 
     let num_to_render = if small_screen {
@@ -309,6 +311,7 @@ fn render_num_results(
     num_results: usize,
     is_complete: bool,
     time_taken: Duration,
+    num_replacements_updates_in_progress: Option<(usize, usize)>,
 ) {
     let left_content_1 = format!("Results: {num_results}");
     let left_content_2 = if is_complete {
@@ -316,11 +319,19 @@ fn render_num_results(
     } else {
         " [Still searching...]"
     };
+    let mid_content = if let Some((complete, total)) = num_replacements_updates_in_progress {
+        format!(
+            "[Updating preview: {complete}/{total} ({perc:.2}%)]",
+            perc = ((complete as f64) / (total as f64)) * (100 as f64)
+        )
+    } else {
+        String::new()
+    };
     let right_content = format!(" [Time taken: {}]", display_duration(time_taken));
-    let spacers = " ".repeat(
-        (area.width as usize)
-            .saturating_sub(left_content_1.len() + left_content_2.len() + right_content.len()),
+    let num_total_spacers = (area.width as usize).saturating_sub(
+        left_content_1.len() + left_content_2.len() + mid_content.len() + right_content.len(),
     );
+    let spacers_each_side = " ".repeat(num_total_spacers / 2);
 
     let accessory_colour = if is_complete {
         Color::Green
@@ -332,7 +343,9 @@ fn render_num_results(
         Line::from(vec![
             Span::raw(left_content_1),
             Span::raw(left_content_2).fg(accessory_colour),
-            Span::raw(spacers),
+            Span::raw(spacers_each_side.clone()),
+            Span::raw(mid_content).fg(Color::Blue),
+            Span::raw(spacers_each_side),
             Span::raw(right_content).fg(accessory_colour),
         ]),
         area,
@@ -857,6 +870,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                 fields,
             );
 
+            let replacements_in_progress = search_fields_state.replacements_in_progress();
             if let Some(ref mut state) = &mut search_fields_state.search_state {
                 let (is_complete, elapsed) = if let Some(completed) = state.search_completed {
                     (true, completed.duration_since(state.search_started))
@@ -874,6 +888,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     app.config.style.true_color,
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
+                    replacements_in_progress,
                 );
             }
         }
