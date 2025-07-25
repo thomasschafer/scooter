@@ -582,10 +582,19 @@ impl<'a> App {
     }
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
+        match self.background_processing_reciever() {
+            Some(r) => r.recv().await,
+            None => None,
+        }
+    }
+
+    pub fn background_processing_reciever(
+        &mut self,
+    ) -> Option<&mut UnboundedReceiver<BackgroundProcessingEvent>> {
         match &mut self.current_screen {
             Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
                 if let Some(search_state) = search_state {
-                    search_state.processing_receiver.recv().await
+                    Some(&mut search_state.processing_receiver)
                 } else {
                     None
                 }
@@ -593,7 +602,7 @@ impl<'a> App {
             Screen::PerformingReplacement(PerformingReplacementState {
                 processing_receiver,
                 ..
-            }) => processing_receiver.recv().await,
+            }) => Some(processing_receiver),
             Screen::Results(_) => None,
         }
     }
@@ -601,11 +610,20 @@ impl<'a> App {
     pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
-            AppEvent::PerformSearch => self.perform_search_if_valid(),
+            AppEvent::PerformSearch => self.perform_search_unwrap(),
         }
     }
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
+        let valid = self.validate_fields().unwrap();
+        if !valid {
+            return EventHandlingResult::Rerender;
+        }
+        self.perform_search_unwrap()
+    }
+
+    /// NOTE: validation should have been performed (with `validate_fields`) before calling
+    pub fn perform_search_unwrap(&mut self) -> EventHandlingResult {
         // TODO(autosearch): anything else to do here?
 
         let (background_processing_sender, background_processing_receiver) =
@@ -816,6 +834,7 @@ impl<'a> App {
                 {
                     state.set_search_completed_now();
                     if self.immediate_replace {
+                        // TODO: wait for background processing to complete
                         self.trigger_replacement();
                     }
                 }
@@ -846,6 +865,7 @@ impl<'a> App {
     }
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
+    #[allow(clippy::too_many_lines)]
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Char('u'), KeyModifiers::ALT) => {
@@ -879,82 +899,94 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
-                // TODO: tidy this up? also check cancellation works - log events?
-                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                    return EventHandlingResult::None;
-                };
-                if let Some(ref mut state) = search_fields_state.preview_update_state {
-                    state
-                        .update_replacement_cancelled
-                        .store(true, Ordering::Relaxed);
-                }
-
-                if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
-                    // TODO: ideally this should only happen when the field is checked, but for now this will do
-                    self.search_fields.search_mut().clear_error();
-                }
-                self.search_fields.highlighted_field_mut().handle_keys(
-                    code,
-                    modifiers,
-                    self.config.search.disable_prepopulated_fields,
-                );
-
-                let Some(search_config) = self.validate_fields().unwrap() else {
-                    return EventHandlingResult::Rerender;
-                };
-                self.parsed_fields = Some(search_config.clone());
-
-                let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-                    return EventHandlingResult::None;
-                };
-                if let FieldName::Replace = self.search_fields.highlighted_field().name {
-                    if let Some(ref mut state) = search_fields_state.search_state {
-                        // Immediately update replacement on selected fields - the remainder will be updated async
-                        if let Some(highlighted) = state.primary_selected_field_mut() {
-                            if let Some(updated) = replacement_if_match(
-                                &highlighted.search_result.line,
-                                &search_config.search,
-                                &search_config.replace,
-                            ) {
-                                highlighted.replacement = updated;
-                            }
-                        }
-
-                        // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
-
-                        // Debounce replacement requests
-                        if let Some(ref mut state) = search_fields_state.preview_update_state {
-                            state.replace_debounce_timer.abort();
-                        }
-                        let sender = state.processing_sender.clone();
-                        let cancelled = Arc::new(AtomicBool::new(false));
-                        let cancelled_clone = cancelled.clone();
-                        let handle = tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(300)).await;
-                            let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
-                                cancelled: cancelled_clone,
-                            });
-                        });
-                        search_fields_state.preview_update_state =
-                            Some(PreviewUpdateStatus::new(handle, cancelled));
-                    }
-                } else {
-                    // Debounce search requests
-                    if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-                        timer.abort();
-                    }
-                    if !self.search_fields.search().text().is_empty() {
-                        let event_sender = self.event_sender.clone();
-                        search_fields_state.search_debounce_timer =
-                            Some(tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(300)).await;
-                                let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
-                            }));
-                    }
+                if let Some(value) = self.enter_chars_into_field(code, modifiers) {
+                    return value;
                 }
             }
         }
         EventHandlingResult::Rerender
+    }
+
+    fn enter_chars_into_field(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<EventHandlingResult> {
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return Some(EventHandlingResult::None);
+        };
+        if let Some(ref mut state) = search_fields_state.preview_update_state {
+            state
+                .update_replacement_cancelled
+                .store(true, Ordering::Relaxed);
+        }
+        if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
+            // TODO: ideally this should only happen when the field is checked, but for now this will do
+            self.search_fields.search_mut().clear_error();
+        }
+        self.search_fields.highlighted_field_mut().handle_keys(
+            code,
+            modifiers,
+            self.config.search.disable_prepopulated_fields,
+        );
+        let valid = self.validate_fields().unwrap();
+        if !valid {
+            return Some(EventHandlingResult::Rerender);
+        }
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return Some(EventHandlingResult::None);
+        };
+        let parsed_fields = self
+            .parsed_fields
+            .as_ref()
+            .expect("Fields should have been parsed");
+        // TODO: refactor/tidy up? also check cancellation works - log events?
+
+        if let FieldName::Replace = self.search_fields.highlighted_field().name {
+            if let Some(ref mut state) = search_fields_state.search_state {
+                // Immediately update replacement on selected fields - the remainder will be updated async
+                if let Some(highlighted) = state.primary_selected_field_mut() {
+                    if let Some(updated) = replacement_if_match(
+                        &highlighted.search_result.line,
+                        &parsed_fields.search,
+                        &parsed_fields.replace,
+                    ) {
+                        highlighted.replacement = updated;
+                    }
+                }
+
+                // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
+
+                // Debounce replacement requests
+                if let Some(ref mut state) = search_fields_state.preview_update_state {
+                    state.replace_debounce_timer.abort();
+                }
+                let sender = state.processing_sender.clone();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let cancelled_clone = cancelled.clone();
+                let handle = tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
+                        cancelled: cancelled_clone,
+                    });
+                });
+                search_fields_state.preview_update_state =
+                    Some(PreviewUpdateStatus::new(handle, cancelled));
+            }
+        } else {
+            // Debounce search requests
+            if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+                timer.abort();
+            }
+            if !self.search_fields.search().text().is_empty() {
+                let event_sender = self.event_sender.clone();
+                search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                }));
+            }
+        }
+        None
     }
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
@@ -1068,7 +1100,7 @@ impl<'a> App {
         }
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
+    fn validate_fields(&mut self) -> anyhow::Result<bool> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -1086,10 +1118,14 @@ impl<'a> App {
         let result = validate_search_configuration(search_config, &mut error_handler)?;
         error_handler.apply_to_app(self);
 
-        match result {
-            ValidationResult::Success(search_config) => Ok(Some(search_config)),
-            ValidationResult::ValidationErrors => Ok(None),
-        }
+        let valid = match result {
+            ValidationResult::Success(search_config) => {
+                self.parsed_fields = Some(search_config.clone());
+                true
+            }
+            ValidationResult::ValidationErrors => false,
+        };
+        Ok(valid)
     }
 
     pub fn spawn_update_search_results(
