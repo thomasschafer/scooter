@@ -237,7 +237,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                                     name: "Updating replacement preview".to_string(),
                                     long: "Try again when complete".to_string(),
                                 });
-                            } else if !self.event_receiver.is_empty() {
+                            } else if !self.app.background_processing_reciever().is_some_and(|r| r.is_empty()) {
                                 self.app.add_error(AppError {
                                     name: "Background processing in progress".to_string(),
                                     long: "Try again in a moment".to_string(),
