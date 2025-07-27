@@ -851,9 +851,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     let base_path = &app.directory;
     let show_popup = app.show_popup();
     match &mut app.current_screen {
-        // TODO
         Screen::SearchFields(ref mut search_fields_state) => {
-            // TODO: only show search and replace fields when results are focussed
             let num_search_fields_to_render = match search_fields_state.focussed_section {
                 FocussedSection::SearchFields => NUM_SEARCH_FIELDS,
                 FocussedSection::SearchResults => NUM_SEARCH_FIELDS_TRUNCATED,

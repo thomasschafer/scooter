@@ -381,7 +381,7 @@ pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
     pub search_debounce_timer: Option<JoinHandle<()>>,
-    pub preview_update_state: Option<PreviewUpdateStatus>, // TODO: should this live in search state?
+    pub preview_update_state: Option<PreviewUpdateStatus>, // TODO(autosearch): should this live in search state?
 }
 
 impl Default for SearchFieldsState {
@@ -433,17 +433,6 @@ impl Screen {
             Screen::Results(_) => "Results",
         }
     }
-
-    // TODO: delete
-    // fn unwrap_search_fields_state(&self) -> &SearchFieldsState {
-    //     let Screen::SearchFields(ref search_fields_state) = self else {
-    //         panic!(
-    //             "Expected current_screen to be SearchFields, found {}",
-    //             self.name()
-    //         );
-    //     };
-    //     search_fields_state
-    // }
 
     fn unwrap_search_fields_state_mut(&mut self) -> &mut SearchFieldsState {
         let name = self.name().to_owned();
@@ -634,8 +623,6 @@ impl<'a> App {
 
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
     pub fn perform_search_unwrap(&mut self) -> EventHandlingResult {
-        // TODO(autosearch): anything else to do here?
-
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -707,9 +694,6 @@ impl<'a> App {
         end: usize,
         cancelled: Arc<AtomicBool>,
     ) -> EventHandlingResult {
-        // TODO(autosearch):
-        // - ADD TESTS - e.g. in large repo: type something in, view results, go back and change, then perform replacement, verify that all results are updated
-
         if cancelled.load(Ordering::Relaxed) {
             return EventHandlingResult::None;
         }
@@ -796,7 +780,6 @@ impl<'a> App {
                     ..
                 }) = &mut self.current_screen
                 {
-                    // TODO(autosave): add replacement here?
                     let mut results_with_replacements = Vec::new();
                     for res in results {
                         let updated = add_replacement(
@@ -963,8 +946,6 @@ impl<'a> App {
                         highlighted.replacement = updated;
                     }
                 }
-
-                // TODO(autosearch): ensure that replacement can't happen until after fields have updated (i.e. after 300ms + time to complete update)
 
                 // Debounce replacement requests
                 let sender = state.processing_sender.clone();
@@ -1236,9 +1217,7 @@ impl<'a> App {
                             ("<S-tab>", "focus previous", Show::FullOnly),
                             ("<space>", "toggle checkbox", Show::FullOnly),
                         ];
-                        if self.config.search.disable_prepopulated_fields
-                            && self.search_fields.fields.iter().any(|f| f.set_by_cli)
-                        {
+                        if self.config.search.disable_prepopulated_fields {
                             keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
                         }
                         keys
