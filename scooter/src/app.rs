@@ -509,8 +509,13 @@ impl<'a> App {
             config.search.disable_prepopulated_fields,
         );
 
+        let mut search_fields_state = SearchFieldsState::default();
+        if app_run_config.immediate_search {
+            search_fields_state.focussed_section = FocussedSection::SearchResults;
+        }
+
         let mut app = Self {
-            current_screen: Screen::SearchFields(SearchFieldsState::default()),
+            current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
             parsed_fields: None,
             directory,
@@ -822,13 +827,13 @@ impl<'a> App {
             BackgroundProcessingEvent::SearchCompleted => {
                 if let Screen::SearchFields(SearchFieldsState {
                     search_state: Some(state),
+                    focussed_section,
                     ..
                 }) = &mut self.current_screen
                 {
                     state.set_search_completed_now();
-                    if self.immediate_replace {
-                        // TODO(autosearch): if !self.immediate_search, wait for enter, and call trigger_replacement in enter handler
-                        // TODO(autosearch): wait for background processing to complete?
+                    if self.immediate_replace && *focussed_section == FocussedSection::SearchResults
+                    {
                         self.trigger_replacement();
                     }
                 }
@@ -882,6 +887,17 @@ impl<'a> App {
                         );
                     };
                     search_fields_state.focussed_section = FocussedSection::SearchResults;
+                    // Check if search has been performed
+                    if let Some(search_state) = &search_fields_state.search_state {
+                        if self.immediate_replace && search_state.search_has_completed() {
+                            self.trigger_replacement();
+                        }
+                    } else {
+                        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+                            timer.abort();
+                        }
+                        self.perform_search_if_valid();
+                    }
                 }
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
@@ -977,7 +993,7 @@ impl<'a> App {
     }
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
-    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
+    fn try_handle_key_search_results(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
         assert!(
             matches!(self.current_screen, Screen::SearchFields(_)),
             "Expected current_screen to be SearchFields, found {}",
@@ -1065,7 +1081,7 @@ impl<'a> App {
                 match search_fields_state.focussed_section {
                     FocussedSection::SearchFields => self.handle_key_searching(key),
                     FocussedSection::SearchResults => {
-                        if let Some(res) = self.try_handle_key_search(key) {
+                        if let Some(res) = self.try_handle_key_search_results(key) {
                             res
                         } else {
                             match self
