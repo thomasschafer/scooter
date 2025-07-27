@@ -211,7 +211,6 @@ pub const NUM_SEARCH_FIELDS: u16 = 7;
 pub struct SearchFields {
     pub fields: [SearchField; NUM_SEARCH_FIELDS as usize],
     pub highlighted: usize,
-    pub advanced_regex: bool,
 }
 
 macro_rules! define_field_accessor {
@@ -325,7 +324,6 @@ impl SearchFields {
         Self {
             highlighted: Self::initial_highlight_position(&fields, disable_prepopulated_fields),
             fields,
-            advanced_regex: false,
         }
     }
 

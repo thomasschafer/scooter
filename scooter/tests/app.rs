@@ -318,6 +318,7 @@ fn setup_app(
     app
 }
 
+// TODO(autosave): move these to app_runner tests
 // TODO: simplify this test - it is somewhat tied to the current implementation
 async fn search_and_replace_test(
     temp_dir: &TempDir,
@@ -331,43 +332,44 @@ async fn search_and_replace_test(
         .sum::<usize>();
 
     let mut app = setup_app(temp_dir, search_field_values, app_run_config);
+    assert_eq!(app.errors(), vec![]);
     let res = app.perform_search_if_valid();
     assert!(res != EventHandlingResult::Exit(None));
 
     process_bp_events(&mut app).await;
     assert!(wait_until_search_complete(&app));
 
-    if let Screen::SearchFields(SearchFieldsState {
+    let Screen::SearchFields(SearchFieldsState {
         search_state: Some(state),
         ..
     }) = &mut app.current_screen
-    {
-        for (file_path, num_expected_matches) in &expected_matches {
-            let num_actual_matches = state
-                .results
-                .iter()
-                .filter(|result| {
-                    let result_path = result.search_result.path.to_str().unwrap();
-                    let file_path = file_path.to_str().unwrap();
-                    result_path == temp_dir.path().join(file_path).to_string_lossy()
-                })
-                .count();
-            let num_expected_matches = *num_expected_matches;
-            assert_eq!(
-                num_actual_matches,
-                num_expected_matches,
-                "{}: expected {num_expected_matches}, found {num_actual_matches}",
-                file_path.display(),
-            );
-        }
-
-        assert_eq!(state.results.len(), total_num_expected_matches);
-    } else {
+    else {
         panic!(
             "Expected SearchComplete results with Some search state, found {:?}",
             app.current_screen
         );
+    };
+
+    for (file_path, num_expected_matches) in &expected_matches {
+        let num_actual_matches = state
+            .results
+            .iter()
+            .filter(|result| {
+                let result_path = result.search_result.path.to_str().unwrap();
+                let file_path = file_path.to_str().unwrap();
+                result_path == temp_dir.path().join(file_path).to_string_lossy()
+            })
+            .count();
+        let num_expected_matches = *num_expected_matches;
+        assert_eq!(
+            num_actual_matches,
+            num_expected_matches,
+            "{}: expected {num_expected_matches}, found {num_actual_matches}",
+            file_path.display(),
+        );
     }
+
+    assert_eq!(state.results.len(), total_num_expected_matches);
 
     app.trigger_replacement();
 

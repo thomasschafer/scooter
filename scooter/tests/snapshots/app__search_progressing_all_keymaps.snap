@@ -25,7 +25,7 @@ expression: app.keymaps_all()
     ),
     (
         "<C-o>",
-        "back",
+        "back to search fields",
     ),
     (
         "j",
