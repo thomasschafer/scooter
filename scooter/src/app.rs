@@ -619,8 +619,9 @@ impl<'a> App {
     }
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
-        let valid = self.validate_fields().unwrap();
-        if !valid {
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.parsed_fields = Some(search_config);
+        } else {
             return EventHandlingResult::Rerender;
         }
         self.perform_search_unwrap()
@@ -753,12 +754,16 @@ impl<'a> App {
                     .count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
+                let Some(search_config) = self.validate_fields().unwrap() else {
+                    panic!("Attempted to replace with invalid fields");
+                };
                 replace::perform_replacement(
                     state.results,
                     background_processing_sender.clone(),
                     cancelled.clone(),
                     replacements_completed.clone(),
                     self.event_sender.clone(),
+                    Some(search_config),
                 );
 
                 self.current_screen =
@@ -937,8 +942,9 @@ impl<'a> App {
             modifiers,
             self.config.search.disable_prepopulated_fields,
         );
-        let valid = self.validate_fields().unwrap();
-        if !valid {
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.parsed_fields = Some(search_config);
+        } else {
             return Some(EventHandlingResult::Rerender);
         }
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
@@ -1103,7 +1109,7 @@ impl<'a> App {
         }
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<bool> {
+    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -1121,14 +1127,10 @@ impl<'a> App {
         let result = validate_search_configuration(search_config, &mut error_handler)?;
         error_handler.apply_to_app(self);
 
-        let valid = match result {
-            ValidationResult::Success(search_config) => {
-                self.parsed_fields = Some(search_config.clone());
-                true
-            }
-            ValidationResult::ValidationErrors => false,
-        };
-        Ok(valid)
+        match result {
+            ValidationResult::Success(search_config) => Ok(Some(search_config)),
+            ValidationResult::ValidationErrors => Ok(None),
+        }
     }
 
     pub fn spawn_update_search_results(
