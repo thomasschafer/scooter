@@ -657,8 +657,6 @@ impl<'a> App {
         EventHandlingResult::Rerender
     }
 
-    // NOTE: ideally we'd move this replacement work (including calls to `update_replacements`) off the main thread, but
-    // this would be complex - I think it's fine for now as it is
     #[allow(clippy::needless_pass_by_value)]
     fn update_all_replacements(&mut self, cancelled: Arc<AtomicBool>) -> EventHandlingResult {
         if cancelled.load(Ordering::Relaxed) {
