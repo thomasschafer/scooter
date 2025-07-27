@@ -9,8 +9,8 @@ use std::{
 };
 
 use frep_core::{
-    replace::{replace_in_file, ReplaceResult},
-    search::SearchResultWithReplacement,
+    replace::{replace_in_file, replacement_if_match, ReplaceResult},
+    search::{FileSearcherConfig, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
@@ -41,6 +41,7 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     search_results: Vec<SearchResultWithReplacement>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
+    validation_search_config: Option<FileSearcherConfig>,
     on_completion: T,
 ) -> usize {
     let (included, num_ignored) = split_results(search_results);
@@ -61,6 +62,9 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
                         return;
                     }
 
+                    if let Some(config) = &validation_search_config {
+                        validate_search_result_correctness(config, &results);
+                    }
                     if let Err(file_err) = replace_in_file(&mut results) {
                         for res in &mut results {
                             res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
@@ -76,6 +80,25 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     });
 
     num_ignored
+}
+
+fn validate_search_result_correctness(
+    validation_search_config: &FileSearcherConfig,
+    results: &Vec<SearchResultWithReplacement>,
+) {
+    for res in results {
+        let expected = replacement_if_match(
+            &res.search_result.line,
+            &validation_search_config.search,
+            &validation_search_config.replace,
+        );
+        let actual = &res.replacement;
+        assert_eq!(
+            expected.as_ref(),
+            Some(actual),
+            "Expected replacement does not match actual"
+        );
+    }
 }
 
 #[cfg(test)]

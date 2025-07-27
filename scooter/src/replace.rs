@@ -13,7 +13,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use frep_core::search::SearchResultWithReplacement;
+use frep_core::search::{FileSearcherConfig, SearchResultWithReplacement};
 
 use crate::app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult};
 
@@ -94,6 +94,7 @@ pub fn perform_replacement(
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
     event_sender: UnboundedSender<Event>,
+    validation_search_config: Option<FileSearcherConfig>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         cancelled.store(false, Ordering::Relaxed);
@@ -103,6 +104,7 @@ pub fn perform_replacement(
             search_results,
             cancelled,
             replacements_completed,
+            validation_search_config,
             move |result| {
                 let _ = tx.send(result); // Ignore error if receiver is dropped
             },
