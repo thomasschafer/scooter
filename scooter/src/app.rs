@@ -443,7 +443,7 @@ impl Screen {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppError {
     pub name: String,
     pub long: String,
@@ -479,6 +479,7 @@ impl Default for AppRunConfig {
     }
 }
 
+#[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub current_screen: Screen,
@@ -1107,12 +1108,12 @@ impl<'a> App {
         }
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
+    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
-            advanced_regex: self.search_fields.advanced_regex,
+            advanced_regex: self.advanced_regex,
             include_globs: Some(self.search_fields.include_files().text()),
             exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,

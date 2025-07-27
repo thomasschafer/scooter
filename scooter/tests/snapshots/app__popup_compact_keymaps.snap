@@ -1,12 +1,11 @@
 ---
 source: scooter/tests/app.rs
-assertion_line: 1622
 expression: app.keymaps_compact()
 ---
 [
     (
         "<enter>",
-        "search",
+        "jump to results",
     ),
     (
         "<tab>",

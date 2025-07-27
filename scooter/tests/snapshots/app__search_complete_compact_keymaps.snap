@@ -1,20 +1,19 @@
 ---
 source: scooter/tests/app.rs
-assertion_line: 1543
 expression: app.keymaps_compact()
 ---
 [
-    (
-        "<enter>",
-        "replace selected",
-    ),
     (
         "<space>",
         "toggle",
     ),
     (
         "<C-o>",
-        "back",
+        "back to search fields",
+    ),
+    (
+        "<enter>",
+        "replace selected",
     ),
     (
         "<C-h>",
