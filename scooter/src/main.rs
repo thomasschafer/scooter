@@ -126,7 +126,7 @@ fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
 }
 
 fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
-    if args.search_text.is_none() {
+    if args.search_text.as_ref().is_none_or(|s| s.is_empty()) {
         for (name, enabled) in [
             ("--immediate-search", args.immediate_search),
             ("--immediate", args.immediate),
