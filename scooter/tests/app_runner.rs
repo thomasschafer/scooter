@@ -450,6 +450,9 @@ test_with_both_regex_modes_and_fixed_strings!(
         }
         send_key(KeyCode::Tab, &event_sender);
         send_chars(" ", &event_sender); // Toggle on whole word matching
+        let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
+        assert_snapshot!("temp_snap_122", snapshot);
+
         send_key(KeyCode::Enter, &event_sender);
 
         wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
