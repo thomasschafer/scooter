@@ -10,7 +10,7 @@ use std::{
 
 use frep_core::{
     replace::{replace_in_file, replacement_if_match, ReplaceResult},
-    search::{FileSearcherConfig, SearchResultWithReplacement},
+    search::{FileSearcher, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
@@ -41,7 +41,7 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     search_results: Vec<SearchResultWithReplacement>,
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
-    validation_search_config: Option<FileSearcherConfig>,
+    validation_search_config: Option<FileSearcher>,
     on_completion: T,
 ) -> usize {
     let (included, num_ignored) = split_results(search_results);
@@ -83,14 +83,14 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
 }
 
 fn validate_search_result_correctness(
-    validation_search_config: &FileSearcherConfig,
+    validation_search_config: &FileSearcher,
     results: &Vec<SearchResultWithReplacement>,
 ) {
     for res in results {
         let expected = replacement_if_match(
             &res.search_result.line,
-            &validation_search_config.search,
-            &validation_search_config.replace,
+            validation_search_config.search(),
+            validation_search_config.replace(),
         );
         let actual = &res.replacement;
         assert_eq!(

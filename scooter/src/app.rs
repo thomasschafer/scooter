@@ -22,7 +22,7 @@ use tokio::{
 
 use frep_core::{
     replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, FileSearcherConfig, SearchResult, SearchResultWithReplacement},
+    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -484,7 +484,7 @@ impl Default for AppRunConfig {
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    pub parsed_fields: Option<FileSearcherConfig>,
+    pub file_searcher: Option<FileSearcher>,
     pub directory: PathBuf,
     pub config: Config,
     pub event_sender: UnboundedSender<Event>,
@@ -518,7 +518,7 @@ impl<'a> App {
         let mut app = Self {
             current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
-            parsed_fields: None,
+            file_searcher: None,
             directory,
             include_hidden: app_run_config.include_hidden,
             config,
@@ -621,7 +621,7 @@ impl<'a> App {
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.parsed_fields = Some(search_config);
+            self.file_searcher = Some(search_config);
         } else {
             return EventHandlingResult::Rerender;
         }
@@ -634,11 +634,10 @@ impl<'a> App {
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        let file_searcher = FileSearcher::new(
-            self.parsed_fields
-                .clone()
-                .expect("Fields should have been parsed"),
-        );
+        let file_searcher = self
+            .file_searcher
+            .clone()
+            .expect("Fields should have been parsed");
 
         Self::spawn_update_search_results(
             file_searcher,
@@ -710,15 +709,16 @@ impl<'a> App {
         else {
             return EventHandlingResult::None;
         };
-        let parsed_fields = self
-            .parsed_fields
+        let file_searcher = self
+            .file_searcher
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
+            // TODO: we need to include whole word matching etc.!!?
             match replacement_if_match(
                 &res.search_result.line,
-                &parsed_fields.search,
-                &parsed_fields.replace,
+                file_searcher.search(),
+                file_searcher.replace(),
             ) {
                 Some(replacement) => res.replacement = replacement,
                 None => return EventHandlingResult::Rerender,
@@ -793,20 +793,18 @@ impl<'a> App {
                     for res in results {
                         let updated = add_replacement(
                             res,
-                            &self
-                                .parsed_fields
+                            self.file_searcher
                                 .as_ref()
                                 .expect(
-                                    "parsed_fields should not be None when adding search results",
+                                    "file_searcher should not be None when adding search results",
                                 )
-                                .search,
-                            &self
-                                .parsed_fields
+                                .search(),
+                            self.file_searcher
                                 .as_ref()
                                 .expect(
-                                    "parsed_fields should not be None when adding search results",
+                                    "file_searcher should not be None when adding search results",
                                 )
-                                .replace,
+                                .replace(),
                         );
                         if let Some(updated) = updated {
                             results_with_replacements.push(updated);
@@ -942,15 +940,15 @@ impl<'a> App {
             self.config.search.disable_prepopulated_fields,
         );
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.parsed_fields = Some(search_config);
+            self.file_searcher = Some(search_config);
         } else {
             return Some(EventHandlingResult::Rerender);
         }
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
             return Some(EventHandlingResult::None);
         };
-        let parsed_fields = self
-            .parsed_fields
+        let file_searcher = self
+            .file_searcher
             .as_ref()
             .expect("Fields should have been parsed");
         // TODO: refactor/tidy up? also check cancellation works - log events?
@@ -961,8 +959,8 @@ impl<'a> App {
                 if let Some(highlighted) = state.primary_selected_field_mut() {
                     if let Some(updated) = replacement_if_match(
                         &highlighted.search_result.line,
-                        &parsed_fields.search,
-                        &parsed_fields.replace,
+                        file_searcher.search(),
+                        file_searcher.replace(),
                     ) {
                         highlighted.replacement = updated;
                     }
@@ -1108,7 +1106,7 @@ impl<'a> App {
         }
     }
 
-    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcherConfig>> {
+    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -1127,7 +1125,10 @@ impl<'a> App {
         error_handler.apply_to_app(self);
 
         match result {
-            ValidationResult::Success(search_config) => Ok(Some(search_config)),
+            ValidationResult::Success(search_config) => {
+                let file_searcher = FileSearcher::new(search_config);
+                Ok(Some(file_searcher))
+            }
             ValidationResult::ValidationErrors => Ok(None),
         }
     }
