@@ -349,9 +349,10 @@ fn preview_update_status(num_replacements_updates_in_progress: Option<(usize, us
     if let Some((complete, total)) = num_replacements_updates_in_progress {
         // Avoid flickering - only show if it will take some time
         if total > 50000 {
+            #[allow(clippy::cast_precision_loss)]
             return format!(
                 "[Updating preview: {complete}/{total} ({perc:.2}%)]",
-                perc = ((complete as f64) / (total as f64)) * (100 as f64)
+                perc = ((complete as f64) / (total as f64)) * 100.0
             );
         }
     }
