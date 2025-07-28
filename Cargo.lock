@@ -767,11 +767,12 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
+checksum = "d6215aee357f8c7c989ebb4b8466ca4d7dc93b3957039f2fc3ea2ade8ea5f279"
 dependencies = [
  "bit-set",
+ "derivative",
  "regex-automata",
  "regex-syntax",
 ]
@@ -817,9 +818,9 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "frep-core"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2951be30fa02850fb05d706931eb603bb4841be8ea353107cf16fc2d3e8d662e"
+checksum = "9db81e5b545be45b20e0e4587e248c11b7bf4b2add31430a2d47cf243449c9ae"
 dependencies = [
  "anyhow",
  "content_inspector",
