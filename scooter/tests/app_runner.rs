@@ -193,12 +193,19 @@ async fn shutdown(
     run_handle: JoinHandle<()>,
 ) -> anyhow::Result<()> {
     event_sender.send(CrosstermEvent::Key(KeyEvent::new(
-        KeyCode::Esc,
-        KeyModifiers::empty(),
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
     )))?;
 
-    run_handle.await?;
+    let timeout_res = tokio::time::timeout(Duration::from_secs(1), async {
+        run_handle.await.unwrap();
+    })
+    .await;
 
+    assert!(
+        timeout_res.is_ok(),
+        "Couldn't shut down in a reasonable time"
+    );
     Ok(())
 }
 
@@ -450,8 +457,6 @@ test_with_both_regex_modes_and_fixed_strings!(
         }
         send_key(KeyCode::Tab, &event_sender);
         send_chars(" ", &event_sender); // Toggle on whole word matching
-        let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 100).await?;
-        assert_snapshot!("temp_snap_122", snapshot);
 
         send_key(KeyCode::Enter, &event_sender);
 
@@ -1450,89 +1455,79 @@ test_with_both_regex_modes!(
     }
 );
 
-// test_with_both_regex_modes!(
-//     test_search_replace_defaults,
-//     |advanced_regex: bool| async move {
-//         let temp_dir = create_test_files!(
-//             "file1.txt" => text!(
-//                 "This is a test file",
-//                 "It contains some test content",
-//                 "For TESTING purposes",
-//                 "Test TEST tEsT tesT test",
-//                 "TestbTESTctEsTdtesTetest",
-//                 " test ",
-//             ),
-//             "file2.txt" => text!(
-//                 "Another test file",
-//                 "With different content",
-//                 "Also for testing",
-//             ),
-//             "file3.txt" => text!(
-//                 "something",
-//                 "123 bar[a-b]+.*bar)(baz 456",
-//                 "test-TEST-tESt",
-//                 "something",
-//             )
-//         );
+test_with_both_regex_modes!(
+    test_search_replace_defaults,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "This is a test file",
+                "It contains some test content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT test",
+                "TestbTESTctEsTdtesTetest",
+                " test ",
+            ),
+            "file2.txt" => text!(
+                "Another test file",
+                "With different content",
+                "Also for testing",
+            ),
+            "file3.txt" => text!(
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "test-TEST-tESt",
+                "something",
+            )
+        );
 
-//         let config = AppConfig {
-//             directory: temp_dir.path().to_path_buf(),
-//             app_run_config: AppRunConfig {
-//                 advanced_regex,
-//                 ..AppRunConfig::default()
-//             },
-//             ..AppConfig::default()
-//         };
-//         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
-//         wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
-//         send_chars("t[esES]+t", &event_sender);
-//         send_key(KeyCode::Tab, &event_sender);
-//         send_chars("123,", &event_sender);
-//         send_key(KeyCode::Enter, &event_sender);
+        send_chars("t[esES]+t", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("123,", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
 
-//         wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
-//         // search_and_replace_test(
-//         //     &temp_dir,
-//         //     &search_field_values,
-//         //     &AppRunConfig {
-//         //         advanced_regex,
-//         //         ..AppRunConfig::default()
-//         //     },
-//         //     vec![
-//         //         (Path::new("file1.txt"), 5),
-//         //         (Path::new("file2.txt"), 2),
-//         //         (Path::new("file3.txt"), 1),
-//         //     ],
-//         // )
-//         // .await;
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
-//         assert_test_files!(
-//             &temp_dir,
-//             "file1.txt" => text!(
-//                 "This is a 123, file",
-//                 "It contains some 123, content",
-//                 "For TESTING purposes",
-//                 "Test TEST tEsT tesT 123,",
-//                 "TestbTESTctEsTdtesTe123,",
-//                 " 123, ",
-//             ),
-//             "file2.txt" => text!(
-//                 "Another 123, file",
-//                 "With different content",
-//                 "Also for 123,ing",
-//             ),
-//             "file3.txt" => text!(
-//                 "something",
-//                 "123 bar[a-b]+.*bar)(baz 456",
-//                 "123,-TEST-123,",
-//                 "something",
-//             )
-//         );
-//         Ok(())
-//     }
-// );
+        assert_test_files!(
+            &temp_dir,
+            "file1.txt" => text!(
+                "This is a 123, file",
+                "It contains some 123, content",
+                "For TESTING purposes",
+                "Test TEST tEsT tesT 123,",
+                "TestbTESTctEsTdtesTe123,",
+                " 123, ",
+            ),
+            "file2.txt" => text!(
+                "Another 123, file",
+                "With different content",
+                "Also for 123,ing",
+            ),
+            "file3.txt" => text!(
+                "something",
+                "123 bar[a-b]+.*bar)(baz 456",
+                "123,-TEST-123,",
+                "something",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
 
 // test_with_both_regex_modes!(
 //     test_search_replace_fixed_string,
