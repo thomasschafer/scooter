@@ -626,7 +626,7 @@ fn file_path_line<'a>(
     Line::from(vec![
         Span::raw(left_content).style(accessory_colour),
         Span::raw(path),
-        Span::raw(line_num).fg(Color::Blue),
+        Span::raw(line_num).style(accessory_colour),
         Span::raw(spacers),
         Span::raw(right_content).style(accessory_colour),
     ])
