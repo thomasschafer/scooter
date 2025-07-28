@@ -134,7 +134,17 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         &AppRunConfig::default(),
     );
 
+    // Simulate search being triggered in background
     let res = app.perform_search_if_valid();
+    assert!(app.popup().is_none());
+
+    // Hitting enter should show popup
+    app.handle_key_event(&KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    });
     assert!(res != EventHandlingResult::Exit(None));
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
     assert!(matches!(app.popup(), Some(Popup::Error)));
@@ -285,15 +295,18 @@ where
 
 async fn process_bp_events(app: &mut App) {
     let timeout = Duration::from_secs(5);
-    let start = Instant::now();
 
-    while let Some(event) = app.background_processing_recv().await {
-        app.handle_background_processing_event(event);
-        #[allow(clippy::manual_assert)]
-        if start.elapsed() > timeout {
-            panic!("Couldn't process background events in a reasonable time");
+    // TODO: will this channel ever close? Should we change testing strategy?
+    let timeout_res = tokio::time::timeout(timeout, async {
+        while let Some(event) = app.background_processing_recv().await {
+            app.handle_background_processing_event(event);
         }
-    }
+    })
+    .await;
+    assert!(
+        timeout_res.is_ok(),
+        "Couldn't process background events in a reasonable time"
+    );
 }
 
 macro_rules! wait_for_screen {
