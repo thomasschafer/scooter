@@ -615,7 +615,16 @@ impl<'a> App {
     pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
-            AppEvent::PerformSearch => self.perform_search_unwrap(),
+            AppEvent::PerformSearch => {
+                if self.search_fields.search().text().is_empty() {
+                    if let Screen::SearchFields(ref mut search_fields_state) = self.current_screen {
+                        search_fields_state.search_state = None;
+                    }
+                    EventHandlingResult::Rerender
+                } else {
+                    self.perform_search_unwrap()
+                }
+            }
         }
     }
 
@@ -984,13 +993,11 @@ impl<'a> App {
             if let Some(timer) = search_fields_state.search_debounce_timer.take() {
                 timer.abort();
             }
-            if !self.search_fields.search().text().is_empty() {
-                let event_sender = self.event_sender.clone();
-                search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(300)).await;
-                    let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
-                }));
-            }
+            let event_sender = self.event_sender.clone();
+            search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+            }));
         }
         None
     }
