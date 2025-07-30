@@ -381,7 +381,7 @@ pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
     pub search_debounce_timer: Option<JoinHandle<()>>,
-    pub preview_update_state: Option<PreviewUpdateStatus>, // TODO(autosearch): should this live in search state?
+    pub preview_update_state: Option<PreviewUpdateStatus>,
 }
 
 impl Default for SearchFieldsState {
@@ -960,7 +960,6 @@ impl<'a> App {
             .file_searcher
             .as_ref()
             .expect("Fields should have been parsed");
-        // TODO: refactor/tidy up? also check cancellation works - log events?
 
         if let FieldName::Replace = self.search_fields.highlighted_field().name {
             if let Some(ref mut state) = search_fields_state.search_state {
@@ -985,6 +984,7 @@ impl<'a> App {
                         cancelled: cancelled_clone,
                     });
                 });
+                // Note that cancel_preview_updates is called above, which cancels any existing preview updates
                 search_fields_state.preview_update_state =
                     Some(PreviewUpdateStatus::new(handle, cancelled));
             }
@@ -1229,9 +1229,6 @@ impl<'a> App {
             CompactOnly,
         }
 
-        // TODO(autosearch): update these, including:
-        // - back/forward between SearchFields and SearchResults
-        // - <more>
         let current_screen_keys = match &self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 match search_fields_state.focussed_section {

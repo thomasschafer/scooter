@@ -2582,7 +2582,6 @@ test_with_both_regex_modes!(
                 "This is a hidden text file",
             )
         );
-        // TODO(autosave): include_hidden: true,
 
         let config = AppConfig {
             directory: temp_dir.path().to_path_buf(),
