@@ -2,10 +2,12 @@ use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
 use insta::assert_snapshot;
+use rand::Rng;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use serial_test::serial;
 use std::{env, io, path::Path, pin::Pin, task::Poll};
+use tempfile::TempDir;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -87,9 +89,26 @@ impl Pattern {
     }
 }
 
-async fn wait_for_text(
+async fn wait_for_match(
     snapshot_rx: &mut UnboundedReceiver<String>,
     pattern: Pattern,
+    timeout_ms: u64,
+) -> anyhow::Result<String> {
+    wait_for_match_impl(snapshot_rx, pattern, true, timeout_ms).await
+}
+
+async fn wait_for_not_matching(
+    snapshot_rx: &mut UnboundedReceiver<String>,
+    pattern: Pattern,
+    timeout_ms: u64,
+) -> anyhow::Result<String> {
+    wait_for_match_impl(snapshot_rx, pattern, false, timeout_ms).await
+}
+
+async fn wait_for_match_impl(
+    snapshot_rx: &mut UnboundedReceiver<String>,
+    pattern: Pattern,
+    should_match: bool,
     timeout_ms: u64,
 ) -> anyhow::Result<String> {
     let timeout = Duration::from_millis(timeout_ms);
@@ -113,7 +132,7 @@ async fn wait_for_text(
         tokio::select! {
             snapshot = snapshot_rx.recv() => {
                 match snapshot {
-                    Some(s) if pattern.is_match(&s) => return Ok(s),
+                    Some(s) if should_match == pattern.is_match(&s) => return Ok(s),
                     Some(s) => { last_snapshot = Some(s); },
                     None => return err_with_snapshot("Channel closed while waiting for pattern", last_snapshot),
                 }
@@ -174,7 +193,14 @@ fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::
 }
 
 fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
-    let backend = TestBackend::new(80, 24);
+    build_test_runner_with_config_and_width(config, 24)
+}
+
+fn build_test_runner_with_config_and_width(
+    config: AppConfig<'_>,
+    width: u16,
+) -> anyhow::Result<TestRunner> {
+    let backend = TestBackend::new(width * 10 / 3, width);
 
     let (event_sender, event_stream) = TestEventStream::new();
     let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel();
@@ -234,14 +260,14 @@ fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
 async fn test_search_current_dir() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("search", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     shutdown(event_sender, run_handle).await
 }
@@ -251,11 +277,11 @@ async fn test_search_current_dir() -> anyhow::Result<()> {
 async fn test_error_when_search_text_is_empty() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_key(KeyCode::Enter, &event_sender);
 
-    let snapshot = wait_for_text(
+    let snapshot = wait_for_match(
         &mut snapshot_rx,
         Pattern::string("Search field must not be empty"),
         1000,
@@ -289,16 +315,16 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("after", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -321,7 +347,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -358,16 +384,16 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("after", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -379,7 +405,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that nothing has changed
         assert_test_files!(
@@ -401,7 +427,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("before", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -412,15 +438,15 @@ test_with_both_regex_modes_and_fixed_strings!(
         }
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         assert_test_files!(&temp_dir);
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(&temp_dir);
 
@@ -449,7 +475,7 @@ test_with_both_regex_modes_and_fixed_strings!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("some", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -463,9 +489,9 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -486,7 +512,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -524,15 +550,15 @@ test_with_both_regex_modes!(
         let (run_handle, event_sender, mut snapshot_rx) =
             build_test_runner(Some(temp_dir.path()), advanced_regex)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(r"\((\d{3,4})\)\s(\d{4})-(\d{4})", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("+44 $2 $1-$3", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         // Nothing should have changed yet
         assert_test_files!(
@@ -547,7 +573,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         // Verify only matching phone numbers are reformatted
         assert_test_files!(
@@ -589,7 +615,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     // Match 'let' declarations that aren't mutable
     // Use negative lookbehind for function parameters and negative lookahead for mut
@@ -598,8 +624,8 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     send_chars("let /* immutable */ $1", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     // Nothing should have changed yet
     assert_test_files!(
@@ -624,7 +650,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     // Verify only non-mutable declarations are modified
     assert_test_files!(
@@ -675,15 +701,15 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     // Highlight 3rd to 6th search result with multi-select, and 8th with single selection
     send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
@@ -700,7 +726,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
     send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -750,15 +776,15 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender);
@@ -766,7 +792,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 6, 2, 0), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::final_screen(true, 6, 2, 0), 1000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -816,19 +842,19 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 8, 0, 0), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::final_screen(true, 8, 0, 0), 1000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -878,20 +904,20 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Char('a'), &event_sender); // Toggle all off
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::final_screen(true, 0, 8, 0), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::final_screen(true, 0, 8, 0), 1000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -943,15 +969,15 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     overwrite_files!(
         &temp_dir.path(),
@@ -969,7 +995,7 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(
+    wait_for_match(
         &mut snapshot_rx,
         Pattern::final_screen(false, 3, 2, 3),
         1000,
@@ -1031,15 +1057,15 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     delete_files!(&temp_dir.path(), "src/lib.rs", "src/foo.rs");
 
@@ -1050,7 +1076,7 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(
+    wait_for_match(
         &mut snapshot_rx,
         Pattern::final_screen(false, 1, 2, 6),
         1000,
@@ -1105,15 +1131,15 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), true)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     delete_files!(&temp_dir.path(), "src/");
 
@@ -1124,7 +1150,7 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(
+    wait_for_match(
         &mut snapshot_rx,
         Pattern::final_screen(false, 0, 2, 7),
         1000,
@@ -1141,7 +1167,7 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
 async fn test_help_screen_keymaps() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_key_with_modifiers(KeyCode::Char('h'), KeyModifiers::CONTROL, &event_sender);
 
@@ -1161,7 +1187,7 @@ async fn test_help_screen_keymaps() -> anyhow::Result<()> {
 async fn test_validation_errors() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     // Invalid regex in search
     send_key(KeyCode::Char('('), &event_sender);
@@ -1243,7 +1269,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
     };
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
 
     // Pre-populated fields should be skipped when tabbing
     send_key(KeyCode::Tab, &event_sender);
@@ -1253,12 +1279,12 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1301,19 +1327,19 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) =
         build_test_runner(Some(temp_dir.path()), false)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("test", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("TEST", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(
+    wait_for_match(
         &mut snapshot_rx,
         Pattern::regex_must_compile(
             r"Performing replacement\.\.\.\s*\n\s*Completed: \d+/8 \(\d+\.\d{2}%\)\s*\n\s*Time: \d+\.\d{3}s",
@@ -1322,7 +1348,7 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
     )
     .await?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1378,15 +1404,15 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 100).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 100).await?;
         let snapshot =
-            wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 500).await?;
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 500).await?;
         assert!(Regex::new(r"file1\.txt").unwrap().is_match(&snapshot),);
         assert!(Regex::new(r"file2\.txt").unwrap().is_match(&snapshot),);
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1437,16 +1463,16 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("is", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("REPLACEMENT", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
         // Replacement should happen without confirmation
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1504,18 +1530,18 @@ test_with_both_regex_modes!(
             ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("t[esES]+t", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("123,", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1575,7 +1601,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(".*", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -1584,11 +1610,11 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Char(' '), &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1648,7 +1674,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("test", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -1658,11 +1684,11 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Char(' '), &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1726,7 +1752,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("test", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -1740,11 +1766,11 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Char(' '), &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1804,18 +1830,18 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(r"\b\w+ing\b", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("VERB", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -1871,7 +1897,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("nonexistent-string", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -1881,11 +1907,11 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Char(' '), &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -1940,14 +1966,14 @@ test_with_both_regex_modes!(
             ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("[invalid regex", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("replacement", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        let snapshot = wait_for_text(&mut snapshot_rx, Pattern::string("Errors"), 500).await?;
+        let snapshot = wait_for_match(&mut snapshot_rx, Pattern::string("Errors"), 500).await?;
         assert_snapshot!(
             format!(
                 "error_with{suffix}_advanced_regex",
@@ -2011,18 +2037,18 @@ async fn test_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
     };
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("(test)(?!ing)", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("BAR", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     assert_test_files!(
         temp_dir,
@@ -2089,7 +2115,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("testing", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -2101,11 +2127,11 @@ test_with_both_regex_modes!(
         send_chars("dir2/*, dir3/**, */subdir3/*", &event_sender); // "Files to include" field
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2183,7 +2209,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("testing", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -2196,11 +2222,11 @@ test_with_both_regex_modes!(
         send_chars("dir1", &event_sender); // "Files to exclude" field
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2281,7 +2307,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("testing", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -2295,11 +2321,11 @@ test_with_both_regex_modes!(
         send_chars("**/file2.rs", &event_sender); // "Files to exclude" field
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2394,7 +2420,7 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("testing", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
@@ -2408,11 +2434,11 @@ test_with_both_regex_modes!(
         send_chars("**/file2.rs", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2484,18 +2510,18 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     };
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("is", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
-    wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
     assert_test_files!(
         temp_dir,
@@ -2538,18 +2564,18 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(r"\bis\b", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("REPLACED", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2594,18 +2620,18 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars(r"\bis\b", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("REPLACED", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2662,18 +2688,18 @@ test_with_both_regex_modes!(
         };
         let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("sample", &event_sender);
         send_key(KeyCode::Tab, &event_sender);
         send_chars("REPLACED", &event_sender);
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_text(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-        wait_for_text(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_text(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 
         let text_files = vec![
             "textfiles/code.rs",
@@ -2706,6 +2732,178 @@ test_with_both_regex_modes!(
                 "Binary file {file} was unexpectedly modified",
             );
         }
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+fn count_occurrences(dir: &Path) -> anyhow::Result<(usize, usize)> {
+    fn count_in_dir(
+        dir: &Path,
+        foo_count: &mut usize,
+        bar_count: &mut usize,
+    ) -> anyhow::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() {
+                let content = std::fs::read_to_string(&path)?;
+                *foo_count += content.matches("foo").count();
+                *bar_count += content.matches("bar").count();
+            } else if path.is_dir() {
+                count_in_dir(&path, foo_count, bar_count)?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut foo_count = 0;
+    let mut bar_count = 0;
+
+    count_in_dir(dir, &mut foo_count, &mut bar_count)?;
+    Ok((foo_count, bar_count))
+}
+
+async fn setup_test_data_with_foos_and_bars() -> anyhow::Result<(TempDir, usize, usize)> {
+    const TARGET_FILE_SIZE: usize = 10 * 1024;
+    const NUM_FILES: usize = 200;
+    const FOO_PROBABILITY: u8 = 15;
+    const BAR_PROBABILITY: u8 = 10;
+
+    let temp_dir = TempDir::new().unwrap();
+
+    let chars: Vec<char> =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \n.,!?;:"
+            .chars()
+            .collect();
+
+    let mut rng = rand::rng();
+    let mut foo_count = 0;
+    let mut bar_count = 0;
+
+    for i in 0..NUM_FILES {
+        let mut content = String::with_capacity(TARGET_FILE_SIZE);
+
+        while content.len() < TARGET_FILE_SIZE {
+            let choice = rng.random_range(0..100);
+
+            if choice < FOO_PROBABILITY {
+                content.push_str("foo");
+                foo_count += 1;
+            } else if choice < FOO_PROBABILITY + BAR_PROBABILITY {
+                content.push_str("bar");
+                bar_count += 1;
+            } else {
+                let chunk_size = rng.random_range(10..100);
+                for _ in 0..chunk_size {
+                    content.push(chars[rng.random_range(0..chars.len())]);
+                }
+            }
+        }
+
+        let file_path = temp_dir.path().join(format!("data_file_{i}.txt"));
+        tokio::fs::write(&file_path, content).await?;
+    }
+
+    let (initial_foo_count, initial_bar_count) = count_occurrences(temp_dir.path())?;
+
+    // The actual count should be at least what we tracked, but might be more due to
+    // random generation creating "foo" or "bar" sequences, hence the >=
+    assert!(
+        initial_foo_count >= foo_count,
+        "Test setup failed: found fewer 'foo' ({initial_foo_count}) than we intentionally created ({foo_count})",
+    );
+    assert!(
+        initial_bar_count >= bar_count,
+        "Test setup failed: found fewer 'bar' ({initial_bar_count}) than we intentionally created ({bar_count})",
+    );
+    Ok((temp_dir, initial_foo_count, initial_bar_count))
+}
+
+test_with_both_regex_modes!(
+    test_preview_updates_work_correctly,
+    |advanced_regex: bool| async move {
+        let (temp_dir, initial_foo_count, initial_bar_count) =
+            setup_test_data_with_foos_and_bars().await?;
+        assert!(
+            initial_foo_count > 0,
+            "Test setup failed: should have at least some 'foo' occurrences"
+        );
+        assert!(
+            initial_bar_count > 0,
+            "Test setup failed: should have at least some 'bar' occurrences"
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                include_hidden: true,
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 48)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars("qux", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("bux", &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::BackTab, &event_sender);
+        for _ in 0..3 {
+            send_key(KeyCode::Backspace, &event_sender);
+        }
+        send_chars("foo", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        for _ in 0..3 {
+            send_key(KeyCode::Backspace, &event_sender);
+        }
+        send_chars("baz", &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        // Don't wait for "Search complete", start searching again immediately
+
+        send_key(KeyCode::Backspace, &event_sender);
+        send_chars("r", &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        let (mid_foo_count, mid_bar_count) = count_occurrences(temp_dir.path())?;
+        assert_eq!(
+            mid_foo_count, initial_foo_count,
+            "Mid-test foo count mismatch - nothing should have changed yet"
+        );
+        assert_eq!(
+            mid_bar_count, initial_bar_count,
+            "Mid-test bar count mismatch - nothing should have changed yet"
+        );
+
+        send_key(KeyCode::Enter, &event_sender);
+
+        // TODO(autosave): wait for preview to update
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+        let (final_foo_count, final_bar_count) = count_occurrences(temp_dir.path())?;
+        assert_eq!(
+            final_foo_count, 0,
+            "Final foo count should be 0 after replacement"
+        );
+        assert_eq!(
+            final_bar_count,
+            initial_foo_count + initial_bar_count,
+            "Final bar count should equal initial foo + bar counts"
+        );
 
         shutdown(event_sender, run_handle).await
     }
