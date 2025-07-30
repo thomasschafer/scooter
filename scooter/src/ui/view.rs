@@ -440,7 +440,6 @@ pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
 }
 
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
-    // TODO: cancel thread if app closes
     tokio::spawn(async move {
         match fs::metadata(&path) {
             Ok(metadata) => {
@@ -730,7 +729,7 @@ fn render_results_errors(area: Rect, replace_state: &ReplaceState, frame: &mut F
         .errors
         .iter()
         .skip(replace_state.replacement_errors_pos)
-        .take(list_area.height as usize / 3 + 1) // TODO: don't hardcode height
+        .take(list_area.height as usize / 3 + 1)
         .map(error_result);
 
     render_results_tallies(results_area, frame, replace_state);
