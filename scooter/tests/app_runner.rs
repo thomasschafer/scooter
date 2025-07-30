@@ -230,6 +230,7 @@ fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_search_current_dir() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
@@ -246,6 +247,7 @@ async fn test_search_current_dir() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_error_when_search_text_is_empty() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
@@ -563,6 +565,7 @@ test_with_both_regex_modes!(
 );
 
 #[tokio::test]
+#[serial]
 async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -648,6 +651,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 }
 
 #[tokio::test]
+#[serial]
 async fn test_multi_select_mode() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -722,6 +726,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_mixed() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -787,6 +792,7 @@ async fn test_results_calculation_mixed() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_all_success() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -848,6 +854,7 @@ async fn test_results_calculation_all_success() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -910,6 +917,7 @@ async fn test_results_calculation_all_ignored() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -990,6 +998,7 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -1063,6 +1072,7 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
 }
 
 #[tokio::test]
+#[serial]
 async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -1127,6 +1137,7 @@ async fn test_results_calculation_with_directory_deleted_errors() -> anyhow::Res
 }
 
 #[tokio::test]
+#[serial]
 async fn test_help_screen_keymaps() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
@@ -1146,6 +1157,7 @@ async fn test_help_screen_keymaps() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_validation_errors() -> anyhow::Result<()> {
     let (run_handle, event_sender, mut snapshot_rx) = build_test_runner(None, false)?;
 
@@ -1177,6 +1189,7 @@ async fn test_validation_errors() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_prepopulated_fields() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "src/lib.rs" => text!(
@@ -1266,6 +1279,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_replacement_progress_display() -> anyhow::Result<()> {
     let temp_dir = &create_test_files!(
         "file1.txt" => text!(
