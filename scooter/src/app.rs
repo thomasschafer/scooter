@@ -723,7 +723,6 @@ impl<'a> App {
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
-            // TODO: we need to include whole word matching etc.!!?
             match replacement_if_match(
                 &res.search_result.line,
                 file_searcher.search(),
@@ -799,22 +798,13 @@ impl<'a> App {
                 }) = &mut self.current_screen
                 {
                     let mut results_with_replacements = Vec::new();
+                    let file_searcher = self
+                        .file_searcher
+                        .as_ref()
+                        .expect("file_searcher should not be None when adding search results");
                     for res in results {
-                        let updated = add_replacement(
-                            res,
-                            self.file_searcher
-                                .as_ref()
-                                .expect(
-                                    "file_searcher should not be None when adding search results",
-                                )
-                                .search(),
-                            self.file_searcher
-                                .as_ref()
-                                .expect(
-                                    "file_searcher should not be None when adding search results",
-                                )
-                                .replace(),
-                        );
+                        let updated =
+                            add_replacement(res, file_searcher.search(), file_searcher.replace());
                         if let Some(updated) = updated {
                             results_with_replacements.push(updated);
                         }
