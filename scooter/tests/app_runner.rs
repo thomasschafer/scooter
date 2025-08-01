@@ -6,6 +6,7 @@ use rand::Rng;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use serial_test::serial;
+use std::{borrow::Cow, sync::OnceLock};
 use std::{env, io, path::Path, pin::Pin, task::Poll};
 use tempfile::TempDir;
 use tokio::{
@@ -173,6 +174,14 @@ type TestRunner = (
 );
 
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
+    build_test_runner_with_width(directory, advanced_regex, 24)
+}
+
+fn build_test_runner_with_width(
+    directory: Option<&Path>,
+    advanced_regex: bool,
+    width: u16,
+) -> anyhow::Result<TestRunner> {
     let config = AppConfig {
         directory: directory.map_or(env::current_dir().unwrap(), Path::to_path_buf),
         app_run_config: AppRunConfig {
@@ -181,7 +190,7 @@ fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::
         },
         ..AppConfig::default()
     };
-    build_test_runner_with_config(config)
+    build_test_runner_with_config_and_width(config, width)
 }
 
 fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
@@ -1015,6 +1024,20 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
     shutdown(event_sender, run_handle).await
 }
 
+static TIME_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn strip_time_taken(text: &str) -> Cow<'_, str> {
+    let re = TIME_REGEX.get_or_init(|| Regex::new(r"\[Time taken: \d+\.\d+s\]").unwrap());
+    re.replace(text, "[Time taken: x.xxxs]")
+}
+
+static PATH_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn normalize_paths(text: &str) -> Cow<'_, str> {
+    let re = PATH_REGEX.get_or_init(|| Regex::new(r"[^\s]+/src/").unwrap());
+    re.replace_all(text, "./src/")
+}
+
 #[tokio::test]
 #[serial]
 async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {
@@ -1047,7 +1070,7 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
-        build_test_runner(Some(temp_dir.path()), true)?;
+        build_test_runner_with_width(Some(temp_dir.path()), true, 34)?;
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1057,10 +1080,14 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     send_key(KeyCode::Enter, &event_sender);
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    let snapshot =
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    assert_snapshot!("search_results", strip_time_taken(&snapshot));
 
     delete_files!(&temp_dir.path(), "src/lib.rs", "src/foo.rs");
 
+    // This relies on positioning of search results, which in theory is not deterministic (but the test seems to work fine).
+    // Could be improved if this becomes flakey
     send_key(KeyCode::Char('j'), &event_sender);
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Char('G'), &event_sender);
@@ -1068,12 +1095,13 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_match(
+    let snapshot = wait_for_match(
         &mut snapshot_rx,
         Pattern::final_screen(false, 1, 2, 6),
         1000,
     )
     .await?;
+    assert_snapshot!("replacement_results", normalize_paths(&snapshot));
 
     assert_test_files!(
         &temp_dir,
@@ -2930,3 +2958,6 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+// TODO(autosearch):
+// - delete some files midway through, check skips and no panic
