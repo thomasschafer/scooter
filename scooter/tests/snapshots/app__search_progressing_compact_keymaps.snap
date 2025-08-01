@@ -1,6 +1,5 @@
 ---
 source: scooter/tests/app.rs
-assertion_line: 1557
 expression: app.keymaps_compact()
 ---
 [
@@ -10,7 +9,7 @@ expression: app.keymaps_compact()
     ),
     (
         "<C-o>",
-        "back",
+        "back to search fields",
     ),
     (
         "<C-h>",

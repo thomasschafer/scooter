@@ -4,10 +4,6 @@ expression: app.keymaps_all()
 ---
 [
     (
-        "<enter>",
-        "replace selected",
-    ),
-    (
         "<space>",
         "toggle",
     ),
@@ -29,7 +25,7 @@ expression: app.keymaps_all()
     ),
     (
         "<C-o>",
-        "back",
+        "back to search fields",
     ),
     (
         "j",
@@ -62,6 +58,10 @@ expression: app.keymaps_all()
     (
         "G",
         "jump to bottom",
+    ),
+    (
+        "<enter>",
+        "replace selected",
     ),
     (
         "<C-r>",
