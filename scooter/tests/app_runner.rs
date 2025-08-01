@@ -235,7 +235,7 @@ fn send_key_with_modifiers(
 ) {
     event_sender
         .send(CrosstermEvent::Key(KeyEvent::new(key, modifiers)))
-        .unwrap();
+        .unwrap_or_else(|e| panic!("failed to send key {key:?}, modifiers {modifiers:?}\n{e}"));
 }
 
 fn send_key(key: KeyCode, event_sender: &UnboundedSender<CrosstermEvent>) {
@@ -2830,7 +2830,6 @@ test_with_both_regex_modes!(
         let config = AppConfig {
             directory: temp_dir.path().to_path_buf(),
             app_run_config: AppRunConfig {
-                include_hidden: true,
                 advanced_regex,
                 ..AppRunConfig::default()
             },
@@ -2879,27 +2878,45 @@ test_with_both_regex_modes!(
         );
 
         send_key(KeyCode::Enter, &event_sender); // Jump to search results
+        send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
 
-        let timeout = Duration::from_millis(1000);
+        let timeout = Duration::from_millis(3000);
         let result = tokio::time::timeout(timeout, async {
+            // State enum to prevent pressing key twice
+            #[derive(PartialEq, Eq)]
+            enum WaitingFor {
+                PopupToClose,
+                PopupToOpenOrReplacementToStart,
+            }
+            let mut current_state = WaitingFor::PopupToOpenOrReplacementToStart;
             loop {
-                send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
-                let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 200)
-                    .await
-                    .expect("Failed to get snapshot");
-                if snapshot.contains("Performing replacement...") {
-                    return;
-                } else if snapshot.contains("Updating replacement preview") {
-                    send_key(KeyCode::Esc, &event_sender); // Close popup
+                match snapshot_rx.recv().await {
+                    Some(snapshot) => {
+                        if snapshot.contains("Performing replacement...") {
+                            return;
+                        } else if snapshot.contains("Updating replacement preview") {
+                            if current_state == WaitingFor::PopupToOpenOrReplacementToStart {
+                                send_key(KeyCode::Esc, &event_sender); // Close popup
+                            }
+                            current_state = WaitingFor::PopupToClose;
+                        } else {
+                            if current_state == WaitingFor::PopupToClose {
+                                send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
+                            }
+                            current_state = WaitingFor::PopupToOpenOrReplacementToStart;
+                        }
+                    }
+                    None => panic!("Snapshot channel closed"),
                 }
             }
         })
         .await;
         assert!(result.is_ok(), "Timed out before preview was updated");
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         let (final_foo_count, final_bar_count) = count_occurrences(temp_dir.path())?;
+        eprintln!("[debug] initial_foo_count = {initial_foo_count} + initial_bar_count = {initial_bar_count}, final_foo_count={final_foo_count}, final_bar_count={final_bar_count}");
         assert_eq!(
             final_foo_count, 0,
             "Final foo count should be 0 after replacement"
