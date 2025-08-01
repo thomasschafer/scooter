@@ -97,14 +97,6 @@ async fn wait_for_match(
     wait_for_match_impl(snapshot_rx, pattern, true, timeout_ms).await
 }
 
-async fn wait_for_not_matching(
-    snapshot_rx: &mut UnboundedReceiver<String>,
-    pattern: Pattern,
-    timeout_ms: u64,
-) -> anyhow::Result<String> {
-    wait_for_match_impl(snapshot_rx, pattern, false, timeout_ms).await
-}
-
 async fn wait_for_match_impl(
     snapshot_rx: &mut UnboundedReceiver<String>,
     pattern: Pattern,
@@ -2886,11 +2878,24 @@ test_with_both_regex_modes!(
             "Mid-test bar count mismatch - nothing should have changed yet"
         );
 
-        send_key(KeyCode::Enter, &event_sender);
+        send_key(KeyCode::Enter, &event_sender); // Jump to search results
 
-        // TODO(autosave): wait for preview to update
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        send_key(KeyCode::Enter, &event_sender);
+        let timeout = Duration::from_millis(1000);
+        let result = tokio::time::timeout(timeout, async {
+            loop {
+                send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
+                let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 200)
+                    .await
+                    .expect("Failed to get snapshot");
+                if snapshot.contains("Performing replacement...") {
+                    return;
+                } else if snapshot.contains("Updating replacement preview") {
+                    send_key(KeyCode::Esc, &event_sender); // Close popup
+                }
+            }
+        })
+        .await;
+        assert!(result.is_ok(), "Timed out before preview was updated");
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
 

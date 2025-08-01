@@ -129,6 +129,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
 
     // Simulate search being triggered in background
     let res = app.perform_search_if_valid();
+    assert!(res != EventHandlingResult::Exit(None));
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup
@@ -138,7 +139,6 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     });
-    assert!(res != EventHandlingResult::Exit(None));
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 

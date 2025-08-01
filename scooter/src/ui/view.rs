@@ -348,7 +348,7 @@ fn render_num_results(
 fn preview_update_status(num_replacements_updates_in_progress: Option<(usize, usize)>) -> String {
     if let Some((complete, total)) = num_replacements_updates_in_progress {
         // Avoid flickering - only show if it will take some time
-        if total > 50000 {
+        if total >= 10000 {
             #[allow(clippy::cast_precision_loss)]
             return format!(
                 "[Updating preview: {complete}/{total} ({perc:.2}%)]",
