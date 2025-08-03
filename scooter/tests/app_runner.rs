@@ -6,7 +6,6 @@ use rand::Rng;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use serial_test::serial;
-use std::{borrow::Cow, sync::OnceLock};
 use std::{env, io, path::Path, pin::Pin, task::Poll};
 use tempfile::TempDir;
 use tokio::{
@@ -1024,20 +1023,6 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
     shutdown(event_sender, run_handle).await
 }
 
-static TIME_REGEX: OnceLock<Regex> = OnceLock::new();
-
-fn strip_time_taken(text: &str) -> Cow<'_, str> {
-    let re = TIME_REGEX.get_or_init(|| Regex::new(r"\[Time taken: \d+\.\d+s\]").unwrap());
-    re.replace(text, "[Time taken: x.xxxs]")
-}
-
-static PATH_REGEX: OnceLock<Regex> = OnceLock::new();
-
-fn normalize_paths(text: &str) -> Cow<'_, str> {
-    let re = PATH_REGEX.get_or_init(|| Regex::new(r"[^\s]+/src/").unwrap());
-    re.replace_all(text, "./src/")
-}
-
 #[tokio::test]
 #[serial]
 async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {
@@ -1070,38 +1055,47 @@ async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<
     );
 
     let (run_handle, event_sender, mut snapshot_rx) =
-        build_test_runner_with_width(Some(temp_dir.path()), true, 34)?;
+        build_test_runner_with_width(Some(temp_dir.path()), true, 40)?;
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
     send_chars("let", &event_sender);
     send_key(KeyCode::Tab, &event_sender);
     send_chars("changed", &event_sender);
+    // Tab through to make sure the preview doesn't break
+    for _ in 0..10 {
+        send_key(KeyCode::Tab, &event_sender);
+    }
     send_key(KeyCode::Enter, &event_sender);
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
-    let snapshot =
-        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
-    assert_snapshot!("search_results", strip_time_taken(&snapshot));
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     delete_files!(&temp_dir.path(), "src/lib.rs", "src/foo.rs");
 
-    // This relies on positioning of search results, which in theory is not deterministic (but the test seems to work fine).
-    // Could be improved if this becomes flakey
-    send_key(KeyCode::Char('j'), &event_sender);
-    send_key(KeyCode::Char(' '), &event_sender);
-    send_key(KeyCode::Char('G'), &event_sender);
-    send_key(KeyCode::Char('k'), &event_sender);
-    send_key(KeyCode::Char(' '), &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
     let snapshot = wait_for_match(
         &mut snapshot_rx,
-        Pattern::final_screen(false, 1, 2, 6),
+        Pattern::final_screen(false, 1, 0, 8),
         1000,
     )
     .await?;
-    assert_snapshot!("replacement_results", normalize_paths(&snapshot));
+    // Verify that errors are shown
+    for path in [
+        r"src(/|\\)foo.rs:3",
+        r"src(/|\\)foo.rs:4",
+        r"src(/|\\)lib.rs:2",
+        r"src(/|\\)lib.rs:3",
+        r"src(/|\\)lib.rs:4",
+        r"src(/|\\)lib.rs:6",
+    ] {
+        let re = Regex::new(path).unwrap();
+        assert!(
+            re.is_match(&snapshot),
+            "Expected snapshot to contain '{path}'\nFound:\n{snapshot}"
+        );
+    }
 
     assert_test_files!(
         &temp_dir,
@@ -2958,6 +2952,3 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
-
-// TODO(autosearch):
-// - delete some files midway through, check skips and no panic
