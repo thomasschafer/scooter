@@ -2900,7 +2900,7 @@ test_with_both_regex_modes!(
         );
 
         send_key(KeyCode::Enter, &event_sender); // Jump to search results
-        send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
+        send_key(KeyCode::Enter, &event_sender); // Try to begin replacement
 
         let timeout = Duration::from_millis(3000);
         let result = tokio::time::timeout(timeout, async {
@@ -2923,7 +2923,7 @@ test_with_both_regex_modes!(
                             current_state = WaitingFor::PopupToClose;
                         } else {
                             if current_state == WaitingFor::PopupToClose {
-                                send_key(KeyCode::Enter, &event_sender); // Try to begin relacement
+                                send_key(KeyCode::Enter, &event_sender); // Try to begin replacement
                             }
                             current_state = WaitingFor::PopupToOpenOrReplacementToStart;
                         }
