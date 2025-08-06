@@ -84,7 +84,7 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
 
 fn validate_search_result_correctness(
     validation_search_config: &FileSearcher,
-    results: &Vec<SearchResultWithReplacement>,
+    results: &[SearchResultWithReplacement],
 ) {
     for res in results {
         let expected = replacement_if_match(
