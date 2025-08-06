@@ -560,7 +560,9 @@ fn build_preview_list<'a>(
         let lines = read_lines_range(&selected.result.search_result.path, start, end)?;
         let (before, cur, after) =
             split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
-        assert_eq!(*cur.1, selected.result.search_result.line);
+        if *cur.1 != selected.result.search_result.line {
+            bail!("File has changed since search (lines don't match)");
+        }
 
         Ok(List::new(
             before

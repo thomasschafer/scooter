@@ -687,7 +687,7 @@ impl<'a> App {
 
         let num_results = search_state.results.len();
         for start in (0..num_results).step_by(STEP) {
-            let end = (start + STEP - 1).min(num_results - 1);
+            let end = (start + STEP - 1).min(num_results.saturating_sub(1));
             let _ = search_state.processing_sender.send(
                 BackgroundProcessingEvent::UpdateReplacements {
                     start,
