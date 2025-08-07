@@ -173,7 +173,7 @@ type TestRunner = (
 );
 
 fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
-    build_test_runner_with_width(directory, advanced_regex, 24)
+    build_test_runner_with_width(directory, advanced_regex, 30)
 }
 
 fn build_test_runner_with_width(
