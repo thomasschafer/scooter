@@ -1,12 +1,11 @@
 ---
 source: scooter/tests/app.rs
-assertion_line: 1623
 expression: app.keymaps_all()
 ---
 [
     (
         "<enter>",
-        "search",
+        "jump to results",
     ),
     (
         "<tab>",
@@ -19,6 +18,10 @@ expression: app.keymaps_all()
     (
         "<space>",
         "toggle checkbox",
+    ),
+    (
+        "<A-u>",
+        "unlock pre-populated fields",
     ),
     (
         "<C-r>",

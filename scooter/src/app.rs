@@ -21,7 +21,8 @@ use tokio::{
 };
 
 use frep_core::{
-    search::{FileSearcher, SearchResult},
+    replace::{add_replacement, replacement_if_match},
+    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
@@ -39,6 +40,7 @@ use crate::{
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
+    PerformReplacement,
 }
 
 #[derive(Debug)]
@@ -52,6 +54,14 @@ pub enum BackgroundProcessingEvent {
     AddSearchResults(Vec<SearchResult>),
     SearchCompleted,
     ReplacementCompleted(ReplaceState),
+    UpdateReplacements {
+        start: usize,
+        end: usize,
+        cancelled: Arc<AtomicBool>,
+    },
+    UpdateAllReplacements {
+        cancelled: Arc<AtomicBool>,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -88,23 +98,44 @@ enum Selected {
 
 #[derive(Debug)]
 pub struct SearchState {
-    // TODO: make the view logic with scrolling etc. into a generic component
-    pub results: Vec<SearchResult>,
+    pub results: Vec<SearchResultWithReplacement>,
+
     selected: Selected,
+    // TODO: make the view logic with scrolling etc. into a generic component
     pub(crate) view_offset: usize,           // Updated by UI, not app
     pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
+
     processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+    processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+
+    pub(crate) last_render: Instant,
+    pub(crate) search_started: Instant,
+    pub(crate) search_completed: Option<Instant>,
+    pub(crate) cancelled: Arc<AtomicBool>,
 }
 
 impl SearchState {
-    pub fn new(processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>) -> Self {
+    pub fn new(
+        processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             results: vec![],
             selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: None,
+            processing_sender,
             processing_receiver,
+            last_render: Instant::now(),
+            search_started: Instant::now(),
+            search_completed: None,
+            cancelled,
         }
+    }
+
+    pub fn search_has_completed(&self) -> bool {
+        self.search_completed.is_some()
     }
 
     pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> EventHandlingResult {
@@ -214,17 +245,20 @@ impl SearchState {
     }
 
     fn toggle_selected_inclusion(&mut self) {
-        let all_included = self.selected_fields().iter().all(|res| res.included);
+        let all_included = self
+            .selected_fields()
+            .iter()
+            .all(|res| res.search_result.included);
         self.selected_fields_mut().iter_mut().for_each(|selected| {
-            selected.included = !all_included;
+            selected.search_result.included = !all_included;
         });
     }
 
     fn toggle_all_selected(&mut self) {
-        let all_included = self.results.iter().all(|res| res.included);
+        let all_included = self.results.iter().all(|res| res.search_result.included);
         self.results
             .iter_mut()
-            .for_each(|res| res.included = !all_included);
+            .for_each(|res| res.search_result.included = !all_included);
     }
 
     // TODO: add tests
@@ -235,7 +269,7 @@ impl SearchState {
         }
     }
 
-    fn selected_fields(&self) -> &[SearchResult] {
+    fn selected_fields(&self) -> &[SearchResultWithReplacement] {
         if self.results.is_empty() {
             return &[];
         }
@@ -243,7 +277,7 @@ impl SearchState {
         &self.results[low..=high]
     }
 
-    fn selected_fields_mut(&mut self) -> &mut [SearchResult] {
+    fn selected_fields_mut(&mut self) -> &mut [SearchResultWithReplacement] {
         if self.results.is_empty() {
             return &mut [];
         }
@@ -251,9 +285,15 @@ impl SearchState {
         &mut self.results[low..=high]
     }
 
-    pub(crate) fn primary_selected_field_mut(&mut self) -> &mut SearchResult {
+    pub(crate) fn primary_selected_field_mut(
+        &mut self,
+    ) -> Option<&mut SearchResultWithReplacement> {
         let sel = self.primary_selected_pos();
-        &mut self.results[sel]
+        if !self.results.is_empty() {
+            Some(&mut self.results[sel])
+        } else {
+            None
+        }
     }
 
     pub(crate) fn primary_selected_pos(&self) -> usize {
@@ -302,79 +342,108 @@ impl SearchState {
             }
         }
     }
+
+    pub fn set_search_completed_now(&mut self) {
+        self.search_completed = Some(Instant::now());
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FocussedSection {
+    SearchFields,
+    SearchResults,
 }
 
 #[derive(Debug)]
-pub struct SearchInProgressState {
-    pub search_state: SearchState,
-    pub(crate) last_render: Instant,
-    pub(crate) search_started: Instant,
-    handle: JoinHandle<()>,
-    pub(crate) cancelled: Arc<AtomicBool>,
+pub struct PreviewUpdateStatus {
+    replace_debounce_timer: JoinHandle<()>,
+    update_replacement_cancelled: Arc<AtomicBool>,
+    replacements_updated: usize,
+    total_replacements_to_update: usize,
 }
 
-impl SearchInProgressState {
-    pub fn new(
-        handle: JoinHandle<()>,
-        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
-        cancelled: Arc<AtomicBool>,
+impl PreviewUpdateStatus {
+    fn new(
+        replace_debounce_timer: JoinHandle<()>,
+        update_replacement_cancelled: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            search_state: SearchState::new(processing_receiver),
-            last_render: Instant::now(),
-            search_started: Instant::now(),
-            handle,
-            cancelled,
+            replace_debounce_timer,
+            update_replacement_cancelled,
+            replacements_updated: 0,
+            total_replacements_to_update: 0,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct SearchCompleteState {
-    pub search_state: SearchState,
-    pub(crate) search_time_taken: Duration,
+pub struct SearchFieldsState {
+    pub focussed_section: FocussedSection,
+    pub search_state: Option<SearchState>, // Becomes Some when search begins
+    pub search_debounce_timer: Option<JoinHandle<()>>,
+    pub preview_update_state: Option<PreviewUpdateStatus>,
 }
 
-impl SearchCompleteState {
-    pub fn new(search_state: SearchState, search_started: Instant) -> Self {
+impl Default for SearchFieldsState {
+    fn default() -> Self {
         Self {
-            search_state,
-            search_time_taken: search_started.elapsed(),
+            focussed_section: FocussedSection::SearchFields,
+            search_state: None,
+            search_debounce_timer: None,
+            preview_update_state: None,
         }
+    }
+}
+
+impl SearchFieldsState {
+    pub fn replacements_in_progress(&self) -> Option<(usize, usize)> {
+        self.preview_update_state.as_ref().and_then(|p| {
+            if p.replacements_updated != p.total_replacements_to_update {
+                Some((p.replacements_updated, p.total_replacements_to_update))
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn cancel_preview_updates(&mut self) {
+        if let Some(ref mut state) = self.preview_update_state {
+            state.replace_debounce_timer.abort();
+            state
+                .update_replacement_cancelled
+                .store(true, Ordering::Relaxed);
+        }
+        self.preview_update_state = None;
     }
 }
 
 #[derive(Debug)]
 pub enum Screen {
-    SearchFields,
-    SearchProgressing(SearchInProgressState),
-    SearchComplete(SearchCompleteState),
+    SearchFields(SearchFieldsState),
     PerformingReplacement(PerformingReplacementState),
     Results(ReplaceState),
 }
 
 impl Screen {
-    fn search_results_mut(&mut self) -> &mut SearchState {
-        match self {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state,
-            _ => panic!("Expected SearchInProgress or SearchComplete, found {self:?}",),
-        }
-    }
-
     fn name(&self) -> &str {
         // TODO: is there a better way of doing this?
         match &self {
-            Screen::SearchFields => "SearchFields",
-            Screen::SearchProgressing(_) => "SearchProgressing",
-            Screen::SearchComplete(_) => "SearchComplete",
+            Screen::SearchFields(_) => "SearchFields",
             Screen::PerformingReplacement(_) => "PerformingReplacement",
             Screen::Results(_) => "Results",
         }
     }
+
+    fn unwrap_search_fields_state_mut(&mut self) -> &mut SearchFieldsState {
+        let name = self.name().to_owned();
+        let Screen::SearchFields(ref mut search_fields_state) = self else {
+            panic!("Expected current_screen to be SearchFields, found {name}");
+        };
+        search_fields_state
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppError {
     pub name: String,
     pub long: String,
@@ -410,9 +479,12 @@ impl Default for AppRunConfig {
     }
 }
 
+#[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
+    pub file_searcher: Option<FileSearcher>,
     pub directory: PathBuf,
     pub config: Config,
     pub event_sender: UnboundedSender<Event>,
@@ -421,6 +493,7 @@ pub struct App {
     immediate_replace: bool,
     print_results: bool,
     popup: Option<Popup>,
+    advanced_regex: bool,
 }
 
 impl<'a> App {
@@ -435,12 +508,17 @@ impl<'a> App {
         let search_fields = SearchFields::with_values(
             search_field_values,
             config.search.disable_prepopulated_fields,
-        )
-        .with_advanced_regex(app_run_config.advanced_regex);
+        );
+
+        let mut search_fields_state = SearchFieldsState::default();
+        if app_run_config.immediate_search {
+            search_fields_state.focussed_section = FocussedSection::SearchResults;
+        }
 
         let mut app = Self {
-            current_screen: Screen::SearchFields,
+            current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
+            file_searcher: None,
             directory,
             include_hidden: app_run_config.include_hidden,
             config,
@@ -449,6 +527,7 @@ impl<'a> App {
             event_sender,
             immediate_replace: app_run_config.immediate_replace,
             print_results: app_run_config.print_results,
+            advanced_regex: app_run_config.advanced_regex,
         };
 
         if app_run_config.immediate_search {
@@ -469,22 +548,20 @@ impl<'a> App {
     }
 
     fn cancel_search(&mut self) {
-        if let Screen::SearchProgressing(SearchInProgressState {
-            handle, cancelled, ..
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(SearchState { cancelled, .. }),
+            ..
         }) = &mut self.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
-            handle.abort();
         }
     }
 
     fn cancel_replacement(&mut self) {
-        if let Screen::PerformingReplacement(PerformingReplacementState {
-            handle, cancelled, ..
-        }) = &mut self.current_screen
+        if let Screen::PerformingReplacement(PerformingReplacementState { cancelled, .. }) =
+            &mut self.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
-            handle.abort();
         }
     }
 
@@ -501,7 +578,7 @@ impl<'a> App {
             self.event_sender.clone(),
             &AppRunConfig {
                 include_hidden: self.include_hidden,
-                advanced_regex: self.search_fields.advanced_regex,
+                advanced_regex: self.advanced_regex,
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
@@ -510,89 +587,195 @@ impl<'a> App {
     }
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
+        match self.background_processing_reciever() {
+            Some(r) => r.recv().await,
+            None => None,
+        }
+    }
+
+    pub fn background_processing_reciever(
+        &mut self,
+    ) -> Option<&mut UnboundedReceiver<BackgroundProcessingEvent>> {
         match &mut self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState {
-                search_state:
-                    SearchState {
-                        processing_receiver,
-                        ..
-                    },
-                ..
-            })
-            | Screen::SearchComplete(SearchCompleteState {
-                search_state:
-                    SearchState {
-                        processing_receiver,
-                        ..
-                    },
-                ..
-            })
-            | Screen::PerformingReplacement(PerformingReplacementState {
+            Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
+                if let Some(search_state) = search_state {
+                    Some(&mut search_state.processing_receiver)
+                } else {
+                    None
+                }
+            }
+            Screen::PerformingReplacement(PerformingReplacementState {
                 processing_receiver,
                 ..
-            }) => processing_receiver.recv().await,
-            _ => None,
+            }) => Some(processing_receiver),
+            Screen::Results(_) => None,
         }
     }
 
     pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
         match event {
             AppEvent::Rerender => EventHandlingResult::Rerender,
-            AppEvent::PerformSearch => self.perform_search_if_valid(),
+            AppEvent::PerformSearch => {
+                if self.search_fields.search().text().is_empty() {
+                    if let Screen::SearchFields(ref mut search_fields_state) = self.current_screen {
+                        search_fields_state.search_state = None;
+                    }
+                    EventHandlingResult::Rerender
+                } else {
+                    self.perform_search_unwrap()
+                }
+            }
         }
     }
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.file_searcher = Some(search_config);
+        } else {
+            return EventHandlingResult::Rerender;
+        }
+        self.perform_search_unwrap()
+    }
+
+    /// NOTE: validation should have been performed (with `validate_fields`) before calling
+    pub fn perform_search_unwrap(&mut self) -> EventHandlingResult {
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return EventHandlingResult::None;
+        };
+
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
 
-        match self.validate_fields().unwrap() {
-            None => {
-                self.current_screen = Screen::SearchFields;
-            }
-            Some(parsed_fields) => {
-                let handle = Self::spawn_update_search_results(
-                    parsed_fields,
-                    &background_processing_sender,
-                    self.event_sender.clone(),
-                    cancelled.clone(),
-                );
-                self.current_screen = Screen::SearchProgressing(SearchInProgressState::new(
-                    handle,
-                    background_processing_receiver,
-                    cancelled,
-                ));
-            }
+        let file_searcher = self
+            .file_searcher
+            .clone()
+            .expect("Fields should have been parsed");
+
+        Self::spawn_update_search_results(
+            file_searcher,
+            &background_processing_sender,
+            self.event_sender.clone(),
+            cancelled.clone(),
+        );
+        search_fields_state.search_state = Some(SearchState::new(
+            background_processing_sender,
+            background_processing_receiver,
+            cancelled,
+        ));
+
+        EventHandlingResult::Rerender
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn update_all_replacements(&mut self, cancelled: Arc<AtomicBool>) -> EventHandlingResult {
+        if cancelled.load(Ordering::Relaxed) {
+            return EventHandlingResult::None;
+        }
+        let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(search_state),
+            preview_update_state: Some(preview_update_state),
+            ..
+        }) = &mut self.current_screen
+        else {
+            return EventHandlingResult::None;
+        };
+
+        preview_update_state.total_replacements_to_update = search_state.results.len();
+
+        #[allow(clippy::items_after_statements)]
+        static STEP: usize = 7919; // Slightly random so that increments seem more natural in UI
+
+        let num_results = search_state.results.len();
+        for start in (0..num_results).step_by(STEP) {
+            let end = (start + STEP - 1).min(num_results.saturating_sub(1));
+            let _ = search_state.processing_sender.send(
+                BackgroundProcessingEvent::UpdateReplacements {
+                    start,
+                    end,
+                    cancelled: cancelled.clone(),
+                },
+            );
         }
 
         EventHandlingResult::Rerender
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    fn update_replacements(
+        &mut self,
+        start: usize,
+        end: usize,
+        cancelled: Arc<AtomicBool>,
+    ) -> EventHandlingResult {
+        if cancelled.load(Ordering::Relaxed) {
+            return EventHandlingResult::None;
+        }
+        let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(search_state),
+            preview_update_state: Some(preview_update_state),
+            ..
+        }) = &mut self.current_screen
+        else {
+            return EventHandlingResult::None;
+        };
+        let file_searcher = self
+            .file_searcher
+            .as_ref()
+            .expect("Fields should have been parsed");
+        for res in &mut search_state.results[start..=end] {
+            match replacement_if_match(
+                &res.search_result.line,
+                file_searcher.search(),
+                file_searcher.replace(),
+            ) {
+                Some(replacement) => res.replacement = replacement,
+                None => return EventHandlingResult::Rerender, // TODO: can we handle this better?
+            }
+        }
+        preview_update_state.replacements_updated += end - start + 1;
+
+        EventHandlingResult::Rerender
+    }
+
     pub fn trigger_replacement(&mut self) {
+        let _ = self.event_sender.send(Event::PerformReplacement);
+    }
+
+    pub fn perform_replacement(&mut self) {
+        let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
             &mut self.current_screen,
-            Screen::SearchFields, // Temporary placeholder - will get reset if we are not on `SearchComplete` screen
+            temp_placeholder, // Will get reset if we are not on `SearchComplete` screen
         ) {
-            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => {
                 let (background_processing_sender, background_processing_receiver) =
                     mpsc::unbounded_channel();
                 let cancelled = Arc::new(AtomicBool::new(false));
-                let total_replacements = search_state.results.iter().filter(|r| r.included).count();
+                let total_replacements = state
+                    .results
+                    .iter()
+                    .filter(|r| r.search_result.included)
+                    .count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
-                let handle = replace::perform_replacement(
-                    search_state.results,
+                let Some(search_config) = self.validate_fields().unwrap() else {
+                    panic!("Attempted to replace with invalid fields");
+                };
+                replace::perform_replacement(
+                    state.results,
                     background_processing_sender.clone(),
                     cancelled.clone(),
                     replacements_completed.clone(),
                     self.event_sender.clone(),
+                    Some(search_config),
                 );
 
                 self.current_screen =
                     Screen::PerformingReplacement(PerformingReplacementState::new(
-                        handle,
-                        background_processing_sender,
                         background_processing_receiver,
                         cancelled,
                         replacements_completed,
@@ -608,15 +791,28 @@ impl<'a> App {
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
-            BackgroundProcessingEvent::AddSearchResults(mut results) => {
+            BackgroundProcessingEvent::AddSearchResults(results) => {
                 let mut rerender = false;
-                if let Screen::SearchProgressing(search_in_progress_state) =
-                    &mut self.current_screen
+                if let Screen::SearchFields(SearchFieldsState {
+                    search_state: Some(search_in_progress_state),
+                    ..
+                }) = &mut self.current_screen
                 {
+                    let mut results_with_replacements = Vec::new();
+                    let file_searcher = self
+                        .file_searcher
+                        .as_ref()
+                        .expect("file_searcher should not be None when adding search results");
+                    for res in results {
+                        let updated =
+                            add_replacement(res, file_searcher.search(), file_searcher.replace());
+                        if let Some(updated) = updated {
+                            results_with_replacements.push(updated);
+                        }
+                    }
                     search_in_progress_state
-                        .search_state
                         .results
-                        .append(&mut results);
+                        .append(&mut results_with_replacements);
 
                     // Slightly random duration so that time taken isn't a round number
                     if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
@@ -631,17 +827,15 @@ impl<'a> App {
                 }
             }
             BackgroundProcessingEvent::SearchCompleted => {
-                if let Screen::SearchProgressing(SearchInProgressState {
-                    search_state,
-                    search_started,
+                if let Screen::SearchFields(SearchFieldsState {
+                    search_state: Some(state),
+                    focussed_section,
                     ..
-                }) = mem::replace(&mut self.current_screen, Screen::SearchFields)
+                }) = &mut self.current_screen
                 {
-                    self.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-                        search_state,
-                        search_started,
-                    ));
-                    if self.immediate_replace {
+                    state.set_search_completed_now();
+                    if self.immediate_replace && *focussed_section == FocussedSection::SearchResults
+                    {
                         self.trigger_replacement();
                     }
                 }
@@ -660,18 +854,53 @@ impl<'a> App {
                     EventHandlingResult::Rerender
                 }
             }
+            BackgroundProcessingEvent::UpdateAllReplacements { cancelled } => {
+                self.update_all_replacements(cancelled)
+            }
+            BackgroundProcessingEvent::UpdateReplacements {
+                start,
+                end,
+                cancelled,
+            } => self.update_replacements(start, end, cancelled),
         }
     }
 
+    /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
+    #[allow(clippy::too_many_lines)]
     fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
         match (key.code, key.modifiers) {
             (KeyCode::Char('u'), KeyModifiers::ALT) => {
                 self.unlock_prepopulated_fields();
             }
             (KeyCode::Enter, _) => {
-                self.event_sender
-                    .send(Event::App(AppEvent::PerformSearch))
-                    .unwrap();
+                if !self.errors().is_empty() {
+                    self.set_popup(Popup::Error);
+                } else if self.search_fields.search().text().is_empty() {
+                    self.add_error(AppError {
+                        name: "Search field must not be empty".to_string(),
+                        long: "Please enter some search text".to_string(),
+                    });
+                } else {
+                    let Screen::SearchFields(ref mut search_fields_state) = self.current_screen
+                    else {
+                        panic!(
+                            "Expected SearchFields, found {:?}",
+                            self.current_screen.name()
+                        );
+                    };
+                    search_fields_state.focussed_section = FocussedSection::SearchResults;
+                    // Check if search has been performed
+                    if let Some(search_state) = &search_fields_state.search_state {
+                        if self.immediate_replace && search_state.search_has_completed() {
+                            self.trigger_replacement();
+                        }
+                    } else {
+                        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+                            timer.abort();
+                        }
+                        self.perform_search_if_valid();
+                    }
+                }
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
                 self.search_fields
@@ -682,31 +911,95 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
-                if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
-                    // TODO: ideally this should only happen when the field is checked, but for now this will do
-                    self.search_fields.search_mut().clear_error();
+                if let Some(value) = self.enter_chars_into_field(code, modifiers) {
+                    return value;
                 }
-                self.search_fields.highlighted_field_mut().handle_keys(
-                    code,
-                    modifiers,
-                    self.config.search.disable_prepopulated_fields,
-                );
             }
         }
         EventHandlingResult::Rerender
     }
 
-    /// Should only be called on `Screen::SearchProgressing` or `Screen::SearchComplete`
-    fn try_handle_key_search(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
-        if !matches!(
-            self.current_screen,
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-        ) {
-            panic!(
-                "Expected current_screen to be SearchProgressing or SearchComplete, found {:?}",
-                self.current_screen
-            );
+    fn enter_chars_into_field(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<EventHandlingResult> {
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return Some(EventHandlingResult::None);
+        };
+        if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
+            // TODO: ideally this should only happen when the field is checked, but for now this will do
+            self.search_fields.search_mut().clear_error();
         }
+
+        search_fields_state.cancel_preview_updates();
+
+        self.search_fields.highlighted_field_mut().handle_keys(
+            code,
+            modifiers,
+            self.config.search.disable_prepopulated_fields,
+        );
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.file_searcher = Some(search_config);
+        } else {
+            return Some(EventHandlingResult::Rerender);
+        }
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return Some(EventHandlingResult::None);
+        };
+        let file_searcher = self
+            .file_searcher
+            .as_ref()
+            .expect("Fields should have been parsed");
+
+        if let FieldName::Replace = self.search_fields.highlighted_field().name {
+            if let Some(ref mut state) = search_fields_state.search_state {
+                // Immediately update replacement on selected fields - the remainder will be updated async
+                if let Some(highlighted) = state.primary_selected_field_mut() {
+                    if let Some(updated) = replacement_if_match(
+                        &highlighted.search_result.line,
+                        file_searcher.search(),
+                        file_searcher.replace(),
+                    ) {
+                        highlighted.replacement = updated;
+                    }
+                }
+
+                // Debounce replacement requests
+                let sender = state.processing_sender.clone();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let cancelled_clone = cancelled.clone();
+                let handle = tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
+                        cancelled: cancelled_clone,
+                    });
+                });
+                // Note that cancel_preview_updates is called above, which cancels any existing preview updates
+                search_fields_state.preview_update_state =
+                    Some(PreviewUpdateStatus::new(handle, cancelled));
+            }
+        } else {
+            // Debounce search requests
+            if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+                timer.abort();
+            }
+            let event_sender = self.event_sender.clone();
+            search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+            }));
+        }
+        None
+    }
+
+    /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
+    fn try_handle_key_search_results(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
+        assert!(
+            matches!(self.current_screen, Screen::SearchFields(_)),
+            "Expected current_screen to be SearchFields, found {}",
+            self.current_screen.name()
+        );
 
         match (key.code, key.modifiers) {
             (KeyCode::Enter, _) => {
@@ -715,7 +1008,8 @@ impl<'a> App {
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 self.cancel_search();
-                self.current_screen = Screen::SearchFields;
+                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                search_fields_state.focussed_section = FocussedSection::SearchFields;
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
@@ -729,16 +1023,18 @@ impl<'a> App {
                 Some(EventHandlingResult::Rerender)
             }
             (KeyCode::Char('e'), KeyModifiers::NONE) => {
-                let selected = self
-                    .current_screen
-                    .search_results_mut()
-                    .primary_selected_field_mut();
-                self.event_sender
-                    .send(Event::LaunchEditor((
-                        selected.path.clone(),
-                        selected.line_number,
-                    )))
-                    .unwrap();
+                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
+                    let selected = search_in_progress_state
+                        .primary_selected_field_mut()
+                        .expect("Expected to find selected field");
+                    self.event_sender
+                        .send(Event::LaunchEditor((
+                            selected.search_result.path.clone(),
+                            selected.search_result.line_number,
+                        )))
+                        .expect("Failed to send event");
+                }
                 Some(EventHandlingResult::Rerender)
             }
             _ => None,
@@ -782,17 +1078,24 @@ impl<'a> App {
         }
 
         match &mut self.current_screen {
-            Screen::SearchFields => self.handle_key_searching(key),
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                if let Some(res) = self.try_handle_key_search(key) {
-                    res
-                } else {
-                    match &mut self.current_screen {
-                        Screen::SearchProgressing(SearchInProgressState { search_state, .. }) |
-                            Screen::SearchComplete(SearchCompleteState { search_state, .. }) => search_state.handle_key(key),
-                        screen => panic!(
-                            "Expected current_screen to be SearchProgressing or SearchComplete, found {screen:?}",
-                        ),
+            Screen::SearchFields(search_fields_state) => {
+                match search_fields_state.focussed_section {
+                    FocussedSection::SearchFields => self.handle_key_searching(key),
+                    FocussedSection::SearchResults => {
+                        if let Some(res) = self.try_handle_key_search_results(key) {
+                            res
+                        } else {
+                            match self
+                                .current_screen
+                                .unwrap_search_fields_state_mut()
+                                .search_state
+                            {
+                                Some(ref mut state) => state.handle_key(key),
+                                None => {
+                                    panic!("Focussed on search results but search_state is None")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -801,12 +1104,12 @@ impl<'a> App {
         }
     }
 
-    fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
+    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
-            advanced_regex: self.search_fields.advanced_regex,
+            advanced_regex: self.advanced_regex,
             include_globs: Some(self.search_fields.include_files().text()),
             exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,
@@ -820,16 +1123,16 @@ impl<'a> App {
         error_handler.apply_to_app(self);
 
         match result {
-            ValidationResult::Success(searcher) => Ok(Some(searcher)),
-            ValidationResult::ValidationErrors => {
-                self.set_popup(Popup::Error);
-                Ok(None)
+            ValidationResult::Success(search_config) => {
+                let file_searcher = FileSearcher::new(search_config);
+                Ok(Some(file_searcher))
             }
+            ValidationResult::ValidationErrors => Ok(None),
         }
     }
 
     pub fn spawn_update_search_results(
-        parsed_fields: FileSearcher,
+        file_searcher: FileSearcher,
         sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
@@ -838,7 +1141,7 @@ impl<'a> App {
         tokio::spawn(async move {
             let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                parsed_fields.walk_files(Some(&cancelled), || {
+                file_searcher.walk_files(Some(&cancelled), || {
                     let sender = sender_for_search.clone();
                     Box::new(move |results| {
                         // Ignore error - likely state reset, thread about to be killed
@@ -917,44 +1220,48 @@ impl<'a> App {
             CompactOnly,
         }
 
-        let current_screen_keys = match self.current_screen {
-            Screen::SearchFields => {
-                let mut keys = vec![
-                    ("<enter>", "search", Show::Both),
-                    ("<tab>", "focus next", Show::Both),
-                    ("<S-tab>", "focus previous", Show::FullOnly),
-                    ("<space>", "toggle checkbox", Show::FullOnly),
-                ];
-                if self.config.search.disable_prepopulated_fields
-                    && self.search_fields.fields.iter().any(|f| f.set_by_cli)
-                {
-                    keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
+        let current_screen_keys = match &self.current_screen {
+            Screen::SearchFields(search_fields_state) => {
+                match search_fields_state.focussed_section {
+                    FocussedSection::SearchFields => {
+                        let mut keys = vec![
+                            ("<enter>", "jump to results", Show::Both),
+                            ("<tab>", "focus next", Show::Both),
+                            ("<S-tab>", "focus previous", Show::FullOnly),
+                            ("<space>", "toggle checkbox", Show::FullOnly),
+                        ];
+                        if self.config.search.disable_prepopulated_fields {
+                            keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
+                        }
+                        keys
+                    }
+                    FocussedSection::SearchResults => {
+                        let mut keys = vec![
+                            ("<space>", "toggle", Show::Both),
+                            ("a", "toggle all", Show::FullOnly),
+                            ("v", "toggle multi-select mode", Show::FullOnly),
+                            ("<A-;>", "flip multi-select direction", Show::FullOnly),
+                            ("e", "open in editor", Show::FullOnly),
+                            ("<C-o>", "back to search fields", Show::Both),
+                            ("j", "up", Show::FullOnly),
+                            ("k", "down", Show::FullOnly),
+                            ("<C-u>", "up half a page", Show::FullOnly),
+                            ("<C-d>", "down half a page", Show::FullOnly),
+                            ("<C-b>", "up a full page", Show::FullOnly),
+                            ("<C-f>", "down a full page", Show::FullOnly),
+                            ("g", "jump to top", Show::FullOnly),
+                            ("G", "jump to bottom", Show::FullOnly),
+                        ];
+                        if search_fields_state
+                            .search_state
+                            .as_ref()
+                            .is_some_and(SearchState::search_has_completed)
+                        {
+                            keys.push(("<enter>", "replace selected", Show::Both));
+                        }
+                        keys
+                    }
                 }
-                keys
-            }
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_) => {
-                let mut keys = if let Screen::SearchComplete(_) = self.current_screen {
-                    vec![("<enter>", "replace selected", Show::Both)]
-                } else {
-                    vec![]
-                };
-                keys.append(&mut vec![
-                    ("<space>", "toggle", Show::Both),
-                    ("a", "toggle all", Show::FullOnly),
-                    ("v", "toggle multi-select mode", Show::FullOnly),
-                    ("<A-;>", "flip multi-select direction", Show::FullOnly),
-                    ("e", "open in editor", Show::FullOnly),
-                    ("<C-o>", "back", Show::Both),
-                    ("j", "up", Show::FullOnly),
-                    ("k", "down", Show::FullOnly),
-                    ("<C-u>", "up half a page", Show::FullOnly),
-                    ("<C-d>", "down half a page", Show::FullOnly),
-                    ("<C-b>", "up a full page", Show::FullOnly),
-                    ("<C-f>", "down a full page", Show::FullOnly),
-                    ("g", "jump to top", Show::FullOnly),
-                    ("G", "jump to bottom", Show::FullOnly),
-                ]);
-                keys
             }
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(ref replace_state) => {
@@ -966,13 +1273,14 @@ impl<'a> App {
             }
         };
 
-        let is_search_screen = matches!(
-            self.current_screen,
-            Screen::SearchProgressing(_) | Screen::SearchComplete(_)
-        );
+        let on_search_results = if let Screen::SearchFields(ref s) = self.current_screen {
+            s.focussed_section == FocussedSection::SearchResults
+        } else {
+            false
+        };
         let esc_help = format!(
             "quit / close popup{}",
-            if is_search_screen {
+            if on_search_results {
                 " / exit multi-select"
             } else {
                 ""
@@ -983,7 +1291,7 @@ impl<'a> App {
             (
                 "<C-r>",
                 "reset",
-                if is_search_screen {
+                if on_search_results {
                     Show::FullOnly
                 } else {
                     Show::Both
@@ -1025,20 +1333,20 @@ impl<'a> App {
 
     fn multiselect_enabled(&self) -> bool {
         match &self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                search_state.multiselect_enabled()
-            }
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => state.multiselect_enabled(),
             _ => false,
         }
     }
 
     fn toggle_multiselect_mode(&mut self) {
         match &mut self.current_screen {
-            Screen::SearchProgressing(SearchInProgressState { search_state, .. })
-            | Screen::SearchComplete(SearchCompleteState { search_state, .. }) => {
-                search_state.toggle_multiselect_mode();
-            }
+            Screen::SearchFields(SearchFieldsState {
+                search_state: Some(state),
+                ..
+            }) => state.toggle_multiselect_mode(),
             _ => panic!(
                 "Tried to disable multi-select on {:?}",
                 self.current_screen.name()
@@ -1049,6 +1357,42 @@ impl<'a> App {
     fn unlock_prepopulated_fields(&mut self) {
         for field in &mut self.search_fields.fields {
             field.set_by_cli = false;
+        }
+    }
+
+    pub fn is_search_complete(&self) -> bool {
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(state),
+            search_debounce_timer,
+            ..
+        }) = &self.current_screen
+        {
+            state.search_has_completed()
+                && search_debounce_timer
+                    .as_ref()
+                    .is_none_or(tokio::task::JoinHandle::is_finished)
+        } else {
+            false
+        }
+    }
+
+    pub fn is_preview_updated(&self) -> bool {
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state:
+                Some(SearchState {
+                    processing_receiver,
+                    ..
+                }),
+            preview_update_state,
+            ..
+        }) = &self.current_screen
+        {
+            processing_receiver.is_empty()
+                && preview_update_state
+                    .as_ref()
+                    .is_none_or(|p| p.replace_debounce_timer.is_finished())
+        } else {
+            false
         }
     }
 }
@@ -1107,9 +1451,12 @@ impl ValidationErrorHandler for AppErrorHandler {
 
 #[cfg(test)]
 mod tests {
-    use frep_core::replace::{ReplaceResult, ReplaceStats};
+    use frep_core::{
+        replace::{ReplaceResult, ReplaceStats},
+        search::SearchResultWithReplacement,
+    };
     use rand::Rng;
-    use std::{env::current_dir, path::Path};
+    use std::path::Path;
 
     use super::*;
     use frep_core::line_reader::LineEnding;
@@ -1119,27 +1466,31 @@ mod tests {
         rng.random_range(1..10000)
     }
 
-    fn search_result(included: bool) -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included,
+            },
             replacement: "bar".to_owned(),
-            included,
             replace_result: None,
         }
     }
 
-    fn build_test_results(num_results: usize) -> Vec<SearchResult> {
+    fn build_test_results(num_results: usize) -> Vec<SearchResultWithReplacement> {
         (0..num_results)
-            .map(|i| SearchResult {
-                path: PathBuf::from(format!("test{i}.txt")),
-                line_number: 1,
-                line: format!("test line {i}").to_string(),
-                line_ending: LineEnding::Lf,
+            .map(|i| SearchResultWithReplacement {
+                search_result: SearchResult {
+                    path: PathBuf::from(format!("test{i}.txt")),
+                    line_number: 1,
+                    line: format!("test line {i}").to_string(),
+                    line_ending: LineEnding::Lf,
+                    included: true,
+                },
                 replacement: format!("replacement {i}").to_string(),
-                included: true,
                 replace_result: None,
             })
             .collect()
@@ -1150,30 +1501,37 @@ mod tests {
         build_test_search_state_with_results(results)
     }
 
-    fn build_test_search_state_with_results(results: Vec<SearchResult>) -> SearchState {
-        let (_processing_sender, processing_receiver) = mpsc::unbounded_channel();
+    fn build_test_search_state_with_results(
+        results: Vec<SearchResultWithReplacement>,
+    ) -> SearchState {
+        let (processing_sender, processing_receiver) = mpsc::unbounded_channel();
         SearchState {
             results,
             selected: Selected::Single(0),
             view_offset: 0,
             num_displayed: Some(5),
             processing_receiver,
+            processing_sender,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            last_render: Instant::now(),
+            search_started: Instant::now(),
+            search_completed: None,
         }
     }
 
     #[test]
     fn test_toggle_all_selected_when_all_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(true),
-            search_result(true),
-            search_result(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(true),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![false, false, false]
         );
@@ -1182,16 +1540,16 @@ mod tests {
     #[test]
     fn test_toggle_all_selected_when_none_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(false),
-            search_result(false),
-            search_result(false),
+            search_result_with_replacement(false),
+            search_result_with_replacement(false),
+            search_result_with_replacement(false),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true]
         );
@@ -1200,16 +1558,16 @@ mod tests {
     #[test]
     fn test_toggle_all_selected_when_some_selected() {
         let mut search_state = build_test_search_state_with_results(vec![
-            search_result(true),
-            search_result(false),
-            search_result(true),
+            search_result_with_replacement(true),
+            search_result_with_replacement(false),
+            search_result_with_replacement(true),
         ]);
         search_state.toggle_all_selected();
         assert_eq!(
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true]
         );
@@ -1223,73 +1581,62 @@ mod tests {
             search_state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![] as Vec<bool>
         );
     }
 
-    fn success_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn success_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
             replacement: "bar".to_owned(),
-            included: true,
             replace_result: Some(ReplaceResult::Success),
         }
     }
 
-    fn ignored_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn ignored_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: false,
+            },
             replacement: "bar".to_owned(),
-            included: false,
             replace_result: None,
         }
     }
 
-    fn error_result() -> SearchResult {
-        SearchResult {
-            path: Path::new("random/file").to_path_buf(),
-            line_number: random_num(),
-            line: "foo".to_owned(),
-            line_ending: LineEnding::Lf,
+    fn error_result() -> SearchResultWithReplacement {
+        SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: Path::new("random/file").to_path_buf(),
+                line_number: random_num(),
+                line: "foo".to_owned(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
             replacement: "bar".to_owned(),
-            included: true,
             replace_result: Some(ReplaceResult::Error("error".to_owned())),
         }
     }
 
-    fn build_test_app(results: Vec<SearchResult>) -> App {
-        let (event_sender, _) = mpsc::unbounded_channel();
-        let mut app = App::new(
-            current_dir().unwrap(),
-            &SearchFieldValues::default(),
-            event_sender,
-            &AppRunConfig::default(),
-        );
-        app.current_screen = Screen::SearchComplete(SearchCompleteState::new(
-            build_test_search_state_with_results(results),
-            Instant::now(),
-        ));
-        app
-    }
-
     #[tokio::test]
     async fn test_calculate_statistics_all_success() {
-        let app = build_test_app(vec![success_result(), success_result(), success_result()]);
-        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, _num_ignored) =
-                scooter_core::replace::split_results(search_complete_state.search_state.results);
-            frep_core::replace::calculate_statistics(results)
-        } else {
-            panic!("Expected SearchComplete");
-        };
+        let search_results_with_replacements =
+            vec![success_result(), success_result(), success_result()];
+
+        let (results, _num_ignored) =
+            scooter_core::replace::split_results(search_results_with_replacements);
+        let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1303,20 +1650,17 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_statistics_with_ignores_and_errors() {
         let error_result = error_result();
-        let app = build_test_app(vec![
+        let search_results_with_replacements = vec![
             success_result(),
             ignored_result(),
             success_result(),
             error_result.clone(),
             ignored_result(),
-        ]);
-        let stats = if let Screen::SearchComplete(search_complete_state) = app.current_screen {
-            let (results, _num_ignored) =
-                scooter_core::replace::split_results(search_complete_state.search_state.results);
-            frep_core::replace::calculate_statistics(results)
-        } else {
-            panic!("Expected SearchComplete");
-        };
+        ];
+
+        let (results, _num_ignored) =
+            scooter_core::replace::split_results(search_results_with_replacements);
+        let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1330,7 +1674,11 @@ mod tests {
     #[tokio::test]
     async fn test_search_state_toggling() {
         fn included(state: &SearchState) -> Vec<bool> {
-            state.results.iter().map(|r| r.included).collect::<Vec<_>>()
+            state
+                .results
+                .iter()
+                .map(|r| r.search_result.included)
+                .collect::<Vec<_>>()
         }
 
         let mut state = build_test_search_state(3);
@@ -1521,7 +1869,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, true, true, true, true]
         );
@@ -1530,7 +1878,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![true, true, false, false, false, true]
         );
@@ -1554,7 +1902,7 @@ mod tests {
             state
                 .results
                 .iter()
-                .map(|res| res.included)
+                .map(|res| res.search_result.included)
                 .collect::<Vec<_>>(),
             vec![false, true, false, false, false, true]
         );

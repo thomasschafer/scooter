@@ -15,10 +15,10 @@ expression: snapshot
     ┌───┐                                                                                          
     │   │ Match whole word                                                                         
     └───┘                                                                                          
-    ┌───┐                                                                                          
-    │ X │ Match case                                                                               
-    └───┘                                                                                          
-    ┌Files to include────────────────────────────────────────────────────────────────────────┐     
+    ┌───┐   ┌─────────────────────────────────Errors──────────────────────────────────┐            
+    │ X │ Ma│ Search field must not be empty                                          │            
+    └───┘   │ Please enter some search text                                           │            
+    ┌Files t└─────────────────────────────────────────────────────────────────────────┘──────┐     
     │                                                                                        │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     
     ┌Files to exclude────────────────────────────────────────────────────────────────────────┐     
@@ -31,4 +31,4 @@ expression: snapshot
                                                                                                    
                                                                                                    
                                                                                                    
-        <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <esc> quit
+     <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <esc> close popup
