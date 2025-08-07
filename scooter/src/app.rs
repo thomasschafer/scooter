@@ -428,7 +428,7 @@ impl Screen {
     fn name(&self) -> &str {
         // TODO: is there a better way of doing this?
         match &self {
-            Screen::SearchFields { .. } => "SearchFields",
+            Screen::SearchFields(_) => "SearchFields",
             Screen::PerformingReplacement(_) => "PerformingReplacement",
             Screen::Results(_) => "Results",
         }
@@ -639,6 +639,10 @@ impl<'a> App {
 
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
     pub fn perform_search_unwrap(&mut self) -> EventHandlingResult {
+        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+            return EventHandlingResult::None;
+        };
+
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -654,9 +658,6 @@ impl<'a> App {
             self.event_sender.clone(),
             cancelled.clone(),
         );
-        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-            return EventHandlingResult::None;
-        };
         search_fields_state.search_state = Some(SearchState::new(
             background_processing_sender,
             background_processing_receiver,
@@ -729,7 +730,7 @@ impl<'a> App {
                 file_searcher.replace(),
             ) {
                 Some(replacement) => res.replacement = replacement,
-                None => return EventHandlingResult::Rerender,
+                None => return EventHandlingResult::Rerender, // TODO: can we handle this better?
             }
         }
         preview_update_state.replacements_updated += end - start + 1;

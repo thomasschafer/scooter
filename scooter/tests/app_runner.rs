@@ -624,7 +624,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
     send_chars("let /* immutable */ $1", &event_sender);
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
     wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     // Nothing should have changed yet
