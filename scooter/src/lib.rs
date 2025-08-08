@@ -7,4 +7,3 @@ pub mod logging;
 pub mod replace;
 pub mod tui;
 pub mod ui;
-pub mod utils;
