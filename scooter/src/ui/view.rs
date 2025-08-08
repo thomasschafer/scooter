@@ -10,7 +10,10 @@ use ratatui::{
 };
 use scooter_core::{
     diff::{line_diff, Diff, DiffColour},
-    utils::{relative_path_from, split_indexed_lines, strip_control_chars},
+    utils::{
+        last_n_chars, read_lines_range_highlighted, relative_path_from, split_indexed_lines,
+        strip_control_chars, HighlightedLine,
+    },
 };
 use std::{
     cmp::min,
@@ -31,7 +34,6 @@ use crate::{
     config::Config,
     fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
-    utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
 };
 
 use frep_core::search::SearchResultWithReplacement;
