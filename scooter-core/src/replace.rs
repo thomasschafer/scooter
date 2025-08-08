@@ -6,6 +6,7 @@ use std::{
         Arc,
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use frep_core::{
@@ -13,6 +14,16 @@ use frep_core::{
     search::{FileSearcher, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinHandle,
+};
+
+use crate::{
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
+    fields::{KeyCode, KeyModifiers},
+};
 
 pub fn split_results(
     results: Vec<SearchResultWithReplacement>,
@@ -101,6 +112,133 @@ fn validate_search_result_correctness(
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct ReplaceState {
+    pub num_successes: usize,
+    pub num_ignored: usize,
+    pub errors: Vec<SearchResultWithReplacement>,
+    pub replacement_errors_pos: usize,
+}
+
+impl ReplaceState {
+    pub fn handle_key_results(
+        &mut self,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
+    ) -> EventHandlingResult {
+        #[allow(clippy::match_same_arms)]
+        match (key_code, key_modifiers) {
+            (KeyCode::Char('j') | KeyCode::Down, _)
+            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+                self.scroll_replacement_errors_down();
+            }
+            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.scroll_replacement_errors_up();
+            }
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
+            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit(None),
+            _ => return EventHandlingResult::None,
+        }
+        EventHandlingResult::Rerender
+    }
+
+    pub fn scroll_replacement_errors_up(&mut self) {
+        if self.replacement_errors_pos == 0 {
+            self.replacement_errors_pos = self.errors.len();
+        }
+        self.replacement_errors_pos = self.replacement_errors_pos.saturating_sub(1);
+    }
+
+    pub fn scroll_replacement_errors_down(&mut self) {
+        if self.replacement_errors_pos >= self.errors.len().saturating_sub(1) {
+            self.replacement_errors_pos = 0;
+        } else {
+            self.replacement_errors_pos += 1;
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PerformingReplacementState {
+    pub processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+    pub cancelled: Arc<AtomicBool>,
+    pub replacement_started: Instant,
+    pub num_replacements_completed: Arc<AtomicUsize>,
+    pub total_replacements: usize,
+}
+
+impl PerformingReplacementState {
+    pub fn new(
+        processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
+        cancelled: Arc<AtomicBool>,
+        num_replacements_completed: Arc<AtomicUsize>,
+        total_replacements: usize,
+    ) -> Self {
+        Self {
+            processing_receiver,
+            cancelled,
+            replacement_started: Instant::now(),
+            num_replacements_completed,
+            total_replacements,
+        }
+    }
+}
+
+pub fn perform_replacement(
+    search_results: Vec<SearchResultWithReplacement>,
+    background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+    cancelled: Arc<AtomicBool>,
+    replacements_completed: Arc<AtomicUsize>,
+    event_sender: UnboundedSender<Event>,
+    validation_search_config: Option<FileSearcher>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        cancelled.store(false, Ordering::Relaxed);
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let num_ignored = crate::replace::spawn_replace_included(
+            search_results,
+            cancelled,
+            replacements_completed,
+            validation_search_config,
+            move |result| {
+                let _ = tx.send(result); // Ignore error if receiver is dropped
+            },
+        );
+
+        let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
+
+        let mut replacement_results = Vec::new();
+        loop {
+            tokio::select! {
+                res = rx.recv() => match res {
+                    Some(res) => replacement_results.push(res),
+                    None => break,
+                },
+                _ = rerender_interval.tick() => {
+                    let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                }
+            }
+        }
+
+        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+
+        let stats = frep_core::replace::calculate_statistics(replacement_results);
+        // Ignore error: we may have gone back to the previous screen
+        let _ = background_processing_sender.send(BackgroundProcessingEvent::ReplacementCompleted(
+            ReplaceState {
+                num_successes: stats.num_successes,
+                num_ignored,
+                errors: stats.errors,
+                replacement_errors_pos: 0,
+            },
+        ));
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -111,7 +249,11 @@ mod tests {
         search::{SearchResult, SearchResultWithReplacement},
     };
 
-    use crate::replace;
+    use crate::{
+        app::EventHandlingResult,
+        fields::{KeyCode, KeyModifiers},
+        replace::{self, ReplaceState},
+    };
 
     fn create_search_result_with_replacement(
         path: &str,
@@ -167,5 +309,257 @@ mod tests {
         assert_eq!(num_ignored, 2);
         assert_eq!(included, vec![result1, result3]);
         assert!(included.iter().all(|r| r.search_result.included));
+    }
+
+    #[test]
+    fn test_replace_state_scroll_replacement_errors_up() {
+        let mut state = ReplaceState {
+            num_successes: 5,
+            num_ignored: 2,
+            errors: vec![
+                create_search_result_with_replacement(
+                    "file1.txt",
+                    1,
+                    "error1",
+                    "repl1",
+                    true,
+                    Some(ReplaceResult::Error("err1".to_string())),
+                ),
+                create_search_result_with_replacement(
+                    "file2.txt",
+                    2,
+                    "error2",
+                    "repl2",
+                    true,
+                    Some(ReplaceResult::Error("err2".to_string())),
+                ),
+                create_search_result_with_replacement(
+                    "file3.txt",
+                    3,
+                    "error3",
+                    "repl3",
+                    true,
+                    Some(ReplaceResult::Error("err3".to_string())),
+                ),
+            ],
+            replacement_errors_pos: 1,
+        };
+
+        state.scroll_replacement_errors_up();
+        assert_eq!(state.replacement_errors_pos, 0);
+
+        state.scroll_replacement_errors_up();
+        assert_eq!(state.replacement_errors_pos, 2);
+
+        state.scroll_replacement_errors_up();
+        assert_eq!(state.replacement_errors_pos, 1);
+    }
+
+    #[test]
+    fn test_replace_state_scroll_replacement_errors_down() {
+        let mut state = ReplaceState {
+            num_successes: 5,
+            num_ignored: 2,
+            errors: vec![
+                create_search_result_with_replacement(
+                    "file1.txt",
+                    1,
+                    "error1",
+                    "repl1",
+                    true,
+                    Some(ReplaceResult::Error("err1".to_string())),
+                ),
+                create_search_result_with_replacement(
+                    "file2.txt",
+                    2,
+                    "error2",
+                    "repl2",
+                    true,
+                    Some(ReplaceResult::Error("err2".to_string())),
+                ),
+                create_search_result_with_replacement(
+                    "file3.txt",
+                    3,
+                    "error3",
+                    "repl3",
+                    true,
+                    Some(ReplaceResult::Error("err3".to_string())),
+                ),
+            ],
+            replacement_errors_pos: 1,
+        };
+
+        state.scroll_replacement_errors_down();
+        assert_eq!(state.replacement_errors_pos, 2);
+
+        state.scroll_replacement_errors_down();
+        assert_eq!(state.replacement_errors_pos, 0);
+
+        state.scroll_replacement_errors_down();
+        assert_eq!(state.replacement_errors_pos, 1);
+    }
+
+    #[test]
+    fn test_replace_state_handle_key_results() {
+        let mut state = ReplaceState {
+            num_successes: 5,
+            num_ignored: 2,
+            errors: vec![
+                create_search_result_with_replacement(
+                    "file1.txt",
+                    1,
+                    "error1",
+                    "repl1",
+                    true,
+                    Some(ReplaceResult::Error("err1".to_string())),
+                ),
+                create_search_result_with_replacement(
+                    "file2.txt",
+                    2,
+                    "error2",
+                    "repl2",
+                    true,
+                    Some(ReplaceResult::Error("err2".to_string())),
+                ),
+            ],
+            replacement_errors_pos: 0,
+        };
+
+        // Test scrolling down with 'j'
+        let result = state.handle_key_results(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::Rerender);
+        assert_eq!(state.replacement_errors_pos, 1);
+
+        // Test scrolling up with 'k'
+        let result = state.handle_key_results(KeyCode::Char('k'), KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::Rerender);
+        assert_eq!(state.replacement_errors_pos, 0);
+
+        // Test scrolling down with Down arrow
+        let result = state.handle_key_results(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::Rerender);
+        assert_eq!(state.replacement_errors_pos, 1);
+
+        // Test exit with Enter
+        let result = state.handle_key_results(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::Exit(None));
+
+        // Test exit with 'q'
+        let result = state.handle_key_results(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::Exit(None));
+
+        // Test unhandled key
+        let result = state.handle_key_results(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(result, EventHandlingResult::None);
+    }
+
+    #[test]
+    fn test_calculate_statistics_all_success() {
+        let results = vec![
+            create_search_result_with_replacement(
+                "file1.txt",
+                1,
+                "line1",
+                "repl1",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+            create_search_result_with_replacement(
+                "file2.txt",
+                2,
+                "line2",
+                "repl2",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+            create_search_result_with_replacement(
+                "file3.txt",
+                3,
+                "line3",
+                "repl3",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+        ];
+
+        let stats = frep_core::replace::calculate_statistics(results);
+        assert_eq!(stats.num_successes, 3);
+        assert_eq!(stats.errors.len(), 0);
+    }
+
+    #[test]
+    fn test_calculate_statistics_with_errors() {
+        let error_result = create_search_result_with_replacement(
+            "file2.txt",
+            2,
+            "line2",
+            "repl2",
+            true,
+            Some(ReplaceResult::Error("test error".to_string())),
+        );
+        let results = vec![
+            create_search_result_with_replacement(
+                "file1.txt",
+                1,
+                "line1",
+                "repl1",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+            error_result.clone(),
+            create_search_result_with_replacement(
+                "file3.txt",
+                3,
+                "line3",
+                "repl3",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+        ];
+
+        let stats = frep_core::replace::calculate_statistics(results);
+        assert_eq!(stats.num_successes, 2);
+        assert_eq!(stats.errors.len(), 1);
+        assert_eq!(
+            stats.errors[0].search_result.path,
+            error_result.search_result.path
+        );
+    }
+
+    #[test]
+    fn test_calculate_statistics_with_none_results() {
+        let results = vec![
+            create_search_result_with_replacement(
+                "file1.txt",
+                1,
+                "line1",
+                "repl1",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+            create_search_result_with_replacement("file2.txt", 2, "line2", "repl2", true, None), // This should be treated as an error
+            create_search_result_with_replacement(
+                "file3.txt",
+                3,
+                "line3",
+                "repl3",
+                true,
+                Some(ReplaceResult::Success),
+            ),
+        ];
+
+        let stats = frep_core::replace::calculate_statistics(results);
+        assert_eq!(stats.num_successes, 2);
+        assert_eq!(stats.errors.len(), 1);
+        assert_eq!(
+            stats.errors[0].search_result.path,
+            PathBuf::from("file2.txt")
+        );
+        assert_eq!(
+            stats.errors[0].replace_result,
+            Some(ReplaceResult::Error(
+                "Failed to find search result in file".to_owned()
+            ))
+        );
     }
 }

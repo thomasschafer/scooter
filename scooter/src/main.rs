@@ -15,7 +15,6 @@ mod config;
 mod conversions;
 mod headless;
 mod logging;
-mod replace;
 mod tui;
 mod ui;
 

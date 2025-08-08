@@ -1935,6 +1935,7 @@ dependencies = [
  "steel-derive",
  "syntect",
  "tempfile",
+ "tokio",
  "unicode-width 0.2.0",
 ]
 
