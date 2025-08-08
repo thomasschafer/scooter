@@ -9,7 +9,7 @@ use ratatui::{
     Frame,
 };
 use scooter_core::{
-    app::{AppEvent, Event},
+    app::{App, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
     diff::{line_diff, Diff, DiffColour},
     errors::AppError,
     fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
@@ -33,10 +33,7 @@ use syntect::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    app::{App, FocussedSection, Popup, Screen, SearchState},
-    config::Config,
-};
+use crate::config::Config;
 
 use frep_core::search::SearchResultWithReplacement;
 use scooter_core::utils::read_lines_range;
@@ -833,7 +830,7 @@ fn error_result(result: &SearchResultWithReplacement) -> [ratatui::widgets::List
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))
 }
 
-pub fn render(app: &mut App, frame: &mut Frame<'_>) {
+pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -874,7 +871,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             render_search_fields(
                 frame,
                 &app.search_fields,
-                &app.config,
+                config,
                 show_popup,
                 num_search_fields_to_render,
                 search_fields_state.focussed_section == FocussedSection::SearchFields,
@@ -895,8 +892,8 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     elapsed,
                     base_path,
                     results,
-                    app.config.get_theme(),
-                    app.config.style.true_color,
+                    config.get_theme(),
+                    config.style.true_color,
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,

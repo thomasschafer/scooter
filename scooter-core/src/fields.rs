@@ -9,17 +9,20 @@ use crate::errors::AppError;
 
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum KeyCode {
+    BackTab,
     Backspace,
     Char(char),
     Delete,
     Down,
     End,
     Enter,
+    Esc,
     Home,
     Left,
     PageDown,
     PageUp,
     Right,
+    Tab,
     Up,
 }
 

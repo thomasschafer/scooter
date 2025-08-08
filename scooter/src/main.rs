@@ -1,15 +1,16 @@
 use anyhow::bail;
-use app::AppRunConfig;
+use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
+use headless::run_headless;
 use log::LevelFilter;
+use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 use std::{path::PathBuf, str::FromStr};
 
-use app_runner::{run_app_tui, AppConfig};
-use headless::run_headless;
-use logging::{setup_logging, DEFAULT_LOG_LEVEL};
-use scooter_core::fields::{FieldValue, SearchFieldValues};
+use scooter_core::{
+    app::AppRunConfig,
+    fields::{FieldValue, SearchFieldValues},
+};
 
-mod app;
 mod app_runner;
 mod config;
 mod conversions;
