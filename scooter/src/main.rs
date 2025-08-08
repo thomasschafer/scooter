@@ -5,9 +5,9 @@ use log::LevelFilter;
 use std::{path::PathBuf, str::FromStr};
 
 use app_runner::{run_app_tui, AppConfig};
-use scooter_core::fields::{FieldValue, SearchFieldValues};
 use headless::run_headless;
 use logging::{setup_logging, DEFAULT_LOG_LEVEL};
+use scooter_core::fields::{FieldValue, SearchFieldValues};
 
 mod app;
 mod app_runner;
