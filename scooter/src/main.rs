@@ -1,24 +1,23 @@
 use anyhow::bail;
-use app::AppRunConfig;
+use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
+use headless::run_headless;
 use log::LevelFilter;
+use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 use std::{path::PathBuf, str::FromStr};
 
-use app_runner::{run_app_tui, AppConfig};
-use fields::{FieldValue, SearchFieldValues};
-use headless::run_headless;
-use logging::{setup_logging, DEFAULT_LOG_LEVEL};
+use scooter_core::{
+    app::AppRunConfig,
+    fields::{FieldValue, SearchFieldValues},
+};
 
-mod app;
 mod app_runner;
 mod config;
-mod fields;
+mod conversions;
 mod headless;
 mod logging;
-mod replace;
 mod tui;
 mod ui;
-mod utils;
 
 #[derive(Parser, Debug)]
 #[command(about = "Interactive find and replace TUI.")]

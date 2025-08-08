@@ -1,25 +1,32 @@
-use crossterm::event::{self, Event as CrosstermEvent};
-use frep_core::validation::SearchConfiguration;
-use futures::Stream;
-use futures::StreamExt;
-use log::error;
-use log::LevelFilter;
-use ratatui::backend::Backend;
-use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::KeyEventKind;
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::env;
-use std::io;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::str::FromStr;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::UnboundedSender;
+use crossterm::{
+    event::{self, Event as CrosstermEvent},
+    style::Stylize as _,
+};
+use frep_core::{search::SearchResultWithReplacement, validation::SearchConfiguration};
+use futures::{Stream, StreamExt};
+use log::{error, LevelFilter};
+use ratatui::{
+    backend::{Backend, CrosstermBackend, TestBackend},
+    crossterm::event::KeyEventKind,
+    Terminal,
+};
+use scooter_core::{
+    app::{App, AppRunConfig, Event, EventHandlingResult},
+    errors::AppError,
+    fields::SearchFieldValues,
+    replace::ReplaceState,
+};
+use std::{
+    env, io,
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
-    fields::SearchFieldValues,
+    config::{load_config, Config},
+    conversions,
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
 };
@@ -73,6 +80,7 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
+    config: Config,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
@@ -149,15 +157,18 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        config: AppConfig<'_>,
+        app_config: AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
+        let config = load_config().expect("Failed to read config file");
+
         let (app, event_receiver) = App::new_with_receiver(
-            config.directory,
-            &config.search_field_values,
-            &config.app_run_config,
+            app_config.directory,
+            &app_config.search_field_values,
+            &app_config.app_run_config,
+            config.search.disable_prepopulated_fields,
         );
 
         let terminal = Terminal::new(backend)?;
@@ -165,6 +176,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
         Ok(Self {
             app,
+            config,
             event_receiver,
             tui,
             event_stream,
@@ -180,18 +192,22 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
-        self.tui.draw(&mut self.app)?;
+        self.tui.draw(&mut self.app, &self.config)?;
         self.snapshot_provider.send_snapshot(&self.tui);
         Ok(())
     }
 
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<String>> {
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ReplaceState>> {
         loop {
             let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
                     match event {
                         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                            self.app.handle_key_event(&key)
+                            if let Some((code, modifiers)) = conversions::convert_key_event(&key) {
+                                self.app.handle_key_event(code, modifiers)
+                            } else {
+                                EventHandlingResult::None
+                            }
                         },
                         CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
                         _ => EventHandlingResult::None,
@@ -204,7 +220,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.tui.show_cursor()?;
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
-                                    if self.app.config.editor_open.exit {
+                                    if self.config.editor_open.exit {
                                         res = EventHandlingResult::Exit(None);
                                     }
                                 }
@@ -226,25 +242,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.app.handle_app_event(&app_event)
                         }
                         Event::PerformReplacement => {
-                            if !self.app.is_search_complete() {
-                                self.app.add_error(AppError {
-                                    name: "Search still in progress".to_string(),
-                                    long: "Try again when search is complete".to_string(),
-                                });
-                            } else if !self.app.is_preview_updated() {
-                                self.app.add_error(AppError {
-                                    name: "Updating replacement preview".to_string(),
-                                    long: "Try again when complete".to_string(),
-                                });
-                            } else if !self.app.background_processing_reciever().is_some_and(|r| r.is_empty()) {
-                                self.app.add_error(AppError {
-                                    name: "Background processing in progress".to_string(),
-                                    long: "Try again in a moment".to_string(),
-                                });
-                            } else {
-                                self.app.perform_replacement();
-                            }
-
+                            self.app.perform_replacement();
                             EventHandlingResult::Rerender
                         }
                     }
@@ -271,7 +269,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        match &self.app.config.editor_open.command {
+        match &self.config.editor_open.command {
             Some(command) => {
                 Self::open_editor_from_command(command, &file_path, line)?;
             }
@@ -371,10 +369,96 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 }
 
+pub fn format_replacement_results(
+    num_successes: usize,
+    num_ignored: Option<usize>,
+    errors: Option<&[SearchResultWithReplacement]>,
+) -> String {
+    let errors_display = if let Some(errors) = errors {
+        #[allow(clippy::format_collect)]
+        errors
+            .iter()
+            .map(|error| {
+                let (path, error) = error.display_error();
+                format!("\n{path}:\n  {}", error.red())
+            })
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+
+    let maybe_ignored_str = match num_ignored {
+        Some(n) => format!("\nIgnored (lines): {n}"),
+        None => "".into(),
+    };
+    let maybe_errors_str = match errors {
+        Some(errors) => format!(
+            "\nErrors: {num_errors}{errors_display}",
+            num_errors = errors.len()
+        ),
+        None => "".into(),
+    };
+
+    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+}
+
 pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let results = runner.run_event_loop().await?;
+    let maybe_replace_state = runner.run_event_loop().await?;
     runner.cleanup()?;
-    Ok(results)
+    let maybe_results = maybe_replace_state.map(|replace_state| {
+        format_replacement_results(
+            replace_state.num_successes,
+            Some(replace_state.num_ignored),
+            Some(&replace_state.errors),
+        )
+    });
+
+    Ok(maybe_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use frep_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
+
+    use super::*;
+
+    #[test]
+    fn test_format_replacement_results_no_errors() {
+        let result = format_replacement_results(5, Some(2), Some(&[]));
+        assert_eq!(
+            result,
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+        );
+    }
+
+    #[test]
+    fn test_format_replacement_results_with_errors() {
+        let error_result = SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: PathBuf::from("file.txt"),
+                line_number: 10,
+                line: "line".to_string(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
+            replacement: "replacement".to_string(),
+            replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+        };
+
+        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
+        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Ignored (lines): 1"));
+        assert!(result.contains("Errors: 1"));
+        assert!(result.contains("file.txt:10"));
+        assert!(result.contains("Test error"));
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_ignored_count() {
+        let result = format_replacement_results(7, None, Some(&[]));
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert!(!result.contains("Ignored (lines):"));
+    }
 }
