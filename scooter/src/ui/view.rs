@@ -9,9 +9,11 @@ use ratatui::{
     Frame,
 };
 use scooter_core::{
+    app::{AppEvent, Event},
     diff::{line_diff, Diff, DiffColour},
     errors::AppError,
     fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
+    replace::{PerformingReplacementState, ReplaceState},
     utils::{
         last_n_chars, read_lines_range_highlighted, relative_path_from, split_indexed_lines,
         strip_control_chars, HighlightedLine,
@@ -32,9 +34,8 @@ use syntect::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{App, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
+    app::{App, FocussedSection, Popup, Screen, SearchState},
     config::Config,
-    replace::{PerformingReplacementState, ReplaceState},
 };
 
 use frep_core::search::SearchResultWithReplacement;

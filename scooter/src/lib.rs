@@ -4,6 +4,5 @@ pub mod config;
 pub mod conversions;
 pub mod headless;
 pub mod logging;
-pub mod replace;
 pub mod tui;
 pub mod ui;

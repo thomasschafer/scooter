@@ -1,26 +1,31 @@
-use crossterm::event::{self, Event as CrosstermEvent};
-use frep_core::validation::SearchConfiguration;
-use futures::Stream;
-use futures::StreamExt;
-use log::error;
-use log::LevelFilter;
-use ratatui::backend::Backend;
-use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::KeyEventKind;
-use ratatui::{backend::CrosstermBackend, Terminal};
-use scooter_core::errors::AppError;
-use scooter_core::fields::SearchFieldValues;
-use std::env;
-use std::io;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::str::FromStr;
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::mpsc::UnboundedSender;
+use crossterm::{
+    event::{self, Event as CrosstermEvent},
+    style::Stylize as _,
+};
+use frep_core::{search::SearchResultWithReplacement, validation::SearchConfiguration};
+use futures::{Stream, StreamExt};
+use log::{error, LevelFilter};
+use ratatui::{
+    backend::{Backend, CrosstermBackend, TestBackend},
+    crossterm::event::KeyEventKind,
+    Terminal,
+};
+use scooter_core::{
+    app::{Event, EventHandlingResult},
+    errors::AppError,
+    fields::SearchFieldValues,
+    replace::ReplaceState,
+};
+use std::{
+    env, io,
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    app::{App, AppRunConfig, Event, EventHandlingResult},
+    app::{App, AppRunConfig},
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
 };
@@ -186,7 +191,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         Ok(())
     }
 
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<String>> {
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ReplaceState>> {
         loop {
             let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
@@ -354,10 +359,96 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 }
 
+pub fn format_replacement_results(
+    num_successes: usize,
+    num_ignored: Option<usize>,
+    errors: Option<&[SearchResultWithReplacement]>,
+) -> String {
+    let errors_display = if let Some(errors) = errors {
+        #[allow(clippy::format_collect)]
+        errors
+            .iter()
+            .map(|error| {
+                let (path, error) = error.display_error();
+                format!("\n{path}:\n  {}", error.red())
+            })
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+
+    let maybe_ignored_str = match num_ignored {
+        Some(n) => format!("\nIgnored (lines): {n}"),
+        None => "".into(),
+    };
+    let maybe_errors_str = match errors {
+        Some(errors) => format!(
+            "\nErrors: {num_errors}{errors_display}",
+            num_errors = errors.len()
+        ),
+        None => "".into(),
+    };
+
+    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+}
+
 pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let results = runner.run_event_loop().await?;
+    let maybe_replace_state = runner.run_event_loop().await?;
     runner.cleanup()?;
-    Ok(results)
+    let maybe_results = maybe_replace_state.map(|replace_state| {
+        format_replacement_results(
+            replace_state.num_successes,
+            Some(replace_state.num_ignored),
+            Some(&replace_state.errors),
+        )
+    });
+
+    Ok(maybe_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use frep_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
+
+    use super::*;
+
+    #[test]
+    fn test_format_replacement_results_no_errors() {
+        let result = format_replacement_results(5, Some(2), Some(&[]));
+        assert_eq!(
+            result,
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+        );
+    }
+
+    #[test]
+    fn test_format_replacement_results_with_errors() {
+        let error_result = SearchResultWithReplacement {
+            search_result: SearchResult {
+                path: PathBuf::from("file.txt"),
+                line_number: 10,
+                line: "line".to_string(),
+                line_ending: LineEnding::Lf,
+                included: true,
+            },
+            replacement: "replacement".to_string(),
+            replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+        };
+
+        let result = format_replacement_results(3, Some(1), Some(&[error_result]));
+        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Ignored (lines): 1"));
+        assert!(result.contains("Errors: 1"));
+        assert!(result.contains("file.txt:10"));
+        assert!(result.contains("Test error"));
+    }
+
+    #[test]
+    fn test_format_replacement_results_no_ignored_count() {
+        let result = format_replacement_results(7, None, Some(&[]));
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert!(!result.contains("Ignored (lines):"));
+    }
 }

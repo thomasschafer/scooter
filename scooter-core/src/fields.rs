@@ -12,11 +12,15 @@ pub enum KeyCode {
     Backspace,
     Char(char),
     Delete,
+    Down,
     End,
     Enter,
-    Left,
     Home,
+    Left,
+    PageDown,
+    PageUp,
     Right,
+    Up,
 }
 
 // Copied from crossterm
