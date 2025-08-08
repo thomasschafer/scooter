@@ -28,12 +28,12 @@ use frep_core::{
         ValidationResult,
     },
 };
+use scooter_core::utils::ceil_div;
 
 use crate::{
     config::{load_config, Config},
     fields::{FieldName, SearchFieldValues, SearchFields},
     replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
-    utils::ceil_div,
 };
 
 #[derive(Debug)]

@@ -18,7 +18,6 @@ mod logging;
 mod replace;
 mod tui;
 mod ui;
-mod utils;
 
 #[derive(Parser, Debug)]
 #[command(about = "Interactive find and replace TUI.")]
