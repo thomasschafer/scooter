@@ -1,4 +1,3 @@
-pub mod app;
 pub mod app_runner;
 pub mod config;
 pub mod conversions;
