@@ -1,4 +1,3 @@
-// TODO: move to scooter-core
 use frep_core::{
     line_reader::LineEnding,
     replace::ReplaceResult,
@@ -23,8 +22,6 @@ use scooter_core::{
     app::{App, AppRunConfig, FocussedSection, Popup, Screen, SearchFieldsState, SearchState},
     fields::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
 };
-
-mod utils;
 
 #[tokio::test]
 async fn test_replace_state() {
