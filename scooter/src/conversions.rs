@@ -1,17 +1,26 @@
-use crossterm::event::{KeyCode as CrosstermKeyCode, KeyModifiers as CrosstermKeyModifiers};
+use crossterm::event::{
+    KeyCode as CrosstermKeyCode, KeyEvent, KeyModifiers as CrosstermKeyModifiers,
+};
 use scooter_core::fields::{KeyCode, KeyModifiers};
 
 pub fn convert_key_code(code: CrosstermKeyCode) -> Option<KeyCode> {
     match code {
+        CrosstermKeyCode::BackTab => Some(KeyCode::BackTab),
         CrosstermKeyCode::Backspace => Some(KeyCode::Backspace),
-        CrosstermKeyCode::Char(c) => Some(KeyCode::Char(c)),
+        CrosstermKeyCode::Char(char) => Some(KeyCode::Char(char)),
         CrosstermKeyCode::Delete => Some(KeyCode::Delete),
+        CrosstermKeyCode::Down => Some(KeyCode::Down),
         CrosstermKeyCode::End => Some(KeyCode::End),
         CrosstermKeyCode::Enter => Some(KeyCode::Enter),
-        CrosstermKeyCode::Left => Some(KeyCode::Left),
+        CrosstermKeyCode::Esc => Some(KeyCode::Esc),
         CrosstermKeyCode::Home => Some(KeyCode::Home),
+        CrosstermKeyCode::Left => Some(KeyCode::Left),
+        CrosstermKeyCode::PageDown => Some(KeyCode::PageDown),
+        CrosstermKeyCode::PageUp => Some(KeyCode::PageUp),
         CrosstermKeyCode::Right => Some(KeyCode::Right),
-        _ => None, // Other key codes not supported by scooter-core
+        CrosstermKeyCode::Tab => Some(KeyCode::Tab),
+        CrosstermKeyCode::Up => Some(KeyCode::Up),
+        _ => None,
     }
 }
 
@@ -29,4 +38,8 @@ pub fn convert_key_modifiers(modifiers: CrosstermKeyModifiers) -> KeyModifiers {
     let mut result = KeyModifiers::NONE;
     add_modifiers!(result, modifiers, SHIFT, CONTROL, ALT, SUPER, HYPER, META);
     result
+}
+
+pub fn convert_key_event(key: &KeyEvent) -> Option<(KeyCode, KeyModifiers)> {
+    convert_key_code(key.code).map(|code| (code, convert_key_modifiers(key.modifiers)))
 }

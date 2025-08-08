@@ -11,7 +11,7 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{Event, EventHandlingResult},
+    app::{App, AppRunConfig, Event, EventHandlingResult},
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
@@ -25,7 +25,8 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    app::{App, AppRunConfig},
+    config::{load_config, Config},
+    conversions,
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
 };
@@ -79,6 +80,7 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
+    config: Config,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
@@ -155,15 +157,18 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        config: AppConfig<'_>,
+        app_config: AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
+        let config = load_config().expect("Failed to read config file");
+
         let (app, event_receiver) = App::new_with_receiver(
-            config.directory,
-            &config.search_field_values,
-            &config.app_run_config,
+            app_config.directory,
+            &app_config.search_field_values,
+            &app_config.app_run_config,
+            config.search.disable_prepopulated_fields,
         );
 
         let terminal = Terminal::new(backend)?;
@@ -171,6 +176,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
         Ok(Self {
             app,
+            config,
             event_receiver,
             tui,
             event_stream,
@@ -186,7 +192,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
-        self.tui.draw(&mut self.app)?;
+        self.tui.draw(&mut self.app, &self.config)?;
         self.snapshot_provider.send_snapshot(&self.tui);
         Ok(())
     }
@@ -197,7 +203,11 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                 Some(Ok(event)) = self.event_stream.next() => {
                     match event {
                         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                            self.app.handle_key_event(&key)
+                            if let Some((code, modifiers)) = conversions::convert_key_event(&key) {
+                                self.app.handle_key_event(code, modifiers)
+                            } else {
+                                EventHandlingResult::None
+                            }
                         },
                         CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
                         _ => EventHandlingResult::None,
@@ -210,7 +220,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.tui.show_cursor()?;
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
-                                    if self.app.config.editor_open.exit {
+                                    if self.config.editor_open.exit {
                                         res = EventHandlingResult::Exit(None);
                                     }
                                 }
@@ -259,7 +269,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        match &self.app.config.editor_open.command {
+        match &self.config.editor_open.command {
             Some(command) => {
                 Self::open_editor_from_command(command, &file_path, line)?;
             }
