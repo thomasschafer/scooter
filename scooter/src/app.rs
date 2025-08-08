@@ -28,11 +28,15 @@ use frep_core::{
         ValidationResult,
     },
 };
-use scooter_core::utils::ceil_div;
+use scooter_core::{
+    errors::AppError,
+    fields::{FieldName, SearchFieldValues, SearchFields},
+    utils::ceil_div,
+};
 
 use crate::{
     config::{load_config, Config},
-    fields::{FieldName, SearchFieldValues, SearchFields},
+    conversions::{convert_key_code, convert_key_modifiers},
     replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
 };
 
@@ -441,12 +445,6 @@ impl Screen {
         };
         search_fields_state
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppError {
-    pub name: String,
-    pub long: String,
 }
 
 #[derive(Debug)]
@@ -934,11 +932,13 @@ impl<'a> App {
 
         search_fields_state.cancel_preview_updates();
 
-        self.search_fields.highlighted_field_mut().handle_keys(
-            code,
-            modifiers,
-            self.config.search.disable_prepopulated_fields,
-        );
+        if let Some(converted_code) = convert_key_code(code) {
+            self.search_fields.highlighted_field_mut().handle_keys(
+                converted_code,
+                convert_key_modifiers(modifiers),
+                self.config.search.disable_prepopulated_fields,
+            );
+        }
         if let Some(search_config) = self.validate_fields().unwrap() {
             self.file_searcher = Some(search_config);
         } else {

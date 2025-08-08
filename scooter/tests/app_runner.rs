@@ -17,8 +17,8 @@ use tokio::{
 use scooter::{
     app::AppRunConfig,
     app_runner::{AppConfig, AppRunner},
-    fields::{FieldValue, SearchFieldValues},
 };
+use scooter_core::fields::{FieldValue, SearchFieldValues};
 
 mod utils;
 

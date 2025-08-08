@@ -1926,6 +1926,7 @@ name = "scooter-core"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "bitflags 2.9.1",
  "frep-core",
  "log",
  "rayon",
