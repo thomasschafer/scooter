@@ -8,6 +8,8 @@ use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventKind;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use scooter_core::errors::AppError;
+use scooter_core::fields::SearchFieldValues;
 use std::env;
 use std::io;
 use std::path::Path;
@@ -18,8 +20,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    app::{App, AppError, AppRunConfig, Event, EventHandlingResult},
-    fields::SearchFieldValues,
+    app::{App, AppRunConfig, Event, EventHandlingResult},
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,
 };

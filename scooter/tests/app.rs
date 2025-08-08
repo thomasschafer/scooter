@@ -17,9 +17,12 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::mpsc;
 
 use scooter::{
-    app::{App, AppError, AppRunConfig, SearchState},
-    fields::{FieldValue, SearchFieldValues, SearchFields},
+    app::{App, AppRunConfig, SearchState},
     replace::{PerformingReplacementState, ReplaceState},
+};
+use scooter_core::{
+    errors::AppError,
+    fields::{FieldValue, SearchFieldValues, SearchFields},
 };
 
 mod utils;
