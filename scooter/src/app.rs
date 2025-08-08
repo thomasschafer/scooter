@@ -741,6 +741,29 @@ impl<'a> App {
     }
 
     pub fn perform_replacement(&mut self) {
+        if !self.is_search_complete() {
+            self.add_error(AppError {
+                name: "Search still in progress".to_string(),
+                long: "Try again when search is complete".to_string(),
+            });
+            return;
+        } else if !self.is_preview_updated() {
+            self.add_error(AppError {
+                name: "Updating replacement preview".to_string(),
+                long: "Try again when complete".to_string(),
+            });
+            return;
+        } else if !self
+            .background_processing_reciever()
+            .is_some_and(|r| r.is_empty())
+        {
+            self.add_error(AppError {
+                name: "Background processing in progress".to_string(),
+                long: "Try again in a moment".to_string(),
+            });
+            return;
+        }
+
         let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
             &mut self.current_screen,
