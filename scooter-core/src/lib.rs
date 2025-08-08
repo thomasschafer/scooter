@@ -1,3 +1,4 @@
+pub mod app;
 pub mod diff;
 pub mod errors;
 pub mod fields;

@@ -1,28 +1,26 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use frep_core::line_reader::LineEnding;
-use frep_core::replace::ReplaceResult;
-use frep_core::search::SearchResult;
-use frep_core::search::SearchResultWithReplacement;
-use insta::assert_debug_snapshot;
-use scooter::app::EventHandlingResult;
-use scooter::app::FocussedSection;
-use scooter::app::Popup;
-use scooter::app::Screen;
-use scooter::app::SearchFieldsState;
-use std::env::current_dir;
-use std::mem;
-use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::{atomic::AtomicBool, Arc};
-use tokio::sync::mpsc;
-
-use scooter::{
-    app::{App, AppRunConfig, SearchState},
-    replace::{PerformingReplacementState, ReplaceState},
+use frep_core::{
+    line_reader::LineEnding,
+    replace::ReplaceResult,
+    search::{SearchResult, SearchResultWithReplacement},
 };
+use insta::assert_debug_snapshot;
 use scooter_core::{
+    app::EventHandlingResult,
     errors::AppError,
     fields::{FieldValue, SearchFieldValues, SearchFields},
+    replace::{PerformingReplacementState, ReplaceState},
+};
+use std::{
+    env::current_dir,
+    mem,
+    path::PathBuf,
+    sync::{atomic::AtomicBool, atomic::AtomicUsize, Arc},
+};
+use tokio::sync::mpsc;
+
+use scooter::app::{
+    App, AppRunConfig, FocussedSection, Popup, Screen, SearchFieldsState, SearchState,
 };
 
 mod utils;

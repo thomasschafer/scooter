@@ -22,58 +22,24 @@ use tokio::{
 
 use frep_core::{
     replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
+    search::{FileSearcher, SearchResultWithReplacement},
     validation::{
         validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
         ValidationResult,
     },
 };
 use scooter_core::{
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
     errors::AppError,
     fields::{FieldName, SearchFieldValues, SearchFields},
+    replace::{self, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
 };
 
 use crate::{
     config::{load_config, Config},
     conversions::{convert_key_code, convert_key_modifiers},
-    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
 };
-
-#[derive(Debug)]
-pub enum Event {
-    LaunchEditor((PathBuf, usize)),
-    App(AppEvent),
-    PerformReplacement,
-}
-
-#[derive(Debug)]
-pub enum AppEvent {
-    Rerender,
-    PerformSearch,
-}
-
-#[derive(Debug)]
-pub enum BackgroundProcessingEvent {
-    AddSearchResults(Vec<SearchResult>),
-    SearchCompleted,
-    ReplacementCompleted(ReplaceState),
-    UpdateReplacements {
-        start: usize,
-        end: usize,
-        cancelled: Arc<AtomicBool>,
-    },
-    UpdateAllReplacements {
-        cancelled: Arc<AtomicBool>,
-    },
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum EventHandlingResult {
-    Rerender,
-    Exit(Option<String>),
-    None,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 struct MultiSelected {
@@ -864,12 +830,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    let results = format_replacement_results(
-                        replace_state.num_successes,
-                        Some(replace_state.num_ignored),
-                        Some(&replace_state.errors),
-                    );
-                    EventHandlingResult::Exit(Some(results))
+                    EventHandlingResult::Exit(Some(replace_state))
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -1123,7 +1084,13 @@ impl<'a> App {
                 }
             }
             Screen::PerformingReplacement(_) => EventHandlingResult::Rerender,
-            Screen::Results(replace_state) => replace_state.handle_key_results(key),
+            Screen::Results(replace_state) => {
+                if let Some(code) = convert_key_code(key.code) {
+                    replace_state.handle_key_results(code, convert_key_modifiers(key.modifiers))
+                } else {
+                    EventHandlingResult::None
+                }
+            }
         }
     }
 
@@ -1476,7 +1443,7 @@ impl ValidationErrorHandler for AppErrorHandler {
 mod tests {
     use frep_core::{
         replace::{ReplaceResult, ReplaceStats},
-        search::SearchResultWithReplacement,
+        search::{SearchResult, SearchResultWithReplacement},
     };
     use rand::Rng;
     use std::path::Path;
