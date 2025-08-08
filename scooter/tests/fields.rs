@@ -1,18 +1,17 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use scooter::fields::{CheckboxField, FieldName, FieldValue, SearchFieldValues, SearchFields};
+use scooter_core::fields::{CheckboxField, FieldName, FieldValue, KeyCode, KeyModifiers, SearchFieldValues, SearchFields};
 
 #[test]
 fn test_checkbox_field() {
     let mut field = CheckboxField::new(false);
     assert!(!field.checked);
 
-    field.handle_keys(KeyCode::Char(' '), KeyModifiers::empty());
+    field.handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
     assert!(field.checked);
 
-    field.handle_keys(KeyCode::Char(' '), KeyModifiers::empty());
+    field.handle_keys(KeyCode::Char(' '), KeyModifiers::NONE);
     assert!(!field.checked);
 
-    field.handle_keys(KeyCode::Enter, KeyModifiers::empty());
+    field.handle_keys(KeyCode::Enter, KeyModifiers::NONE);
     assert!(!field.checked);
 }
 
