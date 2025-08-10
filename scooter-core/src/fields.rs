@@ -336,21 +336,22 @@ pub struct SearchField {
 }
 
 impl SearchField {
-    pub fn new(name: FieldName, field: Field, set_by_cli: bool) -> Self {
+    pub fn new_text(name: FieldName, initial: &str, set_by_cli: bool) -> Self {
+        let field = Field::Text(TextField::new(initial));
         Self {
             name,
             field,
             set_by_cli,
         }
     }
-    pub fn new_text(name: FieldName, initial: &str, set_by_cli: bool) -> Self {
-        let field = Field::Text(TextField::new(initial));
-        Self::new(name, field, set_by_cli)
-    }
 
     pub fn new_checkbox(name: FieldName, initial: bool, set_by_cli: bool) -> Self {
         let field = Field::Checkbox(CheckboxField::new(initial));
-        Self::new(name, field, set_by_cli)
+        Self {
+            name,
+            field,
+            set_by_cli,
+        }
     }
 
     pub fn handle_keys(

@@ -1,3 +1,8 @@
+use frep_core::{
+    replace::{replace_in_file, replacement_if_match, ReplaceResult},
+    search::{FileSearcher, SearchResultWithReplacement},
+};
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -8,13 +13,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
-use frep_core::{
-    replace::{replace_in_file, replacement_if_match, ReplaceResult},
-    search::{FileSearcher, SearchResultWithReplacement},
-};
-use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-
 use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
