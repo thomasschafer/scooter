@@ -15,7 +15,7 @@ use syntect::{
 
 use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
 
-pub fn replace_start(s: &str, from: &str, to: &str) -> String {
+fn replace_start(s: &str, from: &str, to: &str) -> String {
     if let Some(stripped) = s.strip_prefix(from) {
         format!("{to}{stripped}")
     } else {
