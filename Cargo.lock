@@ -1902,7 +1902,6 @@ dependencies = [
  "etcetera",
  "frep-core",
  "futures",
- "ignore",
  "insta",
  "itertools 0.14.0",
  "log",
