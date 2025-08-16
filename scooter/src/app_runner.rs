@@ -359,8 +359,17 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
             }
         }
 
-        cmd.status()?;
-        Ok(())
+        let status = cmd.status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Editor exited with failure status: {}",
+                status
+                    .code()
+                    .map_or("<unknown>".to_string(), |c| c.to_string())
+            ))
+        }
     }
 }
 
