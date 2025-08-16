@@ -162,7 +162,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
-        let config = load_config().expect("Failed to read config file");
+        let config = load_config()?;
 
         let (app, event_receiver) = App::new_with_receiver(
             app_config.directory,
