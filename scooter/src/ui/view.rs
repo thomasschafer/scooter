@@ -47,12 +47,13 @@ fn create_title_spans<'a>(
     set_by_cli: bool,
     disable_prepopulated_fields: bool,
 ) -> Vec<Span<'a>> {
-    let mut fg_color = Color::Reset;
-    if set_by_cli && disable_prepopulated_fields {
-        fg_color = Color::Blue;
+    let fg_color = if set_by_cli && disable_prepopulated_fields {
+        Color::Blue
     } else if highlighted {
-        fg_color = Color::Green;
-    }
+        Color::Green
+    } else {
+        Color::Reset
+    };
     let title_style = Style::new().fg(fg_color);
 
     let mut spans = vec![Span::styled(title, title_style)];

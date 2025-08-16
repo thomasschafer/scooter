@@ -579,13 +579,13 @@ impl<'a> App {
     }
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
-        match self.background_processing_reciever() {
+        match self.background_processing_receiver() {
             Some(r) => r.recv().await,
             None => None,
         }
     }
 
-    pub fn background_processing_reciever(
+    pub fn background_processing_receiver(
         &mut self,
     ) -> Option<&mut UnboundedReceiver<BackgroundProcessingEvent>> {
         match &mut self.current_screen {
@@ -748,7 +748,7 @@ impl<'a> App {
             });
             return;
         } else if !self
-            .background_processing_reciever()
+            .background_processing_receiver()
             .is_some_and(|r| r.is_empty())
         {
             self.add_error(AppError {
