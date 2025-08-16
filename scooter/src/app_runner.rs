@@ -115,19 +115,13 @@ impl TestSnapshotProvider {
 impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
     fn send_snapshot(&self, tui: &Tui<TestBackend>) {
         let buffer = tui.terminal.backend().buffer();
-        let contents = buffer
-            .content
-            .iter()
-            .enumerate()
-            .map(|(i, cell)| {
-                if i % buffer.area.width as usize == 0 && i > 0 {
-                    "\n" // TODO: should this be `cell.symbol() + "\n"`?
-                } else {
-                    cell.symbol()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
+        let mut contents = String::new();
+        for (i, cell) in buffer.content.iter().enumerate() {
+            if i % buffer.area.width as usize == 0 && i > 0 {
+                contents.push('\n');
+            }
+            contents.push_str(cell.symbol());
+        }
         let _ = self.sender.send(contents);
     }
 }
