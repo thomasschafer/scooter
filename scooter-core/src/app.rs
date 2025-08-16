@@ -1,23 +1,13 @@
-use crossterm::event::KeyEvent;
-use ignore::WalkState;
-use log::warn;
-use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use std::{
     cmp::{max, min},
     iter::Iterator,
+    mem,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-};
-use std::{
-    mem,
-    path::PathBuf,
     time::{Duration, Instant},
-};
-use tokio::{
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    task::{self, JoinHandle},
 };
 
 use frep_core::{
@@ -28,25 +18,25 @@ use frep_core::{
         ValidationResult,
     },
 };
+use ignore::WalkState;
+use log::warn;
+use tokio::{
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    task::{self, JoinHandle},
+};
 
 use crate::{
-    config::{load_config, Config},
-    fields::{FieldName, SearchFieldValues, SearchFields},
-    replace::{self, format_replacement_results, PerformingReplacementState, ReplaceState},
+    errors::AppError,
+    fields::{FieldName, KeyCode, KeyModifiers, SearchFieldValues, SearchFields},
+    replace::{self, PerformingReplacementState, ReplaceState},
     utils::ceil_div,
 };
 
-#[derive(Debug)]
-pub enum Event {
-    LaunchEditor((PathBuf, usize)),
-    App(AppEvent),
-    PerformReplacement,
-}
-
-#[derive(Debug)]
-pub enum AppEvent {
+#[derive(Debug, PartialEq, Eq)]
+pub enum EventHandlingResult {
     Rerender,
-    PerformSearch,
+    Exit(Option<ReplaceState>),
+    None,
 }
 
 #[derive(Debug)]
@@ -64,11 +54,17 @@ pub enum BackgroundProcessingEvent {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum EventHandlingResult {
+#[derive(Debug)]
+pub enum AppEvent {
     Rerender,
-    Exit(Option<String>),
-    None,
+    PerformSearch,
+}
+
+#[derive(Debug)]
+pub enum Event {
+    LaunchEditor((PathBuf, usize)),
+    App(AppEvent),
+    PerformReplacement,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,16 +98,16 @@ pub struct SearchState {
 
     selected: Selected,
     // TODO: make the view logic with scrolling etc. into a generic component
-    pub(crate) view_offset: usize,           // Updated by UI, not app
-    pub(crate) num_displayed: Option<usize>, // Updated by UI, not app
+    pub view_offset: usize,           // Updated by UI, not app
+    pub num_displayed: Option<usize>, // Updated by UI, not app
 
     processing_receiver: UnboundedReceiver<BackgroundProcessingEvent>,
     processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 
-    pub(crate) last_render: Instant,
-    pub(crate) search_started: Instant,
-    pub(crate) search_completed: Option<Instant>,
-    pub(crate) cancelled: Arc<AtomicBool>,
+    pub last_render: Instant,
+    pub search_started: Instant,
+    pub search_completed: Option<Instant>,
+    pub cancelled: Arc<AtomicBool>,
 }
 
 impl SearchState {
@@ -138,8 +134,12 @@ impl SearchState {
         self.search_completed.is_some()
     }
 
-    pub(crate) fn handle_key(&mut self, key: &KeyEvent) -> EventHandlingResult {
-        match (key.code, key.modifiers) {
+    pub fn handle_key(
+        &mut self,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
+    ) -> EventHandlingResult {
+        match (key_code, key_modifiers) {
             (KeyCode::Char('j') | KeyCode::Down, _)
             | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
                 self.move_selected_down();
@@ -285,9 +285,7 @@ impl SearchState {
         &mut self.results[low..=high]
     }
 
-    pub(crate) fn primary_selected_field_mut(
-        &mut self,
-    ) -> Option<&mut SearchResultWithReplacement> {
+    pub fn primary_selected_field_mut(&mut self) -> Option<&mut SearchResultWithReplacement> {
         let sel = self.primary_selected_pos();
         if !self.results.is_empty() {
             Some(&mut self.results[sel])
@@ -296,7 +294,7 @@ impl SearchState {
         }
     }
 
-    pub(crate) fn primary_selected_pos(&self) -> usize {
+    pub fn primary_selected_pos(&self) -> usize {
         match self.selected {
             Selected::Single(sel) => sel,
             Selected::Multi(MultiSelected { primary, .. }) => primary,
@@ -313,7 +311,7 @@ impl SearchState {
         };
     }
 
-    pub(crate) fn is_selected(&self, idx: usize) -> bool {
+    pub fn is_selected(&self, idx: usize) -> bool {
         match &self.selected {
             Selected::Single(sel) => idx == *sel,
             Selected::Multi(ms) => {
@@ -330,7 +328,7 @@ impl SearchState {
         }
     }
 
-    pub(crate) fn is_primary_selected(&self, idx: usize) -> bool {
+    pub fn is_primary_selected(&self, idx: usize) -> bool {
         idx == self.primary_selected_pos()
     }
 
@@ -443,12 +441,6 @@ impl Screen {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppError {
-    pub name: String,
-    pub long: String,
-}
-
 #[derive(Debug)]
 pub enum Popup {
     Error,
@@ -464,9 +456,9 @@ pub struct AppRunConfig {
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
+    pub disable_prepopulated_fields: bool,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for AppRunConfig {
     fn default() -> Self {
         Self {
@@ -475,6 +467,7 @@ impl Default for AppRunConfig {
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
+            disable_prepopulated_fields: true,
         }
     }
 }
@@ -486,7 +479,7 @@ pub struct App {
     pub search_fields: SearchFields,
     pub file_searcher: Option<FileSearcher>,
     pub directory: PathBuf,
-    pub config: Config,
+    disable_prepopulated_fields: bool,
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
@@ -503,11 +496,9 @@ impl<'a> App {
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
     ) -> Self {
-        let config = load_config().expect("Failed to read config file");
-
         let search_fields = SearchFields::with_values(
             search_field_values,
-            config.search.disable_prepopulated_fields,
+            app_run_config.disable_prepopulated_fields,
         );
 
         let mut search_fields_state = SearchFieldsState::default();
@@ -521,7 +512,7 @@ impl<'a> App {
             file_searcher: None,
             directory,
             include_hidden: app_run_config.include_hidden,
-            config,
+            disable_prepopulated_fields: app_run_config.disable_prepopulated_fields,
             errors: vec![],
             popup: None,
             event_sender,
@@ -582,18 +573,19 @@ impl<'a> App {
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
+                disable_prepopulated_fields: self.disable_prepopulated_fields,
             },
         );
     }
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
-        match self.background_processing_reciever() {
+        match self.background_processing_receiver() {
             Some(r) => r.recv().await,
             None => None,
         }
     }
 
-    pub fn background_processing_reciever(
+    pub fn background_processing_receiver(
         &mut self,
     ) -> Option<&mut UnboundedReceiver<BackgroundProcessingEvent>> {
         match &mut self.current_screen {
@@ -743,6 +735,29 @@ impl<'a> App {
     }
 
     pub fn perform_replacement(&mut self) {
+        if !self.is_search_complete() {
+            self.add_error(AppError {
+                name: "Search still in progress".to_string(),
+                long: "Try again when search is complete".to_string(),
+            });
+            return;
+        } else if !self.is_preview_updated() {
+            self.add_error(AppError {
+                name: "Updating replacement preview".to_string(),
+                long: "Try again when complete".to_string(),
+            });
+            return;
+        } else if !self
+            .background_processing_receiver()
+            .is_some_and(|r| r.is_empty())
+        {
+            self.add_error(AppError {
+                name: "Background processing in progress".to_string(),
+                long: "Try again in a moment".to_string(),
+            });
+            return;
+        }
+
         let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
             &mut self.current_screen,
@@ -843,12 +858,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    let results = format_replacement_results(
-                        replace_state.num_successes,
-                        Some(replace_state.num_ignored),
-                        Some(&replace_state.errors),
-                    );
-                    EventHandlingResult::Exit(Some(results))
+                    EventHandlingResult::Exit(Some(replace_state))
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -867,8 +877,12 @@ impl<'a> App {
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
     #[allow(clippy::too_many_lines)]
-    fn handle_key_searching(&mut self, key: &KeyEvent) -> EventHandlingResult {
-        match (key.code, key.modifiers) {
+    fn handle_key_searching(
+        &mut self,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
+    ) -> EventHandlingResult {
+        match (key_code, key_modifiers) {
             (KeyCode::Char('u'), KeyModifiers::ALT) => {
                 self.unlock_prepopulated_fields();
             }
@@ -904,11 +918,11 @@ impl<'a> App {
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
                 self.search_fields
-                    .focus_prev(self.config.search.disable_prepopulated_fields);
+                    .focus_prev(self.disable_prepopulated_fields);
             }
             (KeyCode::Tab, _) => {
                 self.search_fields
-                    .focus_next(self.config.search.disable_prepopulated_fields);
+                    .focus_next(self.disable_prepopulated_fields);
             }
             (code, modifiers) => {
                 if let Some(value) = self.enter_chars_into_field(code, modifiers) {
@@ -921,8 +935,8 @@ impl<'a> App {
 
     fn enter_chars_into_field(
         &mut self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
     ) -> Option<EventHandlingResult> {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
             return Some(EventHandlingResult::None);
@@ -935,9 +949,9 @@ impl<'a> App {
         search_fields_state.cancel_preview_updates();
 
         self.search_fields.highlighted_field_mut().handle_keys(
-            code,
-            modifiers,
-            self.config.search.disable_prepopulated_fields,
+            key_code,
+            key_modifiers,
+            self.disable_prepopulated_fields,
         );
         if let Some(search_config) = self.validate_fields().unwrap() {
             self.file_searcher = Some(search_config);
@@ -994,14 +1008,18 @@ impl<'a> App {
     }
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
-    fn try_handle_key_search_results(&mut self, key: &KeyEvent) -> Option<EventHandlingResult> {
+    fn try_handle_key_search_results(
+        &mut self,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
+    ) -> Option<EventHandlingResult> {
         assert!(
             matches!(self.current_screen, Screen::SearchFields(_)),
             "Expected current_screen to be SearchFields, found {}",
             self.current_screen.name()
         );
 
-        match (key.code, key.modifiers) {
+        match (key_code, key_modifiers) {
             (KeyCode::Enter, _) => {
                 self.trigger_replacement();
                 Some(EventHandlingResult::Rerender)
@@ -1041,12 +1059,12 @@ impl<'a> App {
         }
     }
 
-    pub fn handle_key_event(&mut self, key: &KeyEvent) -> EventHandlingResult {
-        if key.kind == KeyEventKind::Release {
-            return EventHandlingResult::Rerender;
-        }
-
-        if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
+    pub fn handle_key_event(
+        &mut self,
+        key_code: KeyCode,
+        key_modifiers: KeyModifiers,
+    ) -> EventHandlingResult {
+        if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
             return EventHandlingResult::Exit(None);
         }
@@ -1056,7 +1074,7 @@ impl<'a> App {
             return EventHandlingResult::Rerender;
         }
 
-        match (key.code, key.modifiers) {
+        match (key_code, key_modifiers) {
             (KeyCode::Esc, _) => {
                 if self.multiselect_enabled() {
                     self.toggle_multiselect_mode();
@@ -1080,9 +1098,13 @@ impl<'a> App {
         match &mut self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 match search_fields_state.focussed_section {
-                    FocussedSection::SearchFields => self.handle_key_searching(key),
+                    FocussedSection::SearchFields => {
+                        self.handle_key_searching(key_code, key_modifiers)
+                    }
                     FocussedSection::SearchResults => {
-                        if let Some(res) = self.try_handle_key_search_results(key) {
+                        if let Some(res) =
+                            self.try_handle_key_search_results(key_code, key_modifiers)
+                        {
                             res
                         } else {
                             match self
@@ -1090,7 +1112,7 @@ impl<'a> App {
                                 .unwrap_search_fields_state_mut()
                                 .search_state
                             {
-                                Some(ref mut state) => state.handle_key(key),
+                                Some(ref mut state) => state.handle_key(key_code, key_modifiers),
                                 None => {
                                     panic!("Focussed on search results but search_state is None")
                                 }
@@ -1100,7 +1122,9 @@ impl<'a> App {
                 }
             }
             Screen::PerformingReplacement(_) => EventHandlingResult::Rerender,
-            Screen::Results(replace_state) => replace_state.handle_key_results(key),
+            Screen::Results(replace_state) => {
+                replace_state.handle_key_results(key_code, key_modifiers)
+            }
         }
     }
 
@@ -1230,7 +1254,7 @@ impl<'a> App {
                             ("<S-tab>", "focus previous", Show::FullOnly),
                             ("<space>", "toggle checkbox", Show::FullOnly),
                         ];
-                        if self.config.search.disable_prepopulated_fields {
+                        if self.disable_prepopulated_fields {
                             keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
                         }
                         keys
@@ -1452,14 +1476,14 @@ impl ValidationErrorHandler for AppErrorHandler {
 #[cfg(test)]
 mod tests {
     use frep_core::{
+        line_reader::LineEnding,
         replace::{ReplaceResult, ReplaceStats},
-        search::SearchResultWithReplacement,
+        search::{SearchResult, SearchResultWithReplacement},
     };
     use rand::Rng;
     use std::path::Path;
 
     use super::*;
-    use frep_core::line_reader::LineEnding;
 
     fn random_num() -> usize {
         let mut rng = rand::rng();
@@ -1635,7 +1659,7 @@ mod tests {
             vec![success_result(), success_result(), success_result()];
 
         let (results, _num_ignored) =
-            scooter_core::replace::split_results(search_results_with_replacements);
+            crate::replace::split_results(search_results_with_replacements);
         let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
@@ -1659,7 +1683,7 @@ mod tests {
         ];
 
         let (results, _num_ignored) =
-            scooter_core::replace::split_results(search_results_with_replacements);
+            crate::replace::split_results(search_results_with_replacements);
         let stats = frep_core::replace::calculate_statistics(results);
 
         assert_eq!(
