@@ -163,6 +163,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_search: args.immediate_search || immediate,
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
+                disable_prepopulated_fields: true, // Overriden in AppRunner::new
             },
         })
     }

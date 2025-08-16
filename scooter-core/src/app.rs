@@ -456,9 +456,9 @@ pub struct AppRunConfig {
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
+    pub disable_prepopulated_fields: bool,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for AppRunConfig {
     fn default() -> Self {
         Self {
@@ -467,6 +467,7 @@ impl Default for AppRunConfig {
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
+            disable_prepopulated_fields: true,
         }
     }
 }
@@ -494,10 +495,11 @@ impl<'a> App {
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
-        disable_prepopulated_fields: bool,
     ) -> Self {
-        let search_fields =
-            SearchFields::with_values(search_field_values, disable_prepopulated_fields);
+        let search_fields = SearchFields::with_values(
+            search_field_values,
+            app_run_config.disable_prepopulated_fields,
+        );
 
         let mut search_fields_state = SearchFieldsState::default();
         if app_run_config.immediate_search {
@@ -510,7 +512,7 @@ impl<'a> App {
             file_searcher: None,
             directory,
             include_hidden: app_run_config.include_hidden,
-            disable_prepopulated_fields,
+            disable_prepopulated_fields: app_run_config.disable_prepopulated_fields,
             errors: vec![],
             popup: None,
             event_sender,
@@ -530,16 +532,9 @@ impl<'a> App {
         directory: PathBuf,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
-        disable_prepopulated_fields: bool,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(
-            directory,
-            search_field_values,
-            event_sender,
-            app_run_config,
-            disable_prepopulated_fields,
-        );
+        let app = Self::new(directory, search_field_values, event_sender, app_run_config);
         (app, app_event_receiver)
     }
 
@@ -578,8 +573,8 @@ impl<'a> App {
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
+                disable_prepopulated_fields: self.disable_prepopulated_fields,
             },
-            self.disable_prepopulated_fields,
         );
     }
 

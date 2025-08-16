@@ -157,18 +157,19 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        app_config: AppConfig<'_>,
+        mut app_config: AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         let config = load_config()?;
+        app_config.app_run_config.disable_prepopulated_fields =
+            config.search.disable_prepopulated_fields;
 
         let (app, event_receiver) = App::new_with_receiver(
             app_config.directory,
             &app_config.search_field_values,
             &app_config.app_run_config,
-            config.search.disable_prepopulated_fields,
         );
 
         let terminal = Terminal::new(backend)?;
