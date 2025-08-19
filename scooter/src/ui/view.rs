@@ -9,8 +9,15 @@ use ratatui::{
     Frame,
 };
 use scooter_core::{
+    app::{App, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
     diff::{line_diff, Diff, DiffColour},
-    utils::{relative_path_from, split_indexed_lines, strip_control_chars},
+    errors::AppError,
+    fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
+    replace::{PerformingReplacementState, ReplaceState},
+    utils::{
+        last_n_chars, read_lines_range_highlighted, relative_path_from, split_indexed_lines,
+        strip_control_chars, HighlightedLine,
+    },
 };
 use std::{
     cmp::min,
@@ -26,89 +33,82 @@ use syntect::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    app::{App, AppError, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
-    config::Config,
-    fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
-    replace::{PerformingReplacementState, ReplaceState},
-    utils::{last_n_chars, read_lines_range_highlighted, HighlightedLine},
-};
+use crate::config::Config;
 
 use frep_core::search::SearchResultWithReplacement;
 use scooter_core::utils::read_lines_range;
 
 use super::colour::to_ratatui_colour;
 
-impl SearchField {
-    fn create_title_spans<'a>(
-        &self,
-        title: &'a str,
-        highlighted: bool,
-        set_by_cli: bool,
-        disable_prepopulated_fields: bool,
-    ) -> Vec<Span<'a>> {
-        let mut fg_color = Color::Reset;
-        if set_by_cli && disable_prepopulated_fields {
-            fg_color = Color::Blue;
-        } else if highlighted {
-            fg_color = Color::Green;
-        }
-        let title_style = Style::new().fg(fg_color);
+fn create_title_spans<'a>(
+    field: &SearchField,
+    title: &'a str,
+    highlighted: bool,
+    set_by_cli: bool,
+    disable_prepopulated_fields: bool,
+) -> Vec<Span<'a>> {
+    let mut fg_color = Color::Reset;
+    if set_by_cli && disable_prepopulated_fields {
+        fg_color = Color::Blue;
+    } else if highlighted {
+        fg_color = Color::Green;
+    }
+    let title_style = Style::new().fg(fg_color);
 
-        let mut spans = vec![Span::styled(title, title_style)];
-        if let Some(error) = self.error() {
-            spans.push(Span::styled(
-                format!(" (Error: {})", error.short),
-                Style::new().fg(Color::Red),
-            ));
-        }
-        spans
+    let mut spans = vec![Span::styled(title, title_style)];
+    if let Some(error) = field.error() {
+        spans.push(Span::styled(
+            format!(" (Error: {})", error.short),
+            Style::new().fg(Color::Red),
+        ));
+    }
+    spans
+}
+
+pub fn render_search_field(
+    field: &SearchField,
+    frame: &mut Frame<'_>,
+    area: Rect,
+    highlighted: bool,
+    disable_prepopulated_fields: bool,
+) {
+    let mut block = Block::bordered();
+    if field.set_by_cli && disable_prepopulated_fields {
+        block = block.border_style(Style::new().blue());
+    } else if highlighted {
+        block = block.border_style(Style::new().green());
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-        highlighted: bool,
-        disable_prepopulated_fields: bool,
-    ) {
-        let mut block = Block::bordered();
-        if self.set_by_cli && disable_prepopulated_fields {
-            block = block.border_style(Style::new().blue());
-        } else if highlighted {
-            block = block.border_style(Style::new().green());
+    let title_spans = create_title_spans(
+        field,
+        field.name.title(),
+        highlighted,
+        field.set_by_cli,
+        disable_prepopulated_fields,
+    );
+
+    match &field.field {
+        Field::Text(f) => {
+            block = block.title(Line::from(title_spans));
+            frame.render_widget(Paragraph::new(f.text()).block(block), area);
         }
+        Field::Checkbox(f) => {
+            let inner_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(5), Constraint::Min(0)])
+                .split(area);
 
-        let title_spans = self.create_title_spans(
-            self.name.title(),
-            highlighted,
-            self.set_by_cli,
-            disable_prepopulated_fields,
-        );
+            frame.render_widget(
+                Paragraph::new(if f.checked { " X " } else { "" }).block(block),
+                inner_chunks[0],
+            );
 
-        match &self.field {
-            Field::Text(f) => {
-                block = block.title(Line::from(title_spans));
-                frame.render_widget(Paragraph::new(f.text()).block(block), area);
-            }
-            Field::Checkbox(f) => {
-                let inner_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Length(5), Constraint::Min(0)])
-                    .split(area);
+            let mut spans = vec![Span::raw(" ")];
+            spans.extend(title_spans);
 
-                frame.render_widget(
-                    Paragraph::new(if f.checked { " X " } else { "" }).block(block),
-                    inner_chunks[0],
-                );
+            let checkbox_text = vec![Line::from(Span::raw("")), Line::from(spans)];
 
-                let mut spans = vec![Span::raw(" ")];
-                spans.extend(title_spans);
-
-                let checkbox_text = vec![Line::from(Span::raw("")), Line::from(spans)];
-
-                frame.render_widget(Paragraph::new(checkbox_text), inner_chunks[1]);
-            }
+            frame.render_widget(Paragraph::new(checkbox_text), inner_chunks[1]);
         }
     }
 }
@@ -138,7 +138,8 @@ fn render_search_fields(
         .zip(areas.iter())
         .enumerate()
         .for_each(|(idx, (search_field, &field_area))| {
-            search_field.render(
+            render_search_field(
+                search_field,
                 frame,
                 field_area,
                 is_focussed && idx == search_fields.highlighted,
@@ -829,7 +830,7 @@ fn error_result(result: &SearchResultWithReplacement) -> [ratatui::widgets::List
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))
 }
 
-pub fn render(app: &mut App, frame: &mut Frame<'_>) {
+pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -870,7 +871,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             render_search_fields(
                 frame,
                 &app.search_fields,
-                &app.config,
+                config,
                 show_popup,
                 num_search_fields_to_render,
                 search_fields_state.focussed_section == FocussedSection::SearchFields,
@@ -891,8 +892,8 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     elapsed,
                     base_path,
                     results,
-                    app.config.get_theme(),
-                    app.config.style.true_color,
+                    config.get_theme(),
+                    config.style.true_color,
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,

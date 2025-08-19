@@ -1,8 +1,5 @@
 use frep_core::validation::SearchConfiguration;
-use scooter::{
-    headless::run_headless, test_with_both_regex_modes,
-    test_with_both_regex_modes_and_fixed_strings,
-};
+use scooter::headless::run_headless;
 
 mod utils;
 

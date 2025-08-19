@@ -14,11 +14,10 @@ use tokio::{
     time::{sleep, Duration, Instant},
 };
 
-use scooter::{
+use scooter::app_runner::{AppConfig, AppRunner};
+use scooter_core::{
     app::AppRunConfig,
-    app_runner::{AppConfig, AppRunner},
     fields::{FieldValue, SearchFieldValues},
-    test_with_both_regex_modes, test_with_both_regex_modes_and_fixed_strings,
 };
 
 mod utils;
