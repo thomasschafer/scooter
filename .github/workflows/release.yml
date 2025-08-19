@@ -59,12 +59,58 @@ jobs:
 
           echo "exists=false" >> $GITHUB_OUTPUT
 
+  validate-crates-io:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: validate-crates-io
+
+      - name: Test build with crates.io dependencies only
+        run: |
+          cleanup() {
+            find . -name "Cargo.toml.backup" -exec bash -c 'mv "$1" "${1%.backup}"' _ {} \;
+            [ -f Cargo.lock.backup ] && mv Cargo.lock.backup Cargo.lock
+          }
+
+          find . -name "Cargo.toml" -exec cp {} {}.backup \;
+          [ -f Cargo.lock ] && cp Cargo.lock Cargo.lock.backup
+
+          for file in $(find . -name "Cargo.toml"); do
+            echo "Processing $file"
+            sed -i 's/, *path *= *"[^"]*"//' "$file"
+            sed -i 's/path *= *"[^"]*" *, *//' "$file"
+          done
+
+          if ! cargo build --release --package scooter; then
+            echo "❌ Build failed with crates.io dependencies - cannot publish"
+            cleanup
+            exit 1
+          fi
+
+          echo "Build succeeded with crates.io dependencies"
+          cleanup
+
+  create-release:
+    needs: [prepare-release, validate-crates-io]
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Create release
-        if: steps.check-version.outputs.exists == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="${{ steps.get-package-info.outputs.version }}"
+          version="${{ needs.prepare-release.outputs.version }}"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
@@ -77,7 +123,7 @@ jobs:
             --draft  # Make it draft until binaries are uploaded
 
   build-and-upload:
-    needs: prepare-release
+    needs: [prepare-release, validate-crates-io]
     if: needs.prepare-release.outputs.should_release == 'true'
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -174,7 +220,7 @@ jobs:
         done
 
   publish:
-    needs: [prepare-release, build-and-upload]
+    needs: [prepare-release, create-release, build-and-upload]
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
