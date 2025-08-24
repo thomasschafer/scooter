@@ -11,7 +11,7 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult},
+    app::{App, AppRunConfig, Event, EventHandlingResult, InputSource},
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
@@ -38,6 +38,7 @@ pub struct AppConfig<'a> {
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
+    pub stdin_content: Option<String>,
 }
 
 impl Default for AppConfig<'_> {
@@ -47,6 +48,7 @@ impl Default for AppConfig<'_> {
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
+            stdin_content: None,
         }
     }
 }
@@ -164,8 +166,14 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     ) -> anyhow::Result<Self> {
         let config = load_config().expect("Failed to read config file");
 
+        let input_source = if let Some(stdin_content) = &app_config.stdin_content {
+            InputSource::Stdin(stdin_content.clone())
+        } else {
+            InputSource::Directory(app_config.directory.clone())
+        };
+
         let (app, event_receiver) = App::new_with_receiver(
-            app_config.directory,
+            input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
             config.search.disable_prepopulated_fields,
