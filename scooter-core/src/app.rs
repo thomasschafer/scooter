@@ -32,6 +32,12 @@ use crate::{
     utils::ceil_div,
 };
 
+#[derive(Debug, Clone)]
+pub enum InputSource {
+    Directory(PathBuf),
+    Stdin(String),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum EventHandlingResult {
     Rerender,
@@ -477,7 +483,7 @@ pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
     pub file_searcher: Option<FileSearcher>,
-    pub directory: PathBuf,
+    pub input_source: InputSource,
     disable_prepopulated_fields: bool,
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
@@ -490,7 +496,7 @@ pub struct App {
 
 impl<'a> App {
     fn new(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
@@ -508,7 +514,7 @@ impl<'a> App {
             current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
             file_searcher: None,
-            directory,
+            input_source,
             include_hidden: app_run_config.include_hidden,
             disable_prepopulated_fields,
             errors: vec![],
@@ -527,14 +533,14 @@ impl<'a> App {
     }
 
     pub fn new_with_receiver(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
         disable_prepopulated_fields: bool,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
-            directory,
+            input_source,
             search_field_values,
             event_sender,
             app_run_config,
@@ -569,7 +575,7 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            self.directory.clone(),
+            self.input_source.clone(),
             &SearchFieldValues::default(),
             self.event_sender.clone(),
             &AppRunConfig {
@@ -1138,6 +1144,11 @@ impl<'a> App {
     }
 
     pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
+        let directory = match &self.input_source {
+            InputSource::Directory(dir) => dir.clone(),
+            InputSource::Stdin(_) => PathBuf::from("."), // Dummy directory for stdin mode
+        };
+
         let search_config = SearchConfiguration {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -1148,7 +1159,7 @@ impl<'a> App {
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
             include_hidden: self.include_hidden,
-            directory: self.directory.clone(),
+            directory,
         };
 
         let mut error_handler = AppErrorHandler::new();
