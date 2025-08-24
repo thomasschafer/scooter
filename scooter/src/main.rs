@@ -1,10 +1,14 @@
 use anyhow::bail;
 use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
-use headless::run_headless;
+use headless::{run_headless, run_headless_with_stdin};
 use log::LevelFilter;
 use logging::{setup_logging, DEFAULT_LOG_LEVEL};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    io::{self, IsTerminal, Read},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use scooter_core::{
     app::AppRunConfig,
@@ -144,12 +148,46 @@ fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
+    if io::stdin().is_terminal() {
+        return Ok(None);
+    }
+
+    let mut stdin_content = String::new();
+    io::stdin().read_to_string(&mut stdin_content)?;
+
+    if stdin_content.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(stdin_content))
+    }
+}
+
+fn validate_stdin_usage(args: &Args, stdin_content: &Option<String>) -> anyhow::Result<()> {
+    if stdin_content.is_some() {
+        // Only validate flags that don't make sense with stdin content
+        if args.hidden {
+            bail!("Cannot use --hidden flag with stdin input");
+        }
+        if args.files_to_include.is_some() {
+            bail!("Cannot use --files-to-include with stdin input");
+        }
+        if args.files_to_exclude.is_some() {
+            bail!("Cannot use --files-to-exclude with stdin input");
+        }
+    }
+    Ok(())
+}
+
 impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
     type Error = anyhow::Error;
 
     fn try_from(args: &'a Args) -> anyhow::Result<Self> {
+        let stdin_content = detect_and_read_stdin()?;
+
         validate_flag_combinations(args)?;
         validate_search_text_required(args)?;
+        validate_stdin_usage(args, &stdin_content)?;
 
         let immediate = args.immediate || args.no_tui;
 
@@ -164,6 +202,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
             },
+            stdin_content,
         })
     }
 }
@@ -206,7 +245,13 @@ async fn main() -> anyhow::Result<()> {
     setup_logging(config.log_level)?;
 
     let results = if args.no_tui {
-        let res = run_headless(config.try_into()?)?;
+        let stdin_content = config.stdin_content.clone();
+        let search_config = config.try_into()?;
+        let res = if let Some(stdin_content) = stdin_content {
+            run_headless_with_stdin(search_config, &stdin_content)?
+        } else {
+            run_headless(search_config)?
+        };
         Some(res)
     } else {
         run_app_tui(config).await?
