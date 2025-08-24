@@ -851,7 +851,10 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
 
     render_key_hints(app, frame, footer_area);
 
-    let base_path = &app.directory;
+    let base_path = match &app.input_source {
+        scooter_core::app::InputSource::Directory(dir) => dir,
+        scooter_core::app::InputSource::Stdin(_) => &std::path::PathBuf::from("."),
+    };
     let show_popup = app.show_popup();
     match &mut app.current_screen {
         Screen::SearchFields(ref mut search_fields_state) => {
