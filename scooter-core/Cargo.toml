@@ -23,7 +23,7 @@ steel = ["dep:steel-core", "dep:steel-derive"]
 
 [dependencies]
 anyhow = "1.0.99"
-bitflags = "2.9.1"
+bitflags = "2.9.3"
 frep-core = "0.1.3"
 log = "0.4.27"
 rayon = "1.11.0"
