@@ -1,7 +1,7 @@
 [package]
 name = "scooter-core"
 version = "0.1.6"
-edition = "2021"
+edition.workspace = true
 authors = ["thomasschafer97@gmail.com"]
 license = "MIT"
 description = "Core find-and-replace functionality"
