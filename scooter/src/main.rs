@@ -163,7 +163,7 @@ fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
     }
 }
 
-fn validate_stdin_usage(args: &Args, stdin_content: &Option<String>) -> anyhow::Result<()> {
+fn validate_stdin_usage(args: &Args, stdin_content: Option<&String>) -> anyhow::Result<()> {
     if stdin_content.is_some() {
         // Only validate flags that don't make sense with stdin content
         if args.hidden {
@@ -187,7 +187,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
 
         validate_flag_combinations(args)?;
         validate_search_text_required(args)?;
-        validate_stdin_usage(args, &stdin_content)?;
+        validate_stdin_usage(args, stdin_content.as_ref())?;
 
         let immediate = args.immediate || args.no_tui;
 
@@ -254,7 +254,7 @@ async fn main() -> anyhow::Result<()> {
         };
         Some(res)
     } else {
-        run_app_tui(config).await?
+        run_app_tui(&config).await?
     };
 
     if let Some(results) = results {

@@ -188,15 +188,15 @@ fn build_test_runner_with_width(
         },
         ..AppConfig::default()
     };
-    build_test_runner_with_config_and_width(config, width)
+    build_test_runner_with_config_and_width(&config, width)
 }
 
-fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
+fn build_test_runner_with_config(config: &AppConfig<'_>) -> anyhow::Result<TestRunner> {
     build_test_runner_with_config_and_width(config, 24)
 }
 
 fn build_test_runner_with_config_and_width(
-    config: AppConfig<'_>,
+    config: &AppConfig<'_>,
     width: u16,
 ) -> anyhow::Result<TestRunner> {
     let backend = TestBackend::new(width * 10 / 3, width);
@@ -1280,7 +1280,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
         search_field_values,
         ..AppConfig::default()
     };
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
 
@@ -1415,7 +1415,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 100).await?;
         let snapshot =
@@ -1474,7 +1474,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1542,7 +1542,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("t[esES]+t", &event_sender);
@@ -1612,7 +1612,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1685,7 +1685,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1763,7 +1763,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1841,7 +1841,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1908,7 +1908,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -1978,7 +1978,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
         send_chars("[invalid regex", &event_sender);
@@ -2048,7 +2048,7 @@ async fn test_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
         },
         ..AppConfig::default()
     };
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2126,7 +2126,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2220,7 +2220,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2318,7 +2318,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2431,7 +2431,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2521,7 +2521,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
         },
         ..AppConfig::default()
     };
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2575,7 +2575,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2631,7 +2631,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2699,7 +2699,7 @@ test_with_both_regex_modes!(
             },
             ..AppConfig::default()
         };
-        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(&config)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
@@ -2857,7 +2857,7 @@ test_with_both_regex_modes!(
             ..AppConfig::default()
         };
         let (run_handle, event_sender, mut snapshot_rx) =
-            build_test_runner_with_config_and_width(config, 48)?;
+            build_test_runner_with_config_and_width(&config, 48)?;
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
 
