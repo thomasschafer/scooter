@@ -11,7 +11,7 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult},
+    app::{App, AppRunConfig, Event, EventHandlingResult, InputSource},
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
@@ -38,6 +38,7 @@ pub struct AppConfig<'a> {
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
+    pub stdin_content: Option<String>,
 }
 
 impl Default for AppConfig<'_> {
@@ -47,6 +48,7 @@ impl Default for AppConfig<'_> {
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
+            stdin_content: None,
         }
     }
 }
@@ -133,7 +135,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(config: &AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
@@ -145,7 +147,7 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     // Used in integration tests
     #[allow(dead_code)]
     pub fn new_test_with_snapshot(
-        config: AppConfig<'_>,
+        config: &AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
         snapshot_sender: UnboundedSender<String>,
@@ -157,15 +159,21 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        app_config: AppConfig<'_>,
+        app_config: &AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         let config = load_config().expect("Failed to read config file");
 
+        let input_source = if let Some(stdin_content) = &app_config.stdin_content {
+            InputSource::Stdin(stdin_content.clone())
+        } else {
+            InputSource::Directory(app_config.directory.clone())
+        };
+
         let (app, event_receiver) = App::new_with_receiver(
-            app_config.directory,
+            input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
             config.search.disable_prepopulated_fields,
@@ -402,7 +410,7 @@ pub fn format_replacement_results(
     format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
 }
 
-pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
+pub async fn run_app_tui(app_config: &AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
     let maybe_replace_state = runner.run_event_loop().await?;

@@ -5,7 +5,7 @@ use frep_core::{
 };
 use insta::assert_debug_snapshot;
 use scooter_core::{
-    app::EventHandlingResult,
+    app::{EventHandlingResult, InputSource},
     errors::AppError,
     fields::{FieldValue, SearchFieldValues, SearchFields},
     replace::{PerformingReplacementState, ReplaceState},
@@ -57,7 +57,7 @@ async fn test_replace_state() {
 #[tokio::test]
 async fn test_app_reset() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -77,7 +77,7 @@ async fn test_app_reset() {
 #[tokio::test]
 async fn test_back_from_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -118,7 +118,7 @@ async fn test_back_from_results() {
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         search_fields,
         &AppRunConfig::default(),
         true,
@@ -183,7 +183,7 @@ async fn test_error_popup_invalid_exclude_files() {
 
 fn test_help_popup_on_screen(initial_screen: Screen) {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -250,7 +250,7 @@ async fn test_help_popup_on_results() {
 #[tokio::test]
 async fn test_keymaps_search_fields() {
     let (app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -265,7 +265,7 @@ async fn test_keymaps_search_fields() {
 #[tokio::test]
 async fn test_keymaps_search_complete() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -289,7 +289,7 @@ async fn test_keymaps_search_complete() {
 #[tokio::test]
 async fn test_keymaps_search_progressing() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -312,7 +312,7 @@ async fn test_keymaps_search_progressing() {
 #[tokio::test]
 async fn test_keymaps_performing_replacement() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -337,7 +337,7 @@ async fn test_keymaps_performing_replacement() {
 #[tokio::test]
 async fn test_keymaps_results() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -382,7 +382,7 @@ async fn test_keymaps_results() {
 #[tokio::test]
 async fn test_keymaps_popup() {
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         true,
@@ -409,7 +409,7 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
     };
 
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
         true,
@@ -445,7 +445,7 @@ async fn test_keybinding_integration_with_disabled_fields() {
     };
 
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
         true,
@@ -479,7 +479,7 @@ async fn test_alt_u_unlocks_all_fields() {
     };
 
     let (mut app, _app_event_receiver) = App::new_with_receiver(
-        current_dir().unwrap(),
+        InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
         true,
