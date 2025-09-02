@@ -69,10 +69,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v24
-      with:
-        extra_nix_config: |
-          experimental-features = nix-command flakes
+      uses: DeterminateSystems/nix-installer-action@v19
 
     - name: Setup Nix cache
       uses: cachix/cachix-action@v13
