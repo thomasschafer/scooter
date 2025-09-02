@@ -71,11 +71,8 @@ jobs:
     - name: Install Nix
       uses: DeterminateSystems/nix-installer-action@v19
 
-    - name: Setup Nix cache
-      uses: cachix/cachix-action@v13
-      with:
-        name: nix-community
-        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+    - name: Nix cache
+      uses: DeterminateSystems/magic-nix-cache-action@v13
 
     - name: Run tests (small test files)
       run: nix run .#end-to-end-test
