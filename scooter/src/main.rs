@@ -1,6 +1,7 @@
 use anyhow::bail;
 use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
+use frep_core::validation::{DirConfig, SearchConfig};
 use headless::{run_headless, run_headless_with_stdin};
 use log::LevelFilter;
 use logging::{setup_logging, DEFAULT_LOG_LEVEL};
@@ -244,23 +245,44 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
-    let results = if args.no_tui {
+    if args.no_tui {
         let stdin_content = config.stdin_content.clone();
-        let search_config = config.try_into()?;
-        let res = if let Some(stdin_content) = stdin_content {
-            run_headless_with_stdin(search_config, &stdin_content)?
+        let search_config = search_config_from_args(&args);
+        if let Some(stdin_content) = stdin_content {
+            let results = run_headless_with_stdin(search_config, &stdin_content)?;
+            print!("{results}");
         } else {
-            run_headless(search_config)?
-        };
-        Some(res)
+            let results = run_headless(search_config, dir_config_from_args(&args))?;
+            println!("{results}");
+        }
     } else {
-        run_app_tui(&config).await?
-    };
-
-    if let Some(results) = results {
-        println!("{results}");
+        let results = run_app_tui(&config).await?;
+        if let Some(results) = results {
+            println!("{results}");
+        }
     }
+
     Ok(())
+}
+
+fn dir_config_from_args(args: &Args) -> DirConfig<'_> {
+    DirConfig {
+        include_globs: args.files_to_include.as_deref(),
+        exclude_globs: args.files_to_exclude.as_deref(),
+        include_hidden: args.hidden,
+        directory: args.directory.clone(),
+    }
+}
+
+fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
+    SearchConfig {
+        search_text: args.search_text.as_deref().unwrap_or(""),
+        replacement_text: args.replace_text.as_deref().unwrap_or(""),
+        fixed_strings: args.fixed_strings,
+        advanced_regex: args.advanced_regex,
+        match_whole_word: args.match_whole_word,
+        match_case: !args.case_insensitive,
+    }
 }
 
 #[cfg(test)]

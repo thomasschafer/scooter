@@ -14,7 +14,7 @@ use frep_core::{
     replace::{add_replacement, replacement_if_match},
     search::{FileSearcher, SearchResult, SearchResultWithReplacement},
     validation::{
-        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        validate_search_configuration, DirConfig, SearchConfig, ValidationErrorHandler,
         ValidationResult,
     },
 };
@@ -1145,26 +1145,32 @@ impl<'a> App {
             InputSource::Stdin(_) => PathBuf::from("."), // Dummy directory for stdin mode
         };
 
-        let search_config = SearchConfiguration {
+        let search_config = SearchConfig {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
             advanced_regex: self.advanced_regex,
-            include_globs: Some(self.search_fields.include_files().text()),
-            exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
+        };
+        let dir_config = DirConfig {
+            include_globs: Some(self.search_fields.include_files().text()),
+            exclude_globs: Some(self.search_fields.exclude_files().text()),
             include_hidden: self.include_hidden,
             directory,
         };
 
         let mut error_handler = AppErrorHandler::new();
-        let result = validate_search_configuration(search_config, &mut error_handler)?;
+        let result =
+            validate_search_configuration(search_config, Some(dir_config), &mut error_handler)?;
         error_handler.apply_to_app(self);
 
         match result {
-            ValidationResult::Success(search_config) => {
-                let file_searcher = FileSearcher::new(search_config);
+            ValidationResult::Success((search_config, dir_config)) => {
+                let file_searcher = FileSearcher::new(
+                    search_config,
+                    dir_config.expect("Found None dir_config when searching through files"),
+                );
                 Ok(Some(file_searcher))
             }
             ValidationResult::ValidationErrors => Ok(None),
