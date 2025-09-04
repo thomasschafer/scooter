@@ -2,7 +2,7 @@ use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
 };
-use frep_core::{search::SearchResultWithReplacement, validation::SearchConfiguration};
+use frep_core::search::SearchResultWithReplacement;
 use futures::{Stream, StreamExt};
 use log::{error, LevelFilter};
 use ratatui::{
@@ -50,25 +50,6 @@ impl Default for AppConfig<'_> {
             app_run_config: AppRunConfig::default(),
             stdin_content: None,
         }
-    }
-}
-
-impl<'a> TryFrom<AppConfig<'a>> for SearchConfiguration<'a> {
-    type Error = anyhow::Error;
-
-    fn try_from(config: AppConfig<'a>) -> anyhow::Result<Self> {
-        Ok(SearchConfiguration {
-            search_text: config.search_field_values.search.value,
-            replacement_text: config.search_field_values.replace.value,
-            fixed_strings: config.search_field_values.fixed_strings.value,
-            advanced_regex: config.app_run_config.advanced_regex,
-            include_globs: Some(config.search_field_values.include_files.value),
-            exclude_globs: Some(config.search_field_values.exclude_files.value),
-            match_whole_word: config.search_field_values.match_whole_word.value,
-            match_case: config.search_field_values.match_case.value,
-            include_hidden: config.app_run_config.include_hidden,
-            directory: config.directory,
-        })
     }
 }
 
