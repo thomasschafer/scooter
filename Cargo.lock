@@ -826,6 +826,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "frep-core"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dec8d66c528540061174afa1e3d21623d355184655ebde801b80e24141fc018b"
+dependencies = [
+ "anyhow",
+ "content_inspector",
+ "crossterm 0.29.0",
+ "fancy-regex",
+ "ignore",
+ "log",
+ "regex",
+ "simple-log",
+ "tempfile",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1892,7 +1909,7 @@ dependencies = [
  "clap",
  "crossterm 0.28.1",
  "etcetera",
- "frep-core",
+ "frep-core 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures",
  "ignore",
  "indoc",
@@ -1919,8 +1936,8 @@ name = "scooter-core"
 version = "0.1.7"
 dependencies = [
  "anyhow",
- "bitflags",
- "frep-core",
+ "bitflags 2.9.4",
+ "frep-core 0.1.5",
  "ignore",
  "insta",
  "log",

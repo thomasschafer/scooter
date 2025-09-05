@@ -1140,11 +1140,6 @@ impl<'a> App {
     }
 
     pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
-        let directory = match &self.input_source {
-            InputSource::Directory(dir) => dir.clone(),
-            InputSource::Stdin(_) => PathBuf::from("."), // Dummy directory for stdin mode
-        };
-
         let search_config = SearchConfig {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
@@ -1153,16 +1148,18 @@ impl<'a> App {
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
         };
-        let dir_config = DirConfig {
-            include_globs: Some(self.search_fields.include_files().text()),
-            exclude_globs: Some(self.search_fields.exclude_files().text()),
-            include_hidden: self.include_hidden,
-            directory,
+        let dir_config = match &self.input_source {
+            InputSource::Directory(directory) => Some(DirConfig {
+                include_globs: Some(self.search_fields.include_files().text()),
+                exclude_globs: Some(self.search_fields.exclude_files().text()),
+                include_hidden: self.include_hidden,
+                directory: directory.clone(),
+            }),
+            InputSource::Stdin(_) => None,
         };
 
         let mut error_handler = AppErrorHandler::new();
-        let result =
-            validate_search_configuration(search_config, Some(dir_config), &mut error_handler)?;
+        let result = validate_search_configuration(search_config, dir_config, &mut error_handler)?;
         error_handler.apply_to_app(self);
 
         match result {

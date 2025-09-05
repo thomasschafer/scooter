@@ -388,10 +388,13 @@ pub fn format_replacement_results(
         None => "".into(),
     };
 
-    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+    format!(
+        "Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
+    )
 }
 
 pub async fn run_app_tui(app_config: &AppConfig<'_>) -> anyhow::Result<Option<String>> {
+    // TODO: handle stdin
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
     let maybe_replace_state = runner.run_event_loop().await?;
@@ -418,7 +421,7 @@ mod tests {
         let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
             result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
         );
     }
 
@@ -437,7 +440,7 @@ mod tests {
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Successful replacements (lines): 3\n"));
         assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
@@ -447,7 +450,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
     }
 }
