@@ -1,10 +1,7 @@
 use anyhow::bail;
-use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
 use frep_core::validation::{DirConfig, SearchConfig};
-use headless::{run_headless, run_headless_with_stdin};
 use log::LevelFilter;
-use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 use std::{
     io::{self, IsTerminal, Read},
     path::PathBuf,
@@ -15,6 +12,10 @@ use scooter_core::{
     app::AppRunConfig,
     fields::{FieldValue, SearchFieldValues},
 };
+
+use app_runner::{run_app_tui, AppConfig};
+use headless::{run_headless, run_headless_with_stdin};
+use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 
 mod app_runner;
 mod config;
@@ -130,11 +131,7 @@ fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
 }
 
 fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
-    if args
-        .search_text
-        .as_ref()
-        .is_none_or(std::string::String::is_empty)
-    {
+    if args.search_text.as_ref().is_none_or(String::is_empty) {
         for (name, enabled) in [
             ("--immediate-search", args.immediate_search),
             ("--immediate", args.immediate),
@@ -164,31 +161,8 @@ fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
     }
 }
 
-fn validate_stdin_usage(args: &Args, stdin_content: Option<&String>) -> anyhow::Result<()> {
+fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Result<()> {
     if stdin_content.is_some() {
-        if args.no_tui {
-            bail!("Cannot use --no-tui flag when processing stdin: TUI is already disabled");
-        }
-        if args.search_text.as_ref().is_none_or(String::is_empty) {
-            bail!(
-                "Must provide search text when processing stdin, e.g. `scooter -s before -r after`"
-            );
-        }
-        for (name, enabled) in [
-            ("--immediate-search", args.immediate_search),
-            ("--immediate-replace", args.immediate_replace),
-            ("--immediate", args.immediate),
-        ] {
-            if enabled {
-                bail!("Cannot use {name} when processing stdin");
-            }
-        }
-        if args.print_results {
-            bail!(
-                "Cannot use --print-results flag when processing stdin: results will already be printed"
-            );
-        }
-
         // File system args
         if args.hidden {
             bail!("Cannot use --hidden flag with stdin input");
@@ -211,7 +185,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
 
         validate_flag_combinations(args)?;
         validate_search_text_required(args)?;
-        validate_stdin_usage(args, stdin_content.as_ref())?;
+        validate_stdin_usage(args, stdin_content.as_deref())?;
 
         let immediate = args.immediate || args.no_tui;
 
@@ -268,17 +242,20 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
-    if let Some(stdin_content) = config.stdin_content {
-        let results = run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?;
-        print!("{results}");
-    } else if args.no_tui {
-        let results = run_headless(search_config_from_args(&args), dir_config_from_args(&args))?;
-        println!("{results}");
+    // TODO: verify output in all cases
+    let results = if args.no_tui {
+        let results = if let Some(stdin_content) = config.stdin_content {
+            run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?
+        } else {
+            run_headless(search_config_from_args(&args), dir_config_from_args(&args))?
+        };
+        Some(results)
     } else {
-        let results = run_app_tui(&config).await?;
-        if let Some(results) = results {
-            println!("{results}");
-        }
+        run_app_tui(&config).await?
+    };
+
+    if let Some(results) = results {
+        print!("{results}");
     }
 
     Ok(())
