@@ -1,5 +1,6 @@
 use frep_core::validation::{DirConfig, SearchConfig};
-use scooter::headless::run_headless;
+use indoc::indoc;
+use scooter::headless::{run_headless, run_headless_with_stdin};
 
 mod utils;
 
@@ -1402,6 +1403,575 @@ test_with_both_regex_modes_and_fixed_strings!(
                 "even reading the file.",
             ),
         );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_basic_replacement,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = indoc! {"
+            This is a test text.
+            It contains TEST_PATTERN that should be replaced.
+            Multiple lines with TEST_PATTERN here."
+        };
+
+        let search_config = SearchConfig {
+            search_text: "TEST_PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                This is a test text.
+                It contains REPLACEMENT that should be replaced.
+                Multiple lines with REPLACEMENT here."
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(test_text_regex_replacement, |advanced_regex| async move {
+    let input_text = indoc! {"
+            Numbers: 123, 456, and 789.
+            Phone: (555) 123-4567
+            IP: 192.168.1.1"
+    };
+
+    let search_config = SearchConfig {
+        search_text: r"\d{3}",
+        replacement_text: "XXX",
+        fixed_strings: false,
+        match_case: true,
+        match_whole_word: false,
+        advanced_regex,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        indoc! {"
+                Numbers: XXX, XXX, and XXX.
+                Phone: (XXX) XXX-XXX7
+                IP: XXX.XXX.1.1"
+        }
+    );
+
+    Ok(())
+});
+
+test_with_both_regex_modes!(
+    test_text_regex_with_capture_groups,
+    |advanced_regex| async move {
+        let input_text = indoc! {"
+            username: john_doe, email: john@example.com
+            username: jane_smith, email: jane@example.com"
+        };
+
+        let search_config = SearchConfig {
+            search_text: r"username: (\w+), email: ([^@]+)@",
+            replacement_text: "user: $1 (contact: $2 at",
+            fixed_strings: false,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                user: john_doe (contact: john atexample.com
+                user: jane_smith (contact: jane atexample.com"
+            }
+        );
+
+        let input_text2 = indoc! {"
+            [2023-01-15] INFO: System started
+            [2023-02-20] ERROR: Connection failed"
+        };
+
+        let search_config2 = SearchConfig {
+            search_text: r"\[(\d{4})-(\d{2})-(\d{2})\]",
+            replacement_text: "[$3/$2/$1]",
+            fixed_strings: false,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result2 = run_headless_with_stdin(input_text2, search_config2);
+        assert!(result2.is_ok());
+        assert_eq!(
+            result2.unwrap(),
+            indoc! {"
+                [15/01/2023] INFO: System started
+                [20/02/2023] ERROR: Connection failed"
+            }
+        );
+
+        Ok(())
+    }
+);
+
+#[tokio::test]
+async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
+    let input_text = indoc! {"
+        let x = 10;
+        const y: i32 = 20;
+        let mut z = 30;
+        const MAX_SIZE: usize = 100;"
+    };
+
+    let search_config = SearchConfig {
+        search_text: r"let(?!\s+mut)",
+        replacement_text: "const",
+        fixed_strings: false,
+        match_case: true,
+        match_whole_word: false,
+        advanced_regex: true,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        indoc! {"
+            const x = 10;
+            const y: i32 = 20;
+            let mut z = 30;
+            const MAX_SIZE: usize = 100;"
+        }
+    );
+
+    let input_text2 = indoc! {"
+        # Heading 1
+        ## Subheading
+        This is **bold** and *italic* text."
+    };
+
+    let search_config2 = SearchConfig {
+        search_text: r"(?<=# )[A-Za-z]+\s+(\d+)",
+        replacement_text: "Section $1",
+        fixed_strings: false,
+        match_case: true,
+        match_whole_word: false,
+        advanced_regex: true,
+    };
+
+    let result2 = run_headless_with_stdin(input_text2, search_config2);
+    assert!(result2.is_ok());
+    assert_eq!(
+        result2.unwrap(),
+        indoc! {"
+            # Section 1
+            ## Subheading
+            This is **bold** and *italic* text."
+        }
+    );
+
+    Ok(())
+}
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_match_whole_word,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = indoc! {"
+            This has whole_word and whole_word_suffix and prefix_whole_word.
+            Also xwhole_wordx and sub_whole_word_part."
+        };
+
+        let search_config = SearchConfig {
+            search_text: "whole_word",
+            replacement_text: "REPLACED",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: true,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                This has REPLACED and whole_word_suffix and prefix_whole_word.
+                Also xwhole_wordx and sub_whole_word_part."
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_case_sensitivity,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = indoc! {"
+            This has pattern, PATTERN, and PaTtErN variations.
+            Also pAtTeRn and Pattern."
+        };
+
+        // Case sensitive test
+        let search_config_sensitive = SearchConfig {
+            search_text: "pattern",
+            replacement_text: "REPLACED",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_sensitive = run_headless_with_stdin(input_text, search_config_sensitive);
+        assert!(result_sensitive.is_ok());
+        assert_eq!(
+            result_sensitive.unwrap(),
+            indoc! {"
+                This has REPLACED, PATTERN, and PaTtErN variations.
+                Also pAtTeRn and Pattern."
+            }
+        );
+
+        // Case insensitive test
+        let search_config_insensitive = SearchConfig {
+            search_text: "pattern",
+            replacement_text: "variable",
+            fixed_strings,
+            match_case: false,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_insensitive = run_headless_with_stdin(input_text, search_config_insensitive);
+        assert!(result_insensitive.is_ok());
+        assert_eq!(
+            result_insensitive.unwrap(),
+            indoc! {"
+                This has variable, variable, and variable variations.
+                Also variable and variable."
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_empty_and_single_line,
+    |advanced_regex, fixed_strings| async move {
+        // Test empty string
+        let empty_text = "";
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(empty_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "");
+
+        // Test single line with match
+        let single_line = "This line has PATTERN in it";
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(single_line, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "This line has REPLACEMENT in it");
+
+        // Test single line without match
+        let single_line_no_match = "This line has no matches";
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(single_line_no_match, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "This line has no matches");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_multiple_matches_per_line,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = indoc! {"
+            PATTERN at start, PATTERN in middle, and PATTERN at end
+            Another line with PATTERN and PATTERN again"
+        };
+
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACED",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                REPLACED at start, REPLACED in middle, and REPLACED at end
+                Another line with REPLACED and REPLACED again"
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_validation_errors_regex,
+    |advanced_regex| async move {
+        let input_text = "This text won't be modified as the configuration will be invalid";
+
+        let search_config = SearchConfig {
+            search_text: "(", // Unclosed parenthesis = invalid regex
+            replacement_text: "replacement",
+            fixed_strings: false,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(err_str.contains("Failed to parse search text"));
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_no_multiline_matches,
+    |advanced_regex| async move {
+        let input_text = indoc! {"
+            This is a line with START
+            END of pattern here that should not match.
+            
+            Another line START with
+            END in next line.
+            
+            START pattern on this line only END."
+        };
+
+        // Search for a pattern that would match across lines if multiline matching was enabled
+        let search_config = SearchConfig {
+            search_text: r"START.*END",
+            replacement_text: "REPLACED",
+            fixed_strings: false,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                This is a line with START
+                END of pattern here that should not match.
+                
+                Another line START with
+                END in next line.
+                
+                REPLACED."
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_preserve_line_endings,
+    |advanced_regex, fixed_strings| async move {
+        // Test with LF line endings (\n)
+        let input_lf = "Line 1 with PATTERN\nLine 2 with PATTERN\nLine 3 without match\n";
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_lf = run_headless_with_stdin(input_lf, search_config);
+        assert!(result_lf.is_ok());
+        assert_eq!(
+            result_lf.unwrap(),
+            "Line 1 with REPLACEMENT\nLine 2 with REPLACEMENT\nLine 3 without match\n"
+        );
+
+        // Test with CRLF line endings (\r\n)
+        let input_crlf = "Line 1 with PATTERN\r\nLine 2 with PATTERN\r\nLine 3 without match\r\n";
+        let search_config_crlf = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_crlf = run_headless_with_stdin(input_crlf, search_config_crlf);
+        assert!(result_crlf.is_ok());
+        assert_eq!(
+            result_crlf.unwrap(),
+            "Line 1 with REPLACEMENT\r\nLine 2 with REPLACEMENT\r\nLine 3 without match\r\n"
+        );
+
+        // Test with mixed line endings
+        let input_mixed = "Line 1 with PATTERN\nLine 2 with PATTERN\r\nLine 3 without match\n";
+        let search_config_mixed = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_mixed = run_headless_with_stdin(input_mixed, search_config_mixed);
+        assert!(result_mixed.is_ok());
+        assert_eq!(
+            result_mixed.unwrap(),
+            "Line 1 with REPLACEMENT\nLine 2 with REPLACEMENT\r\nLine 3 without match\n"
+        );
+
+        // Test with no trailing newline
+        let input_no_trailing = "Line 1 with PATTERN\nLine 2 with PATTERN";
+        let search_config_no_trailing = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_no_trailing =
+            run_headless_with_stdin(input_no_trailing, search_config_no_trailing);
+        assert!(result_no_trailing.is_ok());
+        assert_eq!(
+            result_no_trailing.unwrap(),
+            "Line 1 with REPLACEMENT\nLine 2 with REPLACEMENT"
+        );
+
+        // Test with empty lines
+        let input_empty_lines =
+            "Line 1 with PATTERN\n\nEmpty line above\r\n\r\nLine 4 with PATTERN\n";
+        let search_config_empty = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result_empty_lines = run_headless_with_stdin(input_empty_lines, search_config_empty);
+        assert!(result_empty_lines.is_ok());
+        assert_eq!(
+            result_empty_lines.unwrap(),
+            "Line 1 with REPLACEMENT\n\nEmpty line above\r\n\r\nLine 4 with REPLACEMENT\n"
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_special_characters,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = indoc! {"
+            Special chars: !@#$%^&*()_+-={}[]|\\:;\"'<>?,./ with PATTERN
+            Unicode: 🦀 Rust 🔥 PATTERN émojis
+            Tabs:\t\tPATTERN\t\there"
+        };
+
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACED",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            indoc! {"
+                Special chars: !@#$%^&*()_+-={}[]|\\:;\"'<>?,./ with REPLACED
+                Unicode: 🦀 Rust 🔥 REPLACED émojis
+                Tabs:\t\tREPLACED\t\there"
+            }
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_long_lines,
+    |advanced_regex, fixed_strings| async move {
+        // Test with very long lines
+        let long_line = "A".repeat(1000) + "PATTERN" + &"B".repeat(1000);
+        let input_text = format!("Short line\n{long_line}\nAnother short line");
+
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACED",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+
+        let result = run_headless_with_stdin(&input_text, search_config);
+        assert!(result.is_ok());
+        let expected = format!(
+            "Short line\n{}REPLACED{}\nAnother short line",
+            "A".repeat(1000),
+            "B".repeat(1000)
+        );
+        assert_eq!(result.unwrap(), expected);
 
         Ok(())
     }
