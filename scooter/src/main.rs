@@ -166,7 +166,30 @@ fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
 
 fn validate_stdin_usage(args: &Args, stdin_content: Option<&String>) -> anyhow::Result<()> {
     if stdin_content.is_some() {
-        // Only validate flags that don't make sense with stdin content
+        if args.no_tui {
+            bail!("Cannot use --no-tui flag when processing stdin: TUI is already disabled");
+        }
+        if args.search_text.as_ref().is_none_or(String::is_empty) {
+            bail!(
+                "Must provide search text when processing stdin, e.g. `scooter -s before -r after`"
+            );
+        }
+        for (name, enabled) in [
+            ("--immediate-search", args.immediate_search),
+            ("--immediate-replace", args.immediate_replace),
+            ("--immediate", args.immediate),
+        ] {
+            if enabled {
+                bail!("Cannot use {name} when processing stdin");
+            }
+        }
+        if args.print_results {
+            bail!(
+                "Cannot use --print-results flag when processing stdin: results will already be printed"
+            );
+        }
+
+        // File system args
         if args.hidden {
             bail!("Cannot use --hidden flag with stdin input");
         }
@@ -245,16 +268,12 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
-    if args.no_tui {
-        let stdin_content = config.stdin_content.clone();
-        let search_config = search_config_from_args(&args);
-        if let Some(stdin_content) = stdin_content {
-            let results = run_headless_with_stdin(&stdin_content, search_config)?;
-            print!("{results}");
-        } else {
-            let results = run_headless(search_config, dir_config_from_args(&args))?;
-            println!("{results}");
-        }
+    if let Some(stdin_content) = config.stdin_content {
+        let results = run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?;
+        print!("{results}");
+    } else if args.no_tui {
+        let results = run_headless(search_config_from_args(&args), dir_config_from_args(&args))?;
+        println!("{results}");
     } else {
         let results = run_app_tui(&config).await?;
         if let Some(results) = results {
