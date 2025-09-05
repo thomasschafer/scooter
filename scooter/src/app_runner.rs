@@ -2,7 +2,7 @@ use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
 };
-use frep_core::{search::SearchResultWithReplacement, validation::SearchConfiguration};
+use frep_core::search::SearchResultWithReplacement;
 use futures::{Stream, StreamExt};
 use log::{error, LevelFilter};
 use ratatui::{
@@ -11,7 +11,7 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult},
+    app::{App, AppRunConfig, Event, EventHandlingResult, InputSource},
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
@@ -38,6 +38,7 @@ pub struct AppConfig<'a> {
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
+    pub stdin_content: Option<String>,
 }
 
 impl Default for AppConfig<'_> {
@@ -47,26 +48,8 @@ impl Default for AppConfig<'_> {
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
+            stdin_content: None,
         }
-    }
-}
-
-impl<'a> TryFrom<AppConfig<'a>> for SearchConfiguration<'a> {
-    type Error = anyhow::Error;
-
-    fn try_from(config: AppConfig<'a>) -> anyhow::Result<Self> {
-        Ok(SearchConfiguration {
-            search_text: config.search_field_values.search.value,
-            replacement_text: config.search_field_values.replace.value,
-            fixed_strings: config.search_field_values.fixed_strings.value,
-            advanced_regex: config.app_run_config.advanced_regex,
-            include_globs: Some(config.search_field_values.include_files.value),
-            exclude_globs: Some(config.search_field_values.exclude_files.value),
-            match_whole_word: config.search_field_values.match_whole_word.value,
-            match_case: config.search_field_values.match_case.value,
-            include_hidden: config.app_run_config.include_hidden,
-            directory: config.directory,
-        })
     }
 }
 
@@ -133,7 +116,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(config: &AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
@@ -145,7 +128,7 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     // Used in integration tests
     #[allow(dead_code)]
     pub fn new_test_with_snapshot(
-        config: AppConfig<'_>,
+        config: &AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
         snapshot_sender: UnboundedSender<String>,
@@ -157,15 +140,21 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        app_config: AppConfig<'_>,
+        app_config: &AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         let config = load_config().expect("Failed to read config file");
 
+        let input_source = if let Some(stdin_content) = &app_config.stdin_content {
+            InputSource::Stdin(stdin_content.clone())
+        } else {
+            InputSource::Directory(app_config.directory.clone())
+        };
+
         let (app, event_receiver) = App::new_with_receiver(
-            app_config.directory,
+            input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
             config.search.disable_prepopulated_fields,
@@ -399,10 +388,13 @@ pub fn format_replacement_results(
         None => "".into(),
     };
 
-    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+    format!(
+        "Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
+    )
 }
 
-pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
+pub async fn run_app_tui(app_config: &AppConfig<'_>) -> anyhow::Result<Option<String>> {
+    // TODO: handle stdin
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
     let maybe_replace_state = runner.run_event_loop().await?;
@@ -429,7 +421,7 @@ mod tests {
         let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
             result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
         );
     }
 
@@ -448,7 +440,7 @@ mod tests {
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Successful replacements (lines): 3\n"));
         assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
@@ -458,7 +450,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
     }
 }
