@@ -165,13 +165,13 @@ fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Res
     if stdin_content.is_some() {
         // File system args
         if args.hidden {
-            bail!("Cannot use --hidden flag with stdin input");
+            bail!("Cannot use --hidden flag when processing stdin");
         }
         if args.files_to_include.is_some() {
-            bail!("Cannot use --files-to-include with stdin input");
+            bail!("Cannot use --files-to-include when processing stdin");
         }
         if args.files_to_exclude.is_some() {
-            bail!("Cannot use --files-to-exclude with stdin input");
+            bail!("Cannot use --files-to-exclude when processing stdin");
         }
     }
     Ok(())
