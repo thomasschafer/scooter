@@ -249,7 +249,7 @@ async fn main() -> anyhow::Result<()> {
         let stdin_content = config.stdin_content.clone();
         let search_config = search_config_from_args(&args);
         if let Some(stdin_content) = stdin_content {
-            let results = run_headless_with_stdin(search_config, &stdin_content)?;
+            let results = run_headless_with_stdin(&stdin_content, search_config)?;
             print!("{results}");
         } else {
             let results = run_headless(search_config, dir_config_from_args(&args))?;

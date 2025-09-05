@@ -11,8 +11,8 @@ pub fn run_headless(
 }
 
 pub fn run_headless_with_stdin(
-    search_config: SearchConfig<'_>,
     stdin_content: &str,
+    search_config: SearchConfig<'_>,
 ) -> anyhow::Result<String> {
     run::find_and_replace_text(stdin_content, search_config)
 }
