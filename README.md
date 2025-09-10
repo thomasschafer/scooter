@@ -311,22 +311,36 @@ exit = true
 
 ### Neovim
 
-Install Toggleterm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim?tab=readme-ov-file#installation), and then add the following Lua configuration, which opens up Scooter with `<leader>s`:
+Install ToggleTerm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim#installation), and then add the following Lua configuration, which opens up Scooter with `<leader>s`:
 
 ```lua
 local Terminal = require("toggleterm.terminal").Terminal
+local scooter_term = Terminal:new({
+    cmd = "scooter",
+    direction = "float",
+    close_on_exit = true,
+})
 
-local scooter = Terminal:new({ cmd = "scooter", hidden = true })
+_G.EditLineFromScooter = function(file_path, line)
+    scooter_term:close()
 
-function _scooter_toggle()
-  scooter:toggle()
+    local path = vim.fn.expand("%:p")
+    if path ~= file_path then
+        vim.cmd("e " .. file_path)
+    end
+    vim.cmd(tostring(line))
 end
 
-vim.keymap.set("n", "<leader>s", "<cmd>lua _scooter_toggle()<CR>", {
-  noremap = true,
-  silent = true,
-  desc = "Toggle Scooter"
-})
+vim.keymap.set('n', '<leader>s', function()
+    scooter_term:toggle()
+end, { desc = 'Toggle scooter' })
+```
+
+You can then add the following to your [Scooter config file](#configuration-options) to open up files with `e`, which hides the ToggleTerm window. You can then resume with `<leader>s` again.
+
+```toml
+[editor_open]
+command = "nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter(\"%file\", %line)<CR>'"
 ```
 
 ## Contributing
