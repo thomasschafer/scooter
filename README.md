@@ -322,13 +322,16 @@ local scooter_term = Terminal:new({
 })
 
 _G.EditLineFromScooter = function(file_path, line)
-    scooter_term:close()
+    pcall(function() scooter_term:close() end)
 
-    local path = vim.fn.expand("%:p")
-    if path ~= file_path then
-        vim.cmd("e " .. file_path)
+    local current_path = vim.fn.expand("%:p")
+    local target_path = vim.fn.fnamemodify(file_path, ":p")
+
+    if current_path ~= target_path then
+        vim.cmd.edit(vim.fn.fnameescape(file_path))
     end
-    vim.cmd(tostring(line))
+
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
 end
 
 vim.keymap.set('n', '<leader>s', function()
