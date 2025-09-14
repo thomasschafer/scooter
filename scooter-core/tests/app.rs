@@ -107,7 +107,7 @@ async fn test_back_from_results() {
     );
 
     let res = app.handle_key_event(ScooterKeyCode::Char('o'), ScooterKeyModifiers::CONTROL);
-    assert!(res != EventHandlingResult::Exit(None));
+    assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert_eq!(app.search_fields.search().text(), "foo");
     assert_eq!(app.search_fields.replace().text(), "bar");
     assert!(app.search_fields.fixed_strings().checked);
@@ -126,7 +126,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
 
     // Simulate search being triggered in background
     let res = app.perform_search_if_valid();
-    assert!(res != EventHandlingResult::Exit(None));
+    assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup
@@ -135,11 +135,11 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
-    assert!(res != EventHandlingResult::Exit(None));
+    assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
-    assert_eq!(res, EventHandlingResult::Exit(None));
+    assert!(matches!(res, EventHandlingResult::Exit(None)));
 }
 
 #[tokio::test]
@@ -195,12 +195,12 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
     assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
 
     let res_open = app.handle_key_event(ScooterKeyCode::Char('h'), ScooterKeyModifiers::CONTROL);
-    assert!(res_open == EventHandlingResult::Rerender);
+    assert!(matches!(res_open, EventHandlingResult::Rerender));
     assert!(matches!(app.popup(), Some(Popup::Help)));
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
 
     let res_close = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
-    assert!(res_close == EventHandlingResult::Rerender);
+    assert!(matches!(res_close, EventHandlingResult::Rerender));
     assert!(app.popup().is_none());
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
 }
@@ -425,7 +425,7 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
     );
 
     let result = app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
-    assert_eq!(result, EventHandlingResult::Rerender);
+    assert_eq!(matches!(result, EventHandlingResult::Rerender));
 
     for field in &app.search_fields.fields {
         assert!(!field.set_by_cli);

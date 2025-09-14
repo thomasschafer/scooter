@@ -11,10 +11,9 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult, InputSource},
+    app::{App, AppRunConfig, Event, EventHandlingResult, ExitState, InputSource},
     errors::AppError,
     fields::SearchFieldValues,
-    replace::ReplaceState,
 };
 use std::{
     env, io,
@@ -186,7 +185,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         Ok(())
     }
 
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ReplaceState>> {
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ExitState>> {
         loop {
             let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
@@ -225,7 +224,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             }
                             self.tui.init()?;
                             res
-
                         }
                         Event::App(app_event) => {
                             self.app.handle_app_event(&app_event)
@@ -234,6 +232,10 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.app.perform_replacement();
                             EventHandlingResult::Rerender
                         }
+                        Event::ExitAndReplace(state) => {
+                            return Ok(Some(ExitState{stats: None, stdout_state: Some(state)})); // TODO: implement print_results
+                        }
+
                     }
                 }
                 Some(event) = self.app.background_processing_recv() => {
@@ -399,15 +401,31 @@ pub async fn run_app_tui(app_config: &AppConfig<'_>) -> anyhow::Result<Option<St
     runner.init()?;
     let maybe_replace_state = runner.run_event_loop().await?;
     runner.cleanup()?;
-    let maybe_results = maybe_replace_state.map(|replace_state| {
-        format_replacement_results(
-            replace_state.num_successes,
-            Some(replace_state.num_ignored),
-            Some(&replace_state.errors),
-        )
-    });
+    let maybe_stats = maybe_replace_state
+        .as_ref()
+        .and_then(|replace_state| replace_state.stats.as_ref())
+        .map(|stats| {
+            format_replacement_results(
+                stats.num_successes,
+                Some(stats.num_ignored),
+                Some(&stats.errors),
+            )
+        });
+    if let Some(stdout_state) = maybe_replace_state.and_then(|state| state.stdout_state) {
+        for line in stdout_state.stdin.lines() {
+            if let Some(res) = frep_core::replace::replacement_if_match(
+                line,
+                &stdout_state.search_config.search,
+                &stdout_state.search_config.replace,
+            ) {
+                println!("{res}");
+            } else {
+                println!("{line}");
+            }
+        }
+    }
 
-    Ok(maybe_results)
+    Ok(maybe_stats)
 }
 
 #[cfg(test)]

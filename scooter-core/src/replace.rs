@@ -1,6 +1,6 @@
 use frep_core::{
     replace::{replace_in_file, replacement_if_match, ReplaceResult},
-    search::{FileSearcher, SearchResultWithReplacement},
+    search::{FileSearcher, ParsedSearchConfig, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, ExitState},
     fields::{KeyCode, KeyModifiers},
 };
 
@@ -110,7 +110,7 @@ fn validate_search_result_correctness(
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplaceState {
     pub num_successes: usize,
     pub num_ignored: usize,
@@ -137,7 +137,12 @@ impl ReplaceState {
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit(None),
+            (KeyCode::Enter | KeyCode::Char('q'), _) => {
+                return EventHandlingResult::Exit(Some(ExitState {
+                    stats: None,
+                    stdout_state: None,
+                }))
+            }
             _ => return EventHandlingResult::None,
         }
         EventHandlingResult::Rerender
@@ -237,6 +242,10 @@ pub fn perform_replacement(
     })
 }
 
+pub fn replace_in_line(input: String, search_config: ParsedSearchConfig) -> String {
+    todo!()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -248,7 +257,7 @@ mod tests {
     };
 
     use crate::{
-        app::EventHandlingResult,
+        app::{EventHandlingResult, ExitState},
         fields::{KeyCode, KeyModifiers},
         replace::{self, ReplaceState},
     };
@@ -425,30 +434,42 @@ mod tests {
 
         // Test scrolling down with 'j'
         let result = state.handle_key_results(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::Rerender);
+        assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 1);
 
         // Test scrolling up with 'k'
         let result = state.handle_key_results(KeyCode::Char('k'), KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::Rerender);
+        assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 0);
 
         // Test scrolling down with Down arrow
         let result = state.handle_key_results(KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::Rerender);
+        assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 1);
 
         // Test exit with Enter
         let result = state.handle_key_results(KeyCode::Enter, KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::Exit(None));
+        assert!(matches!(
+            result,
+            EventHandlingResult::Exit(Some(ExitState {
+                stats: None,
+                stdout_state: None
+            }))
+        ));
 
         // Test exit with 'q'
         let result = state.handle_key_results(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::Exit(None));
+        assert!(matches!(
+            result,
+            EventHandlingResult::Exit(Some(ExitState {
+                stats: None,
+                stdout_state: None
+            }))
+        ));
 
         // Test unhandled key
         let result = state.handle_key_results(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(result, EventHandlingResult::None);
+        assert!(matches!(result, EventHandlingResult::None));
     }
 
     #[test]
