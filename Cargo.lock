@@ -1909,7 +1909,7 @@ dependencies = [
  "clap",
  "crossterm 0.28.1",
  "etcetera",
- "frep-core 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "frep-core",
  "futures",
  "ignore",
  "indoc",
@@ -1937,7 +1937,7 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "bitflags 2.9.4",
- "frep-core 0.1.5",
+ "frep-core",
  "ignore",
  "insta",
  "log",
