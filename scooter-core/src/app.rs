@@ -12,7 +12,7 @@ use std::{
 
 use frep_core::{
     replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
+    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
         validate_search_configuration, DirConfig, SearchConfig, ValidationErrorHandler,
         ValidationResult,
@@ -39,10 +39,29 @@ pub enum InputSource {
     Stdin(String),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+pub struct ExitState {
+    pub stats: Option<ReplaceState>,
+    pub stdout_state: Option<ExitAndReplaceState>, // TODO: return something like an iterator over lines, to stream results
+}
+
+impl std::fmt::Debug for ExitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stdout_str = &match self.stdout_state {
+            None => "None",
+            Some(_) => "Some",
+        }
+        .to_string();
+        f.debug_struct("ExitState")
+            .field("stats", &self.stats)
+            .field("stdout", stdout_str)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub enum EventHandlingResult {
     Rerender,
-    Exit(Option<ReplaceState>),
+    Exit(Option<ExitState>),
     None,
 }
 
@@ -68,10 +87,17 @@ pub enum AppEvent {
 }
 
 #[derive(Debug)]
+pub struct ExitAndReplaceState {
+    pub stdin: String,
+    pub search_config: ParsedSearchConfig,
+}
+
+#[derive(Debug)]
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
     PerformReplacement,
+    ExitAndReplace(ExitAndReplaceState),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -806,7 +832,20 @@ impl<'a> App {
                         );
                     }
                     Searcher::TextSearcher { search_config } => {
-                        todo!()
+                        let temp_placeholder = InputSource::Stdin("".into());
+                        let InputSource::Stdin(input) = std::mem::replace(
+                            &mut self.input_source,
+                            // We'll exit after this so doesn't matter what we put here
+                            temp_placeholder,
+                        ) else {
+                            panic!("Expected stdin input source, found {:?}", self.input_source)
+                        };
+                        self.event_sender
+                            .send(Event::ExitAndReplace(ExitAndReplaceState {
+                                stdin: input,
+                                search_config,
+                            }))
+                            .expect("Failed to send ExitAndReplace event");
                     }
                 }
 
@@ -878,7 +917,10 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    EventHandlingResult::Exit(Some(replace_state))
+                    EventHandlingResult::Exit(Some(ExitState {
+                        stats: Some(replace_state),
+                        stdout_state: None,
+                    }))
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -1090,7 +1132,10 @@ impl<'a> App {
 
         if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return EventHandlingResult::Exit(None);
+            return EventHandlingResult::Exit(Some(ExitState {
+                stats: None,
+                stdout_state: None,
+            }));
         }
 
         if self.popup.is_some() {
@@ -1105,7 +1150,10 @@ impl<'a> App {
                     return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return EventHandlingResult::Exit(None);
+                    return EventHandlingResult::Exit(Some(ExitState {
+                        stats: None,
+                        stdout_state: None,
+                    }));
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
@@ -1168,7 +1216,7 @@ impl<'a> App {
                 include_hidden: self.include_hidden,
                 directory: directory.clone(),
             }),
-            InputSource::Stdin(_) => None,
+            InputSource::Stdin { .. } => None,
         };
 
         let mut error_handler = AppErrorHandler::new();
@@ -1184,7 +1232,7 @@ impl<'a> App {
                     );
                     Some(Searcher::FileSearcher(file_searcher))
                 }
-                InputSource::Stdin(_) => Some(Searcher::TextSearcher { search_config }),
+                InputSource::Stdin { .. } => Some(Searcher::TextSearcher { search_config }),
             },
             ValidationResult::ValidationErrors => None,
         };
