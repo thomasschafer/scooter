@@ -31,7 +31,7 @@ syntect = "5.2.0"
 tempfile = "3.21.0"
 termini = "1.0.0"
 tokio = { version = "1.47.1", features = ["full"] }
-toml = "0.9.5"
+toml = "0.9.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 crossterm = { version = "0.28", features = [
