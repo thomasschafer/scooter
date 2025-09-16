@@ -41,7 +41,7 @@ crossterm = { version = "0.28", features = [
 ] }
 
 [dev-dependencies]
-insta = "1.43.1"
+insta = "1.43.2"
 rand = "0.9.2"
 serial_test = "3.2.0"
 
