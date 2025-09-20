@@ -61,8 +61,20 @@ impl std::fmt::Debug for ExitState {
 #[derive(Debug)]
 pub enum EventHandlingResult {
     Rerender,
-    Exit(Option<ExitState>),
+    Exit(Option<Box<ExitState>>),
     None,
+}
+
+impl EventHandlingResult {
+    pub(crate) fn new_exit_state(
+        stats: Option<ReplaceState>,
+        stdout_state: Option<ExitAndReplaceState>,
+    ) -> EventHandlingResult {
+        EventHandlingResult::Exit(Some(Box::new(ExitState {
+            stats,
+            stdout_state,
+        })))
+    }
 }
 
 #[derive(Debug)]
@@ -917,10 +929,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    EventHandlingResult::Exit(Some(ExitState {
-                        stats: Some(replace_state),
-                        stdout_state: None,
-                    }))
+                    EventHandlingResult::new_exit_state(Some(replace_state), None)
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -1132,10 +1141,7 @@ impl<'a> App {
 
         if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return EventHandlingResult::Exit(Some(ExitState {
-                stats: None,
-                stdout_state: None,
-            }));
+            return EventHandlingResult::new_exit_state(None, None);
         }
 
         if self.popup.is_some() {
@@ -1150,10 +1156,7 @@ impl<'a> App {
                     return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return EventHandlingResult::Exit(Some(ExitState {
-                        stats: None,
-                        stdout_state: None,
-                    }));
+                    return EventHandlingResult::new_exit_state(None, None);
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {

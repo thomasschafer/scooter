@@ -248,7 +248,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
             match event_handling_result {
                 EventHandlingResult::Rerender => self.draw()?,
-                EventHandlingResult::Exit(results) => return Ok(results),
+                EventHandlingResult::Exit(results) => return Ok(results.map(|t| *t)),
                 EventHandlingResult::None => {}
             }
         }
