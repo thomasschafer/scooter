@@ -688,6 +688,12 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
+        // TODO(stdin): test that cancellation etc. all still works
+        let mut search_state = SearchState::new(
+            background_processing_sender.clone(),
+            background_processing_receiver,
+            cancelled.clone(),
+        );
 
         match &self.searcher {
             Some(Searcher::FileSearcher(file_searcher)) => {
@@ -695,22 +701,21 @@ impl<'a> App {
                     file_searcher.clone(),
                     &background_processing_sender,
                     self.event_sender.clone(),
-                    cancelled.clone(),
+                    cancelled,
                 );
             }
             Some(Searcher::TextSearcher { search_config }) => {
-                todo!()
+                let InputSource::Stdin(ref stdin) = self.input_source else {
+                    panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
+                };
+                // TODO: append to search_state.results
             }
             None => {
                 panic!("Fields should have been parsed")
             }
         }
 
-        search_fields_state.search_state = Some(SearchState::new(
-            background_processing_sender,
-            background_processing_receiver,
-            cancelled,
-        ));
+        search_fields_state.search_state = Some(search_state);
 
         EventHandlingResult::Rerender
     }

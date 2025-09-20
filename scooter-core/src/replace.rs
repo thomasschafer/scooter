@@ -239,10 +239,6 @@ pub fn perform_replacement(
     })
 }
 
-pub fn replace_in_line(input: String, search_config: ParsedSearchConfig) -> String {
-    todo!()
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
