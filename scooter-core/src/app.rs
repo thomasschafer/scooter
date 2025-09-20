@@ -12,9 +12,9 @@ use std::{
 
 use frep_core::{
     replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
+    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
-        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        validate_search_configuration, DirConfig, SearchConfig, ValidationErrorHandler,
         ValidationResult,
     },
 };
@@ -29,14 +29,52 @@ use crate::{
     errors::AppError,
     fields::{FieldName, KeyCode, KeyModifiers, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
+    search::Searcher,
     utils::ceil_div,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+pub enum InputSource {
+    Directory(PathBuf),
+    Stdin(String),
+}
+
+pub struct ExitState {
+    pub stats: Option<ReplaceState>,
+    pub stdout_state: Option<ExitAndReplaceState>, // TODO: return something like an iterator over lines, to stream results
+}
+
+impl std::fmt::Debug for ExitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stdout_str = &match self.stdout_state {
+            None => "None",
+            Some(_) => "Some",
+        }
+        .to_string();
+        f.debug_struct("ExitState")
+            .field("stats", &self.stats)
+            .field("stdout", stdout_str)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub enum EventHandlingResult {
     Rerender,
-    Exit(Option<ReplaceState>),
+    Exit(Option<Box<ExitState>>),
     None,
+}
+
+impl EventHandlingResult {
+    pub(crate) fn new_exit_state(
+        stats: Option<ReplaceState>,
+        stdout_state: Option<ExitAndReplaceState>,
+    ) -> EventHandlingResult {
+        EventHandlingResult::Exit(Some(Box::new(ExitState {
+            stats,
+            stdout_state,
+        })))
+    }
 }
 
 #[derive(Debug)]
@@ -61,10 +99,17 @@ pub enum AppEvent {
 }
 
 #[derive(Debug)]
+pub struct ExitAndReplaceState {
+    pub stdin: String,
+    pub search_config: ParsedSearchConfig,
+}
+
+#[derive(Debug)]
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
     PerformReplacement,
+    ExitAndReplace(ExitAndReplaceState),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -476,8 +521,8 @@ impl Default for AppRunConfig {
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    pub file_searcher: Option<FileSearcher>,
-    pub directory: PathBuf,
+    pub searcher: Option<Searcher>,
+    pub input_source: InputSource,
     disable_prepopulated_fields: bool,
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
@@ -490,7 +535,7 @@ pub struct App {
 
 impl<'a> App {
     fn new(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
@@ -507,8 +552,8 @@ impl<'a> App {
         let mut app = Self {
             current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
-            file_searcher: None,
-            directory,
+            searcher: None,
+            input_source,
             include_hidden: app_run_config.include_hidden,
             disable_prepopulated_fields,
             errors: vec![],
@@ -527,14 +572,14 @@ impl<'a> App {
     }
 
     pub fn new_with_receiver(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
         disable_prepopulated_fields: bool,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
-            directory,
+            input_source,
             search_field_values,
             event_sender,
             app_run_config,
@@ -569,7 +614,7 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            self.directory.clone(),
+            self.input_source.clone(),
             &SearchFieldValues::default(),
             self.event_sender.clone(),
             &AppRunConfig {
@@ -627,7 +672,7 @@ impl<'a> App {
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.file_searcher = Some(search_config);
+            self.searcher = Some(search_config);
         } else {
             return EventHandlingResult::Rerender;
         }
@@ -643,23 +688,34 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
-
-        let file_searcher = self
-            .file_searcher
-            .clone()
-            .expect("Fields should have been parsed");
-
-        Self::spawn_update_search_results(
-            file_searcher,
-            &background_processing_sender,
-            self.event_sender.clone(),
+        // TODO(stdin): test that cancellation etc. all still works
+        let mut search_state = SearchState::new(
+            background_processing_sender.clone(),
+            background_processing_receiver,
             cancelled.clone(),
         );
-        search_fields_state.search_state = Some(SearchState::new(
-            background_processing_sender,
-            background_processing_receiver,
-            cancelled,
-        ));
+
+        match &self.searcher {
+            Some(Searcher::FileSearcher(file_searcher)) => {
+                Self::spawn_update_search_results(
+                    file_searcher.clone(),
+                    &background_processing_sender,
+                    self.event_sender.clone(),
+                    cancelled,
+                );
+            }
+            Some(Searcher::TextSearcher { search_config }) => {
+                let InputSource::Stdin(ref stdin) = self.input_source else {
+                    panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
+                };
+                // TODO: append to search_state.results
+            }
+            None => {
+                panic!("Fields should have been parsed")
+            }
+        }
+
+        search_fields_state.search_state = Some(search_state);
 
         EventHandlingResult::Rerender
     }
@@ -717,7 +773,7 @@ impl<'a> App {
             return EventHandlingResult::None;
         };
         let file_searcher = self
-            .file_searcher
+            .searcher
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
@@ -782,17 +838,37 @@ impl<'a> App {
                     .count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
-                let Some(search_config) = self.validate_fields().unwrap() else {
+                let Some(searcher) = self.validate_fields().unwrap() else {
                     panic!("Attempted to replace with invalid fields");
                 };
-                replace::perform_replacement(
-                    state.results,
-                    background_processing_sender.clone(),
-                    cancelled.clone(),
-                    replacements_completed.clone(),
-                    self.event_sender.clone(),
-                    Some(search_config),
-                );
+                match searcher {
+                    Searcher::FileSearcher(file_searcher) => {
+                        replace::perform_replacement(
+                            state.results,
+                            background_processing_sender.clone(),
+                            cancelled.clone(),
+                            replacements_completed.clone(),
+                            self.event_sender.clone(),
+                            Some(file_searcher),
+                        );
+                    }
+                    Searcher::TextSearcher { search_config } => {
+                        let temp_placeholder = InputSource::Stdin("".into());
+                        let InputSource::Stdin(input) = std::mem::replace(
+                            &mut self.input_source,
+                            // We'll exit after this so doesn't matter what we put here
+                            temp_placeholder,
+                        ) else {
+                            panic!("Expected stdin input source, found {:?}", self.input_source)
+                        };
+                        self.event_sender
+                            .send(Event::ExitAndReplace(ExitAndReplaceState {
+                                stdin: input,
+                                search_config,
+                            }))
+                            .expect("Failed to send ExitAndReplace event");
+                    }
+                }
 
                 self.current_screen =
                     Screen::PerformingReplacement(PerformingReplacementState::new(
@@ -819,13 +895,12 @@ impl<'a> App {
                 }) = &mut self.current_screen
                 {
                     let mut results_with_replacements = Vec::new();
-                    let file_searcher = self
-                        .file_searcher
+                    let searcher = self
+                        .searcher
                         .as_ref()
                         .expect("file_searcher should not be None when adding search results");
                     for res in results {
-                        let updated =
-                            add_replacement(res, file_searcher.search(), file_searcher.replace());
+                        let updated = add_replacement(res, searcher.search(), searcher.replace());
                         if let Some(updated) = updated {
                             results_with_replacements.push(updated);
                         }
@@ -863,7 +938,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    EventHandlingResult::Exit(Some(replace_state))
+                    EventHandlingResult::new_exit_state(Some(replace_state), None)
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -959,7 +1034,7 @@ impl<'a> App {
             self.disable_prepopulated_fields,
         );
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.file_searcher = Some(search_config);
+            self.searcher = Some(search_config);
         } else {
             return Some(EventHandlingResult::Rerender);
         }
@@ -967,7 +1042,7 @@ impl<'a> App {
             return Some(EventHandlingResult::None);
         };
         let file_searcher = self
-            .file_searcher
+            .searcher
             .as_ref()
             .expect("Fields should have been parsed");
 
@@ -1075,7 +1150,7 @@ impl<'a> App {
 
         if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return EventHandlingResult::Exit(None);
+            return EventHandlingResult::new_exit_state(None, None);
         }
 
         if self.popup.is_some() {
@@ -1090,7 +1165,7 @@ impl<'a> App {
                     return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return EventHandlingResult::Exit(None);
+                    return EventHandlingResult::new_exit_state(None, None);
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
@@ -1137,31 +1212,43 @@ impl<'a> App {
         }
     }
 
-    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
-        let search_config = SearchConfiguration {
+    pub fn validate_fields(&mut self) -> anyhow::Result<Option<Searcher>> {
+        let search_config = SearchConfig {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
             advanced_regex: self.advanced_regex,
-            include_globs: Some(self.search_fields.include_files().text()),
-            exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
-            include_hidden: self.include_hidden,
-            directory: self.directory.clone(),
+        };
+        let dir_config = match &self.input_source {
+            InputSource::Directory(directory) => Some(DirConfig {
+                include_globs: Some(self.search_fields.include_files().text()),
+                exclude_globs: Some(self.search_fields.exclude_files().text()),
+                include_hidden: self.include_hidden,
+                directory: directory.clone(),
+            }),
+            InputSource::Stdin { .. } => None,
         };
 
         let mut error_handler = AppErrorHandler::new();
-        let result = validate_search_configuration(search_config, &mut error_handler)?;
+        let result = validate_search_configuration(search_config, dir_config, &mut error_handler)?;
         error_handler.apply_to_app(self);
 
-        match result {
-            ValidationResult::Success(search_config) => {
-                let file_searcher = FileSearcher::new(search_config);
-                Ok(Some(file_searcher))
-            }
-            ValidationResult::ValidationErrors => Ok(None),
-        }
+        let maybe_searcher = match result {
+            ValidationResult::Success((search_config, dir_config)) => match self.input_source {
+                InputSource::Directory(_) => {
+                    let file_searcher = FileSearcher::new(
+                        search_config,
+                        dir_config.expect("Found None dir_config when searching through files"),
+                    );
+                    Some(Searcher::FileSearcher(file_searcher))
+                }
+                InputSource::Stdin { .. } => Some(Searcher::TextSearcher { search_config }),
+            },
+            ValidationResult::ValidationErrors => None,
+        };
+        Ok(maybe_searcher)
     }
 
     pub fn spawn_update_search_results(
