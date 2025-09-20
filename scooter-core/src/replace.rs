@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, ExitState},
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
     fields::{KeyCode, KeyModifiers},
 };
 
@@ -138,10 +138,7 @@ impl ReplaceState {
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
             (KeyCode::Enter | KeyCode::Char('q'), _) => {
-                return EventHandlingResult::Exit(Some(ExitState {
-                    stats: None,
-                    stdout_state: None,
-                }))
+                return EventHandlingResult::new_exit_state(None, None)
             }
             _ => return EventHandlingResult::None,
         }
@@ -257,7 +254,7 @@ mod tests {
     };
 
     use crate::{
-        app::{EventHandlingResult, ExitState},
+        app::EventHandlingResult,
         fields::{KeyCode, KeyModifiers},
         replace::{self, ReplaceState},
     };
@@ -449,23 +446,19 @@ mod tests {
 
         // Test exit with Enter
         let result = state.handle_key_results(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            result,
-            EventHandlingResult::Exit(Some(ExitState {
-                stats: None,
-                stdout_state: None
-            }))
-        ));
+        let EventHandlingResult::Exit(Some(boxed_state)) = result else {
+            panic!("Expected EventHandlingResult::Exit(Some(...)), found {result:?}");
+        };
+        assert!(boxed_state.stats.is_none());
+        assert!(boxed_state.stdout_state.is_none());
 
         // Test exit with 'q'
         let result = state.handle_key_results(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert!(matches!(
-            result,
-            EventHandlingResult::Exit(Some(ExitState {
-                stats: None,
-                stdout_state: None
-            }))
-        ));
+        let EventHandlingResult::Exit(Some(boxed_state)) = result else {
+            panic!("Expected EventHandlingResult::Exit(Some(...)), found {result:?}");
+        };
+        assert!(boxed_state.stats.is_none());
+        assert!(boxed_state.stdout_state.is_none());
 
         // Test unhandled key
         let result = state.handle_key_results(KeyCode::Char('x'), KeyModifiers::NONE);
