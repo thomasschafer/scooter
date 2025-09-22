@@ -2103,9 +2103,9 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple-log"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b08896e123e7fc00305e1df04999a25679768122daf636ccc01c7ca5465163ea"
+checksum = "3f8030713cfe4aa369ef3c8cbf5e391cc18d7f6fba1f2a68ec959c5504413e51"
 dependencies = [
  "log",
  "log4rs",
