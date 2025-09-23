@@ -516,7 +516,7 @@ fn build_preview_list<'a>(
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
-    let line_idx = selected.result.search_result.line_number - 1;
+    let line_idx = selected.result.search_result.line_number - 1; // Line numbers are 1-indexed
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
@@ -656,7 +656,10 @@ fn file_path_line<'a>(
         },
     );
     let left_content_len = left_content.chars().count();
-    let mut path = relative_path_from(base_path, &result.search_result.path);
+    let mut path = match &result.search_result.path {
+        Some(path) => relative_path_from(base_path, path),
+        None => "stdin".to_string(),
+    };
     let line_num = format!(":{}", result.search_result.line_number);
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)

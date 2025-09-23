@@ -448,7 +448,7 @@ mod tests {
     fn test_format_replacement_results_with_errors() {
         let error_result = SearchResultWithReplacement {
             search_result: SearchResult {
-                path: PathBuf::from("file.txt"),
+                path: Some(PathBuf::from("file.txt")),
                 line_number: 10,
                 line: "line".to_string(),
                 line_ending: LineEnding::Lf,

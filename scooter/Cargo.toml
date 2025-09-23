@@ -17,7 +17,7 @@ scooter-core = { version = "0.1.6", path = "../scooter-core" }
 clap = { version = "4.5.48", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
-frep-core = "0.1.5"
+frep-core = { path = "../../frep/frep-core" }                   # TODO(stdin): revert this, bump frep version to 0.1.6 (and in scooter)
 futures = "0.3.31"
 ignore = "0.4.23"
 itertools = "0.14.0"

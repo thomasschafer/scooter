@@ -35,8 +35,8 @@ pub fn split_results(
 
 fn group_results(
     included: Vec<SearchResultWithReplacement>,
-) -> HashMap<PathBuf, Vec<SearchResultWithReplacement>> {
-    let mut path_groups = HashMap::<PathBuf, Vec<SearchResultWithReplacement>>::new();
+) -> HashMap<Option<PathBuf>, Vec<SearchResultWithReplacement>> {
+    let mut path_groups = HashMap::<Option<PathBuf>, Vec<SearchResultWithReplacement>>::new();
     for res in included {
         path_groups
             .entry(res.search_result.path.clone())
@@ -265,7 +265,7 @@ mod tests {
     ) -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: PathBuf::from(path),
+                path: Some(PathBuf::from(path)),
                 line_number,
                 line: line.to_string(),
                 line_ending: LineEnding::Lf,
@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(stats.errors.len(), 1);
         assert_eq!(
             stats.errors[0].search_result.path,
-            PathBuf::from("file2.txt")
+            Some(PathBuf::from("file2.txt"))
         );
         assert_eq!(
             stats.errors[0].replace_result,
