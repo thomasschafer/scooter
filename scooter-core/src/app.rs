@@ -1,5 +1,6 @@
 use std::{
     cmp::{max, min},
+    io::Cursor,
     iter::Iterator,
     mem,
     path::PathBuf,
@@ -11,6 +12,7 @@ use std::{
 };
 
 use frep_core::{
+    line_reader::BufReadExt,
     replace::{add_replacement, replacement_if_match},
     search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
@@ -36,7 +38,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum InputSource {
     Directory(PathBuf),
-    Stdin(String),
+    Stdin(Arc<String>),
 }
 
 pub struct ExitState {
@@ -100,7 +102,7 @@ pub enum AppEvent {
 
 #[derive(Debug)]
 pub struct ExitAndReplaceState {
-    pub stdin: String,
+    pub stdin: Arc<String>,
     pub search_config: ParsedSearchConfig,
 }
 
@@ -684,29 +686,40 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
+        // TODO(stdin): test that cancellation etc. all still works
+        let search_state = SearchState::new(
+            background_processing_sender.clone(),
+            background_processing_receiver,
+            cancelled.clone(),
+        );
 
         match &self.searcher {
             Some(Searcher::FileSearcher(file_searcher)) => {
-                Self::spawn_update_search_results(
+                Self::search_files_spawn(
                     file_searcher.clone(),
-                    &background_processing_sender,
+                    background_processing_sender,
                     self.event_sender.clone(),
-                    cancelled.clone(),
+                    cancelled,
                 );
             }
             Some(Searcher::TextSearcher { search_config }) => {
-                todo!()
+                let InputSource::Stdin(ref stdin) = self.input_source else {
+                    panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
+                };
+                Self::search_from_str_spawn(
+                    stdin.clone(),
+                    search_config,
+                    background_processing_sender,
+                    self.event_sender.clone(),
+                    cancelled,
+                );
             }
             None => {
                 panic!("Fields should have been parsed")
             }
         }
 
-        search_fields_state.search_state = Some(SearchState::new(
-            background_processing_sender,
-            background_processing_receiver,
-            cancelled,
-        ));
+        search_fields_state.search_state = Some(search_state);
 
         EventHandlingResult::Rerender
     }
@@ -844,7 +857,7 @@ impl<'a> App {
                         );
                     }
                     Searcher::TextSearcher { search_config } => {
-                        let temp_placeholder = InputSource::Stdin("".into());
+                        let temp_placeholder = InputSource::Stdin(Arc::new("".to_string()));
                         let InputSource::Stdin(input) = std::mem::replace(
                             &mut self.input_source,
                             // We'll exit after this so doesn't matter what we put here
@@ -1242,13 +1255,13 @@ impl<'a> App {
         Ok(maybe_searcher)
     }
 
-    pub fn spawn_update_search_results(
+    pub fn search_files_spawn(
         file_searcher: FileSearcher,
-        sender: &UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let sender = sender.clone();
+        let sender = background_processing_sender.clone();
         tokio::spawn(async move {
             let sender_for_search = sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
@@ -1501,6 +1514,53 @@ impl<'a> App {
         } else {
             false
         }
+    }
+
+    fn search_from_str_spawn(
+        search_haystack: Arc<String>,
+        search_config: &ParsedSearchConfig,
+        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        event_sender: UnboundedSender<Event>,
+        cancelled: Arc<AtomicBool>,
+    ) -> JoinHandle<()> {
+        let background_processing_sender = background_processing_sender.clone();
+        if search_haystack.contains("foo") {
+            panic!("argh");
+        }
+        let s = Arc::clone(&search_haystack);
+        tokio::spawn(async move {
+            // TODO: deduplicate with search_files_spawn
+            let mut search_handle = task::spawn_blocking(move || {
+                let cursor = Cursor::new(s);
+
+                for line_result in cursor.lines_with_endings() {
+                    todo!()
+                }
+            });
+
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
+            rerender_interval.tick().await;
+
+            loop {
+                tokio::select! {
+                    res = &mut search_handle => {
+                        if let Err(e) = res {
+                            warn!("Search thread panicked: {e}");
+                        }
+                        break;
+                    },
+                    _ = rerender_interval.tick() => {
+                        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                    }
+                }
+            }
+            if let Err(err) =
+                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
+            {
+                // Log and ignore error: likely have gone back to previous screen
+                warn!("Found error when attempting to send SearchCompleted event: {err}");
+            }
+        })
     }
 }
 
