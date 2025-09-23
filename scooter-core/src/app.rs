@@ -12,7 +12,7 @@ use std::{
 };
 
 use frep_core::{
-    line_reader::BufReadExt,
+    line_reader::{BufReadExt, LineEnding},
     replace::{add_replacement, replacement_if_match},
     search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
@@ -21,7 +21,7 @@ use frep_core::{
     },
 };
 use ignore::WalkState;
-use log::warn;
+use log::{debug, warn};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::{self, JoinHandle},
@@ -697,7 +697,7 @@ impl<'a> App {
             Some(Searcher::FileSearcher(file_searcher)) => {
                 Self::search_files_spawn(
                     file_searcher.clone(),
-                    background_processing_sender,
+                    &background_processing_sender,
                     self.event_sender.clone(),
                     cancelled,
                 );
@@ -707,9 +707,9 @@ impl<'a> App {
                     panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
                 };
                 Self::search_from_str_spawn(
-                    stdin.clone(),
+                    stdin,
                     search_config,
-                    background_processing_sender,
+                    &background_processing_sender,
                     self.event_sender.clone(),
                     cancelled,
                 );
@@ -1130,12 +1130,14 @@ impl<'a> App {
                     let selected = search_in_progress_state
                         .primary_selected_field_mut()
                         .expect("Expected to find selected field");
-                    self.event_sender
-                        .send(Event::LaunchEditor((
-                            selected.search_result.path.clone(),
-                            selected.search_result.line_number,
-                        )))
-                        .expect("Failed to send event");
+                    if let Some(ref path) = selected.search_result.path {
+                        self.event_sender
+                            .send(Event::LaunchEditor((
+                                path.clone(),
+                                selected.search_result.line_number,
+                            )))
+                            .expect("Failed to send event");
+                    }
                 }
                 Some(EventHandlingResult::Rerender)
             }
@@ -1257,13 +1259,13 @@ impl<'a> App {
 
     pub fn search_files_spawn(
         file_searcher: FileSearcher,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let sender = background_processing_sender.clone();
+        let background_processing_sender = background_processing_sender.clone();
         tokio::spawn(async move {
-            let sender_for_search = sender.clone();
+            let sender_for_search = background_processing_sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
                 file_searcher.walk_files(Some(&cancelled), || {
                     let sender = sender_for_search.clone();
@@ -1293,7 +1295,9 @@ impl<'a> App {
                 }
             }
 
-            if let Err(err) = sender.send(BackgroundProcessingEvent::SearchCompleted) {
+            if let Err(err) =
+                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
+            {
                 // Log and ignore error: likely have gone back to previous screen
                 warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
@@ -1517,24 +1521,49 @@ impl<'a> App {
     }
 
     fn search_from_str_spawn(
-        search_haystack: Arc<String>,
+        search_haystack: &Arc<String>,
         search_config: &ParsedSearchConfig,
-        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
+        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let background_processing_sender = background_processing_sender.clone();
-        if search_haystack.contains("foo") {
-            panic!("argh");
-        }
-        let s = Arc::clone(&search_haystack);
-        tokio::spawn(async move {
-            // TODO: deduplicate with search_files_spawn
-            let mut search_handle = task::spawn_blocking(move || {
-                let cursor = Cursor::new(s);
+        let search_config = search_config.clone();
+        let search_haystack = Arc::clone(search_haystack);
 
-                for line_result in cursor.lines_with_endings() {
-                    todo!()
+        // TODO(stdin): deduplicate with search_files_spawn
+        tokio::spawn(async move {
+            let sender_for_search = background_processing_sender.clone();
+            let mut search_handle = task::spawn_blocking(move || {
+                let cursor = Cursor::new(search_haystack.as_bytes());
+
+                for (idx, line_result) in cursor.lines_with_endings().enumerate() {
+                    if cancelled.load(Ordering::Relaxed) {
+                        break; // TODO: test this
+                    }
+
+                    let (line_ending, line) = match read_line(line_result) {
+                        Ok(res) => res,
+                        Err(e) => {
+                            debug!("Error when reading line {idx}: {e}");
+                            continue;
+                        }
+                    };
+                    if replacement_if_match(&line, &search_config.search, &search_config.replace)
+                        .is_some()
+                    {
+                        let result = SearchResult {
+                            path: None,
+                            line_number: idx + 1,
+                            line,
+                            line_ending,
+                            included: true,
+                        };
+                        // Ignore error - likely state reset, thread about to be killed
+                        let _ =
+                        // TODO(stdin): no vec
+                            sender_for_search.send(BackgroundProcessingEvent::AddSearchResults(vec![result]));
+                    }
                 }
             });
 
@@ -1562,6 +1591,14 @@ impl<'a> App {
             }
         })
     }
+}
+
+fn read_line(
+    line_result: Result<(Vec<u8>, LineEnding), std::io::Error>,
+) -> anyhow::Result<(LineEnding, String)> {
+    let (line_bytes, line_ending) = line_result?;
+    let line = String::from_utf8(line_bytes)?;
+    Ok((line_ending, line))
 }
 
 #[allow(clippy::struct_field_names)]
@@ -1624,7 +1661,6 @@ mod tests {
         search::{SearchResult, SearchResultWithReplacement},
     };
     use rand::Rng;
-    use std::path::Path;
 
     use super::*;
 
@@ -1636,7 +1672,7 @@ mod tests {
     fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1651,7 +1687,7 @@ mod tests {
         (0..num_results)
             .map(|i| SearchResultWithReplacement {
                 search_result: SearchResult {
-                    path: PathBuf::from(format!("test{i}.txt")),
+                    path: Some(PathBuf::from(format!("test{i}.txt"))),
                     line_number: 1,
                     line: format!("test line {i}").to_string(),
                     line_ending: LineEnding::Lf,
@@ -1757,7 +1793,7 @@ mod tests {
     fn success_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1771,7 +1807,7 @@ mod tests {
     fn ignored_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1785,7 +1821,7 @@ mod tests {
     fn error_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,

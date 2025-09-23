@@ -31,7 +31,7 @@ async fn test_replace_state() {
         errors: (1..3)
             .map(|n| SearchResultWithReplacement {
                 search_result: SearchResult {
-                    path: PathBuf::from(format!("error-{n}.txt")),
+                    path: Some(PathBuf::from(format!("error-{n}.txt"))),
                     line_number: 1,
                     line: format!("line {n}"),
                     line_ending: LineEnding::Lf,
@@ -348,7 +348,7 @@ async fn test_keymaps_results() {
         num_ignored: 2,
         errors: vec![SearchResultWithReplacement {
             search_result: SearchResult {
-                path: PathBuf::from("error.txt"),
+                path: Some(PathBuf::from("error.txt")),
                 line_number: 1,
                 line: "test line".to_string(),
                 line_ending: LineEnding::Lf,
