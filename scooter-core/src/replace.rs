@@ -1,6 +1,6 @@
 use frep_core::{
     replace::{replace_in_file, replacement_if_match, ReplaceResult},
-    search::{FileSearcher, ParsedSearchConfig, SearchResultWithReplacement},
+    search::{FileSearcher, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
@@ -237,10 +237,6 @@ pub fn perform_replacement(
             },
         ));
     })
-}
-
-pub fn replace_in_line(input: String, search_config: ParsedSearchConfig) -> String {
-    todo!()
 }
 
 #[cfg(test)]

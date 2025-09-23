@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
+    sync::Arc,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -115,7 +116,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(config: &AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
@@ -127,7 +128,7 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     // Used in integration tests
     #[allow(dead_code)]
     pub fn new_test_with_snapshot(
-        config: &AppConfig<'_>,
+        config: AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
         snapshot_sender: UnboundedSender<String>,
@@ -139,15 +140,15 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
-        app_config: &AppConfig<'_>,
+        app_config: AppConfig<'_>,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
         let config = load_config().expect("Failed to read config file");
 
-        let input_source = if let Some(stdin_content) = &app_config.stdin_content {
-            InputSource::Stdin(stdin_content.clone())
+        let input_source = if let Some(stdin_content) = app_config.stdin_content {
+            InputSource::Stdin(Arc::new(stdin_content))
         } else {
             InputSource::Directory(app_config.directory.clone())
         };
@@ -395,7 +396,7 @@ pub fn format_replacement_results(
     )
 }
 
-pub async fn run_app_tui(app_config: &AppConfig<'_>) -> anyhow::Result<Option<String>> {
+pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     // TODO: handle stdin
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;

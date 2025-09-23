@@ -251,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
         };
         Some(results)
     } else {
-        run_app_tui(&config).await?
+        run_app_tui(config).await?
     };
 
     if let Some(results) = results {
