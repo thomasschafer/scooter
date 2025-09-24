@@ -12,7 +12,7 @@ keywords = ["cli", "find", "search", "replace"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-anyhow = "1.0.99"
+anyhow = "1.0.100"
 scooter-core = { version = "0.1.6", path = "../scooter-core" }
 clap = { version = "4.5.47", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }

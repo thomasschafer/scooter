@@ -22,7 +22,7 @@ default = []
 steel = ["dep:steel-core", "dep:steel-derive"]
 
 [dependencies]
-anyhow = "1.0.99"
+anyhow = "1.0.100"
 bitflags = "2.9.4"
 frep-core = "0.1.3"
 log = "0.4.28"
