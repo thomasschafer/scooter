@@ -519,7 +519,7 @@ impl<'a> App {
             advanced_regex: app_run_config.advanced_regex,
         };
 
-        if app_run_config.immediate_search {
+        if app_run_config.immediate_search || !search_field_values.search.value.is_empty() {
             app.perform_search_if_valid();
         }
 
