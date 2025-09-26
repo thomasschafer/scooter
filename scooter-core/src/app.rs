@@ -104,6 +104,7 @@ pub enum AppEvent {
 pub struct ExitAndReplaceState {
     pub stdin: Arc<String>,
     pub search_config: ParsedSearchConfig,
+    pub replace_results: Vec<SearchResultWithReplacement>, // TODO(stdin): can we use a reference here?
 }
 
 #[derive(Debug)]
@@ -800,26 +801,7 @@ impl<'a> App {
     }
 
     pub fn perform_replacement(&mut self) {
-        if !self.search_has_completed() {
-            self.add_error(AppError {
-                name: "Search still in progress".to_string(),
-                long: "Try again when search is complete".to_string(),
-            });
-            return;
-        } else if !self.is_preview_updated() {
-            self.add_error(AppError {
-                name: "Updating replacement preview".to_string(),
-                long: "Try again when complete".to_string(),
-            });
-            return;
-        } else if !self
-            .background_processing_reciever()
-            .is_some_and(|r| r.is_empty())
-        {
-            self.add_error(AppError {
-                name: "Background processing in progress".to_string(),
-                long: "Try again in a moment".to_string(),
-            });
+        if !self.ready_to_replace() {
             return;
         }
 
@@ -858,7 +840,7 @@ impl<'a> App {
                     }
                     Searcher::TextSearcher { search_config } => {
                         let temp_placeholder = InputSource::Stdin(Arc::new("".to_string()));
-                        let InputSource::Stdin(input) = std::mem::replace(
+                        let InputSource::Stdin(stdin) = std::mem::replace(
                             &mut self.input_source,
                             // We'll exit after this so doesn't matter what we put here
                             temp_placeholder,
@@ -867,7 +849,8 @@ impl<'a> App {
                         };
                         self.event_sender
                             .send(Event::ExitAndReplace(ExitAndReplaceState {
-                                stdin: input,
+                                stdin,
+                                replace_results: state.results,
                                 search_config,
                             }))
                             .expect("Failed to send ExitAndReplace event");
@@ -884,6 +867,32 @@ impl<'a> App {
             }
             screen => self.current_screen = screen,
         }
+    }
+
+    fn ready_to_replace(&mut self) -> bool {
+        if !self.is_search_complete() {
+            self.add_error(AppError {
+                name: "Search still in progress".to_string(),
+                long: "Try again when search is complete".to_string(),
+            });
+            return false;
+        } else if !self.is_preview_updated() {
+            self.add_error(AppError {
+                name: "Updating replacement preview".to_string(),
+                long: "Try again when complete".to_string(),
+            });
+            return false;
+        } else if !self
+            .background_processing_reciever()
+            .is_some_and(|r| r.is_empty())
+        {
+            self.add_error(AppError {
+                name: "Background processing in progress".to_string(),
+                long: "Try again in a moment".to_string(),
+            });
+            return false;
+        }
+        true
     }
 
     pub fn handle_background_processing_event(

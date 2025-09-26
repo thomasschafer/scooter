@@ -2,7 +2,7 @@ use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
 };
-use frep_core::search::SearchResultWithReplacement;
+use frep_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use futures::{Stream, StreamExt};
 use log::{error, LevelFilter};
 use ratatui::{
@@ -11,12 +11,16 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult, ExitState, InputSource},
+    app::{
+        App, AppRunConfig, Event, EventHandlingResult, ExitAndReplaceState, ExitState, InputSource,
+    },
     errors::AppError,
     fields::SearchFieldValues,
 };
 use std::{
-    env, io,
+    collections::HashMap,
+    env,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -234,7 +238,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             EventHandlingResult::Rerender
                         }
                         Event::ExitAndReplace(state) => {
-                            return Ok(Some(ExitState{stats: None, stdout_state: Some(state)})); // TODO: implement print_results
+                            return Ok(Some(ExitState{stats: None, stdout_state: Some(state)}));
                         }
 
                     }
@@ -412,21 +416,37 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
                 Some(&stats.errors),
             )
         });
-    if let Some(stdout_state) = maybe_replace_state.and_then(|state| state.stdout_state) {
-        for line in stdout_state.stdin.lines() {
-            if let Some(res) = frep_core::replace::replacement_if_match(
-                line,
-                &stdout_state.search_config.search,
-                &stdout_state.search_config.replace,
-            ) {
-                println!("{res}");
-            } else {
-                println!("{line}");
-            }
-        }
+    if let Some(state) = maybe_replace_state.and_then(|state| state.stdout_state) {
+        print_results(state)?;
     }
 
     Ok(maybe_stats)
+}
+
+fn print_results(mut state: ExitAndReplaceState) -> anyhow::Result<()> {
+    let mut line_map = state
+        .replace_results
+        .iter_mut()
+        .map(|res| (res.search_result.line_number, res))
+        .collect::<HashMap<_, _>>();
+
+    for (idx, line) in state.stdin.lines().enumerate() {
+        let line_number = idx + 1; // Ensure line-number is 1-indexed
+        let res = line_map.get_mut(&line_number).and_then(|res| {
+            assert_eq!(
+                line, res.search_result.line,
+                "line has changed since search"
+            );
+            if res.search_result.included {
+                res.replace_result = Some(ReplaceResult::Success);
+                Some(res.replacement.as_str())
+            } else {
+                None
+            }
+        });
+        writeln!(io::stderr(), "{}", res.unwrap_or(line))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
