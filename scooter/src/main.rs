@@ -154,11 +154,7 @@ fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
     let mut stdin_content = String::new();
     io::stdin().read_to_string(&mut stdin_content)?;
 
-    if stdin_content.trim().is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(stdin_content))
-    }
+    Ok(Some(stdin_content))
 }
 
 fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Result<()> {
