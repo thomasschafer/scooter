@@ -2,7 +2,7 @@
 source: scooter/tests/app_runner.rs
 expression: snapshot
 ---
-                                               Scooter                                              
+                                               scooter                                              
     ┌Search text (Error: Couldn't parse regex)───────────────────────────────────────────────┐     
     │(                                                                                       │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     

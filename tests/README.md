@@ -1,6 +1,6 @@
 # End-to-end tests
 
-This directory contains end-to-end tests and benchmarks for Scooter that compare its behavior against other find and replace tools.
+This directory contains end-to-end tests and benchmarks for scooter that compare its behavior against other find and replace tools.
 
 ## Prerequisites
 

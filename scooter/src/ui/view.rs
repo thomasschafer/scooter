@@ -844,7 +844,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
     };
 
     let title_block = Block::default().style(Style::default());
-    let title = Paragraph::new(Text::styled("Scooter", Style::new().fg(Color::Blue)))
+    let title = Paragraph::new(Text::styled("scooter", Style::new().fg(Color::Blue)))
         .block(title_block)
         .alignment(Alignment::Center);
     frame.render_widget(title, header_area);

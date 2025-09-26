@@ -1,5 +1,5 @@
 {
-  description = "Scooter - Interactive find and replace TUI";
+  description = "scooter - Interactive find and replace TUI";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

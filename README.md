@@ -1,16 +1,16 @@
 # scooter
 
-Scooter is an interactive find-and-replace terminal UI app.
+scooter is an interactive find-and-replace terminal UI app.
 
 Search with either a fixed string or a regular expression, enter a replacement, and interactively toggle which instances you want to replace.
 
 If the instance you're attempting to replace has changed since the search was performed, e.g. if you've switched branches and that line no longer exists, that particular replacement won't occur: you'll see all such cases at the end.
 
-![Scooter preview](media/preview.gif)
+![scooter preview](media/preview.gif)
 
 You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
 
-![Scooter with Catppuccin Macchiato theme](media/preview_catppuccin_macchiato.png)
+![scooter with Catppuccin Macchiato theme](media/preview_catppuccin_macchiato.png)
 
 ## Contents
 
@@ -39,11 +39,11 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 
 ## Features
 
-Scooter respects both `.gitignore` and `.ignore` files.
+scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
-When viewing search results, you can open the selected file at the relevant line by pressing `e`. This will use the editor defined by your `EDITOR` environment variable. Scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
+When viewing search results, you can open the selected file at the relevant line by pressing `e`. This will use the editor defined by your `EDITOR` environment variable. scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
 
 
 ## Usage
@@ -54,7 +54,7 @@ Run
 scooter
 ```
 
-in a terminal to launch Scooter. By default the current directory is used to search and replace in, but you can pass in a directory as the first argument to override this behaviour:
+in a terminal to launch scooter. By default the current directory is used to search and replace in, but you can pass in a directory as the first argument to override this behaviour:
 
 ```sh
 scooter ../foo/bar
@@ -62,7 +62,7 @@ scooter ../foo/bar
 
 A set of keymappings will be shown at the bottom of the window: these vary slightly depending on the screen you're on.
 
-By default, Scooter uses a regex engine that supports only a subset of features to maximise performance. To use the full range of regex features, such as negative lookahead, start Scooter with the `-a` (`--advanced-regex`) flag.
+By default, scooter uses a regex engine that supports only a subset of features to maximise performance. To use the full range of regex features, such as negative lookahead, start scooter with the `-a` (`--advanced-regex`) flag.
 
 Hidden files (such as those starting with a `.`) are ignored by default, but can be included by using the `--hidden` flag.
 
@@ -78,7 +78,7 @@ When on the search screen the following fields are available:
 - **Files to include**: Glob patterns, separated by commas (`,`), that file paths must match. For instance, `*.rs, *.py` matches all files with the `.rs` or `.py` extensions.
 - **Files to exclude**: Glob patterns, separated by commas (`,`), that file paths must not match. For instance, `env/**` ignores all files in the `env` directory. This field takes precedence over the pattern in the "Files to include" field.
 
-Note that the glob matching library used in Scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
+Note that the glob matching library used in scooter comes from the brilliant [ripgrep](https://github.com/BurntSushi/ripgrep), and matches the behaviour there: for instance, if you wanted to include only files in the directory `dir1`, you'd need to add `dir1/**` in the "Files to include" field - `dir1` alone would not work.
 
 #### Pre-populating search fields
 
@@ -106,7 +106,7 @@ Run `scooter --help` to see the full list of command-line args that can be used 
 
 ## Performance
 
-Scooter is fast. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "before" with "after":
+scooter is fast. Below is a benchmark for comparison, performing a find and replace on the entire [Linux kernel](https://github.com/torvalds/linux), finding and replacing the string "before" with "after":
 
 <!-- BENCHMARK START -->
 | Command | Mean [s] | Min [s] | Max [s] | Relative |
@@ -136,7 +136,7 @@ Run `scooter --help` for a full list of flags.
 
 ### Homebrew
 
-On macOS and Linux, you can install Scooter using [Homebrew](https://formulae.brew.sh/formula/scooter):
+On macOS and Linux, you can install scooter using [Homebrew](https://formulae.brew.sh/formula/scooter):
 
 ```sh
 brew install scooter
@@ -144,7 +144,7 @@ brew install scooter
 
 ### Nix
 
-Scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?show=scooter).
+scooter is available as `scooter` in [nixpkgs](https://search.nixos.org/packages?show=scooter).
 
 ### AUR
 
@@ -211,7 +211,7 @@ cargo install --path scooter --locked
 
 ## Configuration options
 
-Scooter looks for a TOML configuration file at:
+scooter looks for a TOML configuration file at:
 
 - Linux or macOS: `~/.config/scooter/config.toml`
 - Windows: `%AppData%\scooter\config.toml`
@@ -229,11 +229,11 @@ with the file path of the search result, and `%line`, which will be replaced wit
 [editor_open]
 command = "vi %file +%line"
 ```
-If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
+If not set explicitly, scooter will attempt to use the editor set by the `$EDITOR` environment variable.
 
 #### `exit`
 
-Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
+Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.
 
 ### `[preview]` section
 
@@ -260,7 +260,7 @@ and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 #### `true_color`
 
 Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
-If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
+If omitted, scooter will attempt to determine whether the terminal being used supports true color.
 
 ### `[search]` section
 
@@ -273,11 +273,11 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 ## Editor configuration
 
-Below are a couple of ways to run Scooter without leaving your editor.
+Below are a couple of ways to run scooter without leaving your editor.
 
 ### Helix
 
-As explained [here](https://github.com/helix-editor/helix/wiki/Recipes#project-wide-search-and-replace-with-scooter), you can add a keybinding like the following to open Scooter directly in Helix with `<enter> s`:
+As explained [here](https://github.com/helix-editor/helix/wiki/Recipes#project-wide-search-and-replace-with-scooter), you can add a keybinding like the following to open scooter directly in Helix with `<enter> s`:
 
 ```toml
 [keys.select.ret]
@@ -289,18 +289,18 @@ s = [
 ]
 ```
 
-Note that this saves all files before opening Scooter.
+Note that this saves all files before opening scooter.
 
 #### Floating window
 
-If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open Scooter in a popup with `<enter> s`:
+If you are using Helix in Tmux, you can add a keymap like the following to your Helix config to open scooter in a popup with `<enter> s`:
 
 ```toml
 [keys.select.ret]
 s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
 ```
 
-You can also add the following to your [Scooter config file](#configuration-options) to open files back in Helix from the search results page with `e`:
+You can also add the following to your [scooter config file](#configuration-options) to open files back in Helix from the search results page with `e`:
 
 ```toml
 [editor_open]
@@ -312,14 +312,14 @@ exit = true
 ### Neovim
 
 Install ToggleTerm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim#installation), and then add the following Lua configuration, which adds the following keymaps:
-* `<leader>s` to open Scooter, resuming an existing session if one exists.
-* `<leader>r` to open Scooter and search for the currently selected text in visual mode. (Note that the search text field will be disabled by default in Scooter, but you can tweak this behaviour as explained [here](#pre-populating-search-fields)).
+* `<leader>s` to open scooter, resuming an existing session if one exists.
+* `<leader>r` to open scooter and search for the currently selected text in visual mode. (Note that the search text field will be disabled by default in scooter, but you can tweak this behaviour as explained [here](#pre-populating-search-fields)).
 
 ```lua
 local Terminal = require("toggleterm.terminal").Terminal
 local scooter_term = nil
 
--- Open existing Scooter terminal if one is available, otherwise create a new one
+-- Open existing scooter terminal if one is available, otherwise create a new one
 local function open_scooter()
     if not scooter_term then
         scooter_term = Terminal:new({
@@ -334,7 +334,7 @@ local function open_scooter()
     scooter_term:open()
 end
 
--- Called by Scooter to open the selected file at the correct line from the Scooter search list
+-- Called by scooter to open the selected file at the correct line from the scooter search list
 _G.EditLineFromScooter = function(file_path, line)
     if scooter_term and scooter_term:is_open() then
         scooter_term:close()
@@ -350,7 +350,7 @@ _G.EditLineFromScooter = function(file_path, line)
     vim.api.nvim_win_set_cursor(0, { line, 0 })
 end
 
--- Opens Scooter with the search text populated by the `search_text` arg
+-- Opens scooter with the search text populated by the `search_text` arg
 _G.OpenScooterSearchText = function(search_text)
     if scooter_term and scooter_term:is_open() then
         scooter_term:close()
@@ -375,7 +375,7 @@ vim.keymap.set('v', '<leader>r',
     { desc = 'Search selected text in scooter' })
 ```
 
-You can then add the following to your [Scooter config file](#configuration-options) to open up files with `e`, which hides the ToggleTerm window. You can then resume with `<leader>s` again.
+You can then add the following to your [scooter config file](#configuration-options) to open up files with `e`, which hides the ToggleTerm window. You can then resume with `<leader>s` again.
 
 ```toml
 [editor_open]
@@ -384,11 +384,11 @@ command = "nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter(\"%fi
 
 ## Contributing
 
-Contributions are very welcome! I'd be especially grateful for any contributions to add Scooter to popular package managers. If you'd like to add a new feature, please create an issue first so we can discuss the idea, then create a PR with your changes.
+Contributions are very welcome! I'd be especially grateful for any contributions to add scooter to popular package managers. If you'd like to add a new feature, please create an issue first so we can discuss the idea, then create a PR with your changes.
 
 ### Development
 
-Once you've pulled down the repo, you can run Scooter with:
+Once you've pulled down the repo, you can run scooter with:
 
 ```sh
 cargo run --bin scooter
