@@ -86,10 +86,10 @@ pub struct EditorOpenConfig {
     /// [editor_open]
     /// command = "vi %file +%line"
     /// ```
-    /// If not set explicitly, Scooter will attempt to use the editor set by the `$EDITOR` environment variable.
+    /// If not set explicitly, scooter will attempt to use the editor set by the `$EDITOR` environment variable.
     #[serde(default)]
     pub command: Option<String>,
-    /// Whether to exit Scooter after running the command defined by `editor_open.command`. Defaults to `false`.
+    /// Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.
     #[serde(default = "default_exit")]
     pub exit: bool,
 }
@@ -167,7 +167,7 @@ where
 #[serde(deny_unknown_fields)]
 pub struct StyleConfig {
     /// Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
-    /// If omitted, Scooter will attempt to determine whether the terminal being used supports true color.
+    /// If omitted, scooter will attempt to determine whether the terminal being used supports true color.
     #[serde(default = "detect_true_colour")]
     pub true_color: bool,
 }

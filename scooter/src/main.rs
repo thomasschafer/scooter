@@ -60,7 +60,7 @@ struct Args {
     #[arg(short = 'X', long)]
     immediate: bool,
 
-    /// Run Scooter without a TUI. Search and replace runs immediately (as with the `--immediate` flag), but with no user interface
+    /// Run scooter without a TUI. Search and replace runs immediately (as with the `--immediate` flag), but with no user interface
     #[arg(short = 'N', long)]
     no_tui: bool,
 
