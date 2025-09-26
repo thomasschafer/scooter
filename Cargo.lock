@@ -813,6 +813,8 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 [[package]]
 name = "frep-core"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c244c938b7856aa60b427c1585c071f17bc371da89868e51af194c21eb44313"
 dependencies = [
  "anyhow",
  "content_inspector",
