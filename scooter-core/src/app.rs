@@ -533,6 +533,15 @@ pub struct App {
     advanced_regex: bool,
 }
 
+#[derive(Debug)]
+enum SearchStrategy {
+    Files(FileSearcher),
+    Text {
+        haystack: Arc<String>,
+        config: ParsedSearchConfig,
+    },
+}
+
 impl<'a> App {
     fn new(
         input_source: InputSource,
@@ -694,31 +703,30 @@ impl<'a> App {
             cancelled.clone(),
         );
 
-        match &self.searcher {
+        let strategy = match &self.searcher {
             Some(Searcher::FileSearcher(file_searcher)) => {
-                Self::search_files_spawn(
-                    file_searcher.clone(),
-                    &background_processing_sender,
-                    self.event_sender.clone(),
-                    cancelled,
-                );
-            }
+                SearchStrategy::Files(file_searcher.clone())
+            },
             Some(Searcher::TextSearcher { search_config }) => {
                 let InputSource::Stdin(ref stdin) = self.input_source else {
                     panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
                 };
-                Self::search_from_str_spawn(
-                    stdin,
-                    search_config,
-                    &background_processing_sender,
-                    self.event_sender.clone(),
-                    cancelled,
-                );
+                SearchStrategy::Text {
+                    haystack: Arc::clone(stdin),
+                    config: search_config.clone(),
+                }
             }
             None => {
                 panic!("Fields should have been parsed")
             }
-        }
+        };
+
+        Self::spawn_search_task(
+            strategy,
+            background_processing_sender.clone(),
+            self.event_sender.clone(),
+            cancelled,
+        );
 
         search_fields_state.search_state = Some(search_state);
 
@@ -1276,28 +1284,58 @@ impl<'a> App {
         Ok(maybe_searcher)
     }
 
-    pub fn search_files_spawn(
-        file_searcher: FileSearcher,
-        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
+    fn spawn_search_task(
+        strategy: SearchStrategy,
+        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let background_processing_sender = background_processing_sender.clone();
         tokio::spawn(async move {
             let sender_for_search = background_processing_sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                file_searcher.walk_files(Some(&cancelled), || {
-                    let sender = sender_for_search.clone();
-                    Box::new(move |results| {
-                        // Ignore error - likely state reset, thread about to be killed
-                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+                match strategy {
+                    SearchStrategy::Files(file_searcher) => {
+                        file_searcher.walk_files(Some(&cancelled), || {
+                            let sender = sender_for_search.clone();
+                            Box::new(move |results| {
+                                // Ignore error - likely state reset, thread about to be killed
+                                let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+                                WalkState::Continue
+                            })
+                        });
+                    }
+                    SearchStrategy::Text { haystack, config } => {
+                        let cursor = Cursor::new(haystack.as_bytes());
+                        for (idx, line_result) in cursor.lines_with_endings().enumerate() {
+                            if cancelled.load(Ordering::Relaxed) {
+                                break;
+                            }
 
-                        WalkState::Continue
-                    })
-                });
+                            let (line_ending, line) = match read_line(line_result) {
+                                Ok(res) => res,
+                                Err(e) => {
+                                    debug!("Error when reading line {idx}: {e}");
+                                    continue;
+                                }
+                            };
+                            if replacement_if_match(&line, &config.search, &config.replace).is_some() {
+                                let result = SearchResult {
+                                    path: None,
+                                    line_number: idx + 1,
+                                    line,
+                                    line_ending,
+                                    included: true,
+                                };
+                                // Ignore error - likely state reset, thread about to be killed
+                                let _ = sender_for_search
+                                    .send(BackgroundProcessingEvent::AddSearchResult(result));
+                            }
+                        }
+                    }
+                }
             });
 
-            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92));
             rerender_interval.tick().await;
 
             loop {
@@ -1537,77 +1575,6 @@ impl<'a> App {
         } else {
             false
         }
-    }
-
-    fn search_from_str_spawn(
-        search_haystack: &Arc<String>,
-        search_config: &ParsedSearchConfig,
-        background_processing_sender: &UnboundedSender<BackgroundProcessingEvent>,
-        event_sender: UnboundedSender<Event>,
-        cancelled: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
-        let background_processing_sender = background_processing_sender.clone();
-        let search_config = search_config.clone();
-        let search_haystack = Arc::clone(search_haystack);
-
-        // TODO(stdin): deduplicate with search_files_spawn
-        tokio::spawn(async move {
-            let sender_for_search = background_processing_sender.clone();
-            let mut search_handle = task::spawn_blocking(move || {
-                let cursor = Cursor::new(search_haystack.as_bytes());
-
-                for (idx, line_result) in cursor.lines_with_endings().enumerate() {
-                    if cancelled.load(Ordering::Relaxed) {
-                        break; // TODO: test this
-                    }
-
-                    let (line_ending, line) = match read_line(line_result) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            debug!("Error when reading line {idx}: {e}");
-                            continue;
-                        }
-                    };
-                    if replacement_if_match(&line, &search_config.search, &search_config.replace)
-                        .is_some()
-                    {
-                        let result = SearchResult {
-                            path: None,
-                            line_number: idx + 1,
-                            line,
-                            line_ending,
-                            included: true,
-                        };
-                        // Ignore error - likely state reset, thread about to be killed
-                        let _ = sender_for_search
-                            .send(BackgroundProcessingEvent::AddSearchResult(result));
-                    }
-                }
-            });
-
-            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
-            rerender_interval.tick().await;
-
-            loop {
-                tokio::select! {
-                    res = &mut search_handle => {
-                        if let Err(e) = res {
-                            warn!("Search thread panicked: {e}");
-                        }
-                        break;
-                    },
-                    _ = rerender_interval.tick() => {
-                        let _ = event_sender.send(Event::App(AppEvent::Rerender));
-                    }
-                }
-            }
-            if let Err(err) =
-                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
-            {
-                // Log and ignore error: likely have gone back to previous screen
-                warn!("Found error when attempting to send SearchCompleted event: {err}");
-            }
-        })
     }
 }
 
