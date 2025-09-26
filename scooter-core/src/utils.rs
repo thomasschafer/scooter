@@ -53,19 +53,15 @@ where
     result
 }
 
-pub fn read_lines_range(
-    path: &Path,
+pub fn surrounding_line_window<R>(
+    reader: R,
     start: usize,
     end: usize,
-) -> io::Result<impl Iterator<Item = (usize, String)>> {
-    assert!(
-        start <= end,
-        "Expected start <= end, found start={start}, end={end}"
-    );
-
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    let lines = reader
+) -> impl Iterator<Item = (usize, String)>
+where
+    R: BufReadExt,
+{
+    reader
         .lines_with_endings()
         .enumerate()
         .skip(start)
@@ -79,11 +75,24 @@ pub fn read_lines_range(
                 }
             };
             (idx, line)
-        });
-
-    Ok(lines)
+        })
 }
 
+pub fn read_lines_range(
+    path: &Path,
+    start: usize,
+    end: usize,
+) -> io::Result<impl Iterator<Item = (usize, String)>> {
+    assert!(
+        start <= end,
+        "Expected start <= end, found start={start}, end={end}"
+    );
+
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    Ok(surrounding_line_window(reader, start, end))
+}
 /// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
 /// and is no larger than `max_size`.
 ///
