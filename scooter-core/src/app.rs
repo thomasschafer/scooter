@@ -43,7 +43,7 @@ pub enum InputSource {
 
 pub struct ExitState {
     pub stats: Option<ReplaceState>,
-    pub stdout_state: Option<ExitAndReplaceState>, // TODO: return something like an iterator over lines, to stream results
+    pub stdout_state: Option<ExitAndReplaceState>,
 }
 
 impl std::fmt::Debug for ExitState {
@@ -706,7 +706,7 @@ impl<'a> App {
         let strategy = match &self.searcher {
             Some(Searcher::FileSearcher(file_searcher)) => {
                 SearchStrategy::Files(file_searcher.clone())
-            },
+            }
             Some(Searcher::TextSearcher { search_config }) => {
                 let InputSource::Stdin(ref stdin) = self.input_source else {
                     panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
@@ -1299,7 +1299,8 @@ impl<'a> App {
                             let sender = sender_for_search.clone();
                             Box::new(move |results| {
                                 // Ignore error - likely state reset, thread about to be killed
-                                let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+                                let _ = sender
+                                    .send(BackgroundProcessingEvent::AddSearchResults(results));
                                 WalkState::Continue
                             })
                         });
@@ -1318,7 +1319,9 @@ impl<'a> App {
                                     continue;
                                 }
                             };
-                            if replacement_if_match(&line, &config.search, &config.replace).is_some() {
+                            if replacement_if_match(&line, &config.search, &config.replace)
+                                .is_some()
+                            {
                                 let result = SearchResult {
                                     path: None,
                                     line_number: idx + 1,
