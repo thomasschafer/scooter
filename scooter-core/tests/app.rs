@@ -425,7 +425,7 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
     );
 
     let result = app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
-    assert_eq!(matches!(result, EventHandlingResult::Rerender));
+    assert!(matches!(result, EventHandlingResult::Rerender));
 
     for field in &app.search_fields.fields {
         assert!(!field.set_by_cli);

@@ -1266,7 +1266,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
         ..AppConfig::default()
     };
     let (run_handle, event_sender, mut snapshot_rx) =
-        build_test_runner_with_config_and_width(&config, 48)?;
+        build_test_runner_with_config_and_width(config, 48)?;
 
     // Search should happen automatically as the search field was prepopulated
     wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;

@@ -1,7 +1,7 @@
 use std::{
     cmp::{max, min},
     io::Cursor,
-    iter::Iterator,
+    iter::{self, Iterator},
     mem,
     path::PathBuf,
     sync::{
@@ -81,6 +81,7 @@ impl EventHandlingResult {
 
 #[derive(Debug)]
 pub enum BackgroundProcessingEvent {
+    AddSearchResult(SearchResult),
     AddSearchResults(Vec<SearchResult>),
     SearchCompleted,
     ReplacementCompleted(ReplaceState),
@@ -104,7 +105,7 @@ pub enum AppEvent {
 pub struct ExitAndReplaceState {
     pub stdin: Arc<String>,
     pub search_config: ParsedSearchConfig,
-    pub replace_results: Vec<SearchResultWithReplacement>, // TODO(stdin): can we use a reference here?
+    pub replace_results: Vec<SearchResultWithReplacement>,
 }
 
 #[derive(Debug)]
@@ -687,7 +688,6 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
-        // TODO(stdin): test that cancellation etc. all still works
         let search_state = SearchState::new(
             background_processing_sender.clone(),
             background_processing_receiver,
@@ -900,39 +900,11 @@ impl<'a> App {
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
+            BackgroundProcessingEvent::AddSearchResult(result) => {
+                self.add_search_results(iter::once(result))
+            }
             BackgroundProcessingEvent::AddSearchResults(results) => {
-                let mut rerender = false;
-                if let Screen::SearchFields(SearchFieldsState {
-                    search_state: Some(search_in_progress_state),
-                    ..
-                }) = &mut self.current_screen
-                {
-                    let mut results_with_replacements = Vec::new();
-                    let searcher = self
-                        .searcher
-                        .as_ref()
-                        .expect("file_searcher should not be None when adding search results");
-                    for res in results {
-                        let updated = add_replacement(res, searcher.search(), searcher.replace());
-                        if let Some(updated) = updated {
-                            results_with_replacements.push(updated);
-                        }
-                    }
-                    search_in_progress_state
-                        .results
-                        .append(&mut results_with_replacements);
-
-                    // Slightly random duration so that time taken isn't a round number
-                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
-                        rerender = true;
-                        search_in_progress_state.last_render = Instant::now();
-                    }
-                }
-                if rerender {
-                    EventHandlingResult::Rerender
-                } else {
-                    EventHandlingResult::None
-                }
+                self.add_search_results(results)
             }
             BackgroundProcessingEvent::SearchCompleted => {
                 if let Screen::SearchFields(SearchFieldsState {
@@ -965,6 +937,44 @@ impl<'a> App {
                 end,
                 cancelled,
             } => self.update_replacements(start, end, cancelled),
+        }
+    }
+
+    fn add_search_results<I>(&mut self, results: I) -> EventHandlingResult
+    where
+        I: IntoIterator<Item = SearchResult>,
+    {
+        let mut rerender = false;
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(search_in_progress_state),
+            ..
+        }) = &mut self.current_screen
+        {
+            let mut results_with_replacements = Vec::new();
+            let searcher = self
+                .searcher
+                .as_ref()
+                .expect("file_searcher should not be None when adding search results");
+            for res in results {
+                let updated = add_replacement(res, searcher.search(), searcher.replace());
+                if let Some(updated) = updated {
+                    results_with_replacements.push(updated);
+                }
+            }
+            search_in_progress_state
+                .results
+                .append(&mut results_with_replacements);
+
+            // Slightly random duration so that time taken isn't a round number
+            if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
+                rerender = true;
+                search_in_progress_state.last_render = Instant::now();
+            }
+        }
+        if rerender {
+            EventHandlingResult::Rerender
+        } else {
+            EventHandlingResult::None
         }
     }
 
@@ -1569,9 +1579,8 @@ impl<'a> App {
                             included: true,
                         };
                         // Ignore error - likely state reset, thread about to be killed
-                        let _ =
-                        // TODO(stdin): no vec
-                            sender_for_search.send(BackgroundProcessingEvent::AddSearchResults(vec![result]));
+                        let _ = sender_for_search
+                            .send(BackgroundProcessingEvent::AddSearchResult(result));
                     }
                 }
             });

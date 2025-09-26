@@ -416,14 +416,14 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
                 Some(&stats.errors),
             )
         });
-    if let Some(state) = maybe_replace_state.and_then(|state| state.stdout_state) {
-        print_results(state)?;
+    if let Some(mut state) = maybe_replace_state.and_then(|state| state.stdout_state) {
+        print_results(&mut state)?;
     }
 
     Ok(maybe_stats)
 }
 
-fn print_results(mut state: ExitAndReplaceState) -> anyhow::Result<()> {
+fn print_results(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
     let mut line_map = state
         .replace_results
         .iter_mut()
