@@ -538,13 +538,7 @@ fn build_preview_list<'a>(
             true_colour,
             event_sender,
         ),
-        InputSource::Stdin(stdin) => build_preview_from_str(
-            stdin,
-            num_lines_to_show,
-            selected,
-            syntax_highlighting_theme,
-            true_colour,
-        ),
+        InputSource::Stdin(stdin) => build_preview_from_str(stdin, num_lines_to_show, selected),
     }
 }
 
@@ -552,16 +546,12 @@ fn build_preview_from_str<'a>(
     stdin: &Arc<String>,
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
-    // TODO(stdin): add syntax highlighting
-    _syntax_highlighting_theme: Option<&Theme>,
-    _true_colour: bool,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
-    // TODO(stdin): cache or otherwise speed up?
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
 
