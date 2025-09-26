@@ -1,10 +1,8 @@
 # scooter
 
-scooter is an interactive find-and-replace terminal UI app.
+scooter is an interactive find-and-replace terminal UI app. By default it recursively searches through files in the current directory, but can also be used to process stdin.
 
-Search with either a fixed string or a regular expression, enter a replacement, and interactively toggle which instances you want to replace.
-
-If the instance you're attempting to replace has changed since the search was performed, e.g. if you've switched branches and that line no longer exists, that particular replacement won't occur: you'll see all such cases at the end.
+Search with either a fixed string or a regular expression, enter a replacement, and interactively toggle which instances you want to replace. If the instance you're attempting to replace has changed since the search was performed, e.g. if you've switched branches and that line no longer exists, that particular replacement won't occur: you'll see all such cases at the end.
 
 ![scooter preview](media/preview.gif)
 
@@ -17,6 +15,8 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 <!-- TOC START -->
 - [Features](#features)
 - [Usage](#usage)
+  - [Files](#files)
+  - [Stdin](#stdin)
   - [Search fields](#search-fields)
 - [Performance](#performance)
 - [Installation](#installation)
@@ -39,14 +39,22 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 
 ## Features
 
-scooter respects both `.gitignore` and `.ignore` files.
+A set of keymappings will be shown at the bottom of the window: these vary slightly depending on the screen you're on.
+
+When searching through files, scooter respects both `.gitignore` and `.ignore` files.
 
 You can add capture groups to the search regex and use them in the replacement string: for instance, if you use `(\d) - (\w+)` for the search text and `($2) "$1"` as the replacement, then `9 - foo` would be replaced with `(foo) "9"`.
 
 When viewing search results, you can open the selected file at the relevant line by pressing `e`. This will use the editor defined by your `EDITOR` environment variable. scooter will automatically attempt to open the editor at the correct line number, but if you'd like to override the command used then you can set `editor_open` in your [config file](#configuration-options).
 
+By default, scooter uses a regex engine that supports only a subset of features to maximise performance. To use the full range of regex features, such as negative lookahead, start scooter with the `-a` (`--advanced-regex`) flag.
+
+Hidden files (such as those starting with a `.`) are ignored by default, but can be included by using the `--hidden` flag.
+
 
 ## Usage
+
+### Files
 
 Run
 
@@ -60,11 +68,19 @@ in a terminal to launch scooter. By default the current directory is used to sea
 scooter ../foo/bar
 ```
 
-A set of keymappings will be shown at the bottom of the window: these vary slightly depending on the screen you're on.
+### Stdin
 
-By default, scooter uses a regex engine that supports only a subset of features to maximise performance. To use the full range of regex features, such as negative lookahead, start scooter with the `-a` (`--advanced-regex`) flag.
+scooter can operate on content piped from stdin in. For instance:
 
-Hidden files (such as those starting with a `.`) are ignored by default, but can be included by using the `--hidden` flag.
+```sh
+echo "hello world" | scooter
+```
+
+In standard TUI mode the results are written to stderr, to avoid clashing with the TUI which writes to stdout. Given this, you can write the results using `2>`, e.g.:
+
+```sh
+cat input.txt | scooter 2> output.txt
+```
 
 ### Search fields
 
@@ -308,6 +324,9 @@ command = 'tmux send-keys -t "$TMUX_PANE" ":open %file:%line" Enter'
 exit = true
 ```
 
+#### Piping to scooter
+
+You can pipe content from Helix to scooter, and it will write the updated contents back to the buffer in Helix. Select some contents in Helix, and then enter `:| scooter >/dev/tty` (i.e. press `:`, type or paste `| scooter >/dev/tty`, and then press enter). scooter will open, allowing you to find and replace on the contents: once you're done, the buffer will have been updated with any changes.
 
 ### Neovim
 
