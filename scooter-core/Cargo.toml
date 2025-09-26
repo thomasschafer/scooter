@@ -24,7 +24,7 @@ steel = ["dep:steel-core", "dep:steel-derive"]
 [dependencies]
 anyhow = "1.0.100"
 bitflags = "2.9.4"
-frep-core = { path = "../../frep/frep-core" } # TODO(stdin): revert this, bump frep version to 0.1.6 (and in scooter)
+frep-core = "0.1.6"
 log = "0.4.28"
 rayon = "1.11.0"
 similar = "2.7.0"
