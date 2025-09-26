@@ -870,7 +870,7 @@ impl<'a> App {
     }
 
     fn ready_to_replace(&mut self) -> bool {
-        if !self.is_search_complete() {
+        if !self.search_has_completed() {
             self.add_error(AppError {
                 name: "Search still in progress".to_string(),
                 long: "Try again when search is complete".to_string(),
