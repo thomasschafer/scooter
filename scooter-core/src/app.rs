@@ -130,10 +130,6 @@ impl SearchState {
         }
     }
 
-    pub fn search_has_completed(&self) -> bool {
-        self.search_completed.is_some()
-    }
-
     pub fn handle_key(
         &mut self,
         key_code: KeyCode,
@@ -635,7 +631,7 @@ impl<'a> App {
     }
 
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
-    pub fn perform_search_unwrap(&mut self) -> EventHandlingResult {
+    fn perform_search_unwrap(&mut self) -> EventHandlingResult {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
             return EventHandlingResult::None;
         };
@@ -740,7 +736,7 @@ impl<'a> App {
     }
 
     pub fn perform_replacement(&mut self) {
-        if !self.is_search_complete() {
+        if !self.search_has_completed() {
             self.add_error(AppError {
                 name: "Search still in progress".to_string(),
                 long: "Try again when search is complete".to_string(),
@@ -909,8 +905,8 @@ impl<'a> App {
                     };
                     search_fields_state.focussed_section = FocussedSection::SearchResults;
                     // Check if search has been performed
-                    if let Some(search_state) = &search_fields_state.search_state {
-                        if self.immediate_replace && search_state.search_has_completed() {
+                    if search_fields_state.search_state.is_some() {
+                        if self.immediate_replace && self.search_has_completed() {
                             self.trigger_replacement();
                         }
                     } else {
@@ -1285,11 +1281,7 @@ impl<'a> App {
                             ("g", "jump to top", Show::FullOnly),
                             ("G", "jump to bottom", Show::FullOnly),
                         ];
-                        if search_fields_state
-                            .search_state
-                            .as_ref()
-                            .is_some_and(SearchState::search_has_completed)
-                        {
+                        if self.search_has_completed() {
                             keys.push(("<enter>", "replace selected", Show::Both));
                         }
                         keys
@@ -1393,14 +1385,14 @@ impl<'a> App {
         }
     }
 
-    pub fn is_search_complete(&self) -> bool {
+    pub fn search_has_completed(&self) -> bool {
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(state),
             search_debounce_timer,
             ..
         }) = &self.current_screen
         {
-            state.search_has_completed()
+            state.search_completed.is_some()
                 && search_debounce_timer
                     .as_ref()
                     .is_none_or(tokio::task::JoinHandle::is_finished)

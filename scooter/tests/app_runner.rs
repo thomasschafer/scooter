@@ -1253,26 +1253,11 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
             value: "new_value",
             set_by_cli: true,
         },
-        fixed_strings: FieldValue {
-            value: true,
-            set_by_cli: false,
-        },
         match_whole_word: FieldValue {
             value: false,
             set_by_cli: true,
         },
-        match_case: FieldValue {
-            value: false,
-            set_by_cli: false,
-        },
-        include_files: FieldValue {
-            value: "",
-            set_by_cli: false,
-        },
-        exclude_files: FieldValue {
-            value: "",
-            set_by_cli: false,
-        },
+        ..SearchFieldValues::default()
     };
 
     let config = AppConfig {
@@ -1280,9 +1265,11 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
         search_field_values,
         ..AppConfig::default()
     };
-    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_config_and_width(config, 48)?;
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+    // Search should happen automatically as the search field was prepopulated
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     // Pre-populated fields should be skipped when tabbing
     send_key(KeyCode::Tab, &event_sender);
