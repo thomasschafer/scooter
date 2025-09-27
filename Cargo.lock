@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "scooter"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1918,7 +1918,7 @@ dependencies = [
 
 [[package]]
 name = "scooter-core"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bitflags 2.9.4",

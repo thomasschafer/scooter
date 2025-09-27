@@ -1,6 +1,6 @@
 [package]
 name = "scooter"
-version = "0.7.0"
+version = "0.8.0"
 edition.workspace = true
 authors = ["thomasschafer97@gmail.com"]
 license = "MIT"
@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.100"
-scooter-core = { version = "0.1.6", path = "../scooter-core" }
+scooter-core = { version = "0.2.0", path = "../scooter-core" }
 clap = { version = "4.5.48", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
