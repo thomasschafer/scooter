@@ -70,7 +70,7 @@ scooter ../foo/bar
 
 ### Stdin
 
-scooter can operate on content piped from stdin in. For instance:
+scooter can operate on content piped from stdin. For instance:
 
 ```sh
 echo "hello world" | scooter

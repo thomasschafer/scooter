@@ -1261,7 +1261,7 @@ impl<'a> App {
                 include_hidden: self.include_hidden,
                 directory: directory.clone(),
             }),
-            InputSource::Stdin { .. } => None,
+            InputSource::Stdin(_) => None,
         };
 
         let mut error_handler = AppErrorHandler::new();
@@ -1269,7 +1269,7 @@ impl<'a> App {
         error_handler.apply_to_app(self);
 
         let maybe_searcher = match result {
-            ValidationResult::Success((search_config, dir_config)) => match self.input_source {
+            ValidationResult::Success((search_config, dir_config)) => match &self.input_source {
                 InputSource::Directory(_) => {
                     let file_searcher = FileSearcher::new(
                         search_config,
@@ -1277,7 +1277,7 @@ impl<'a> App {
                     );
                     Some(Searcher::FileSearcher(file_searcher))
                 }
-                InputSource::Stdin { .. } => Some(Searcher::TextSearcher { search_config }),
+                InputSource::Stdin(_) => Some(Searcher::TextSearcher { search_config }),
             },
             ValidationResult::ValidationErrors => None,
         };

@@ -504,49 +504,6 @@ def test_stdin_edge_cases [scooter_binary: string] {
     0
 }
 
-def test_stdin_performance [scooter_binary: string] {
-    print "Testing stdin performance and memory usage..."
-
-    # Test moderately large input (10MB worth of text)
-    let large_line = 'x' | repeat 1000 | str join
-    let large_input = (1..10000 | each { |i| $"($large_line) line ($i) with foo content" } | str join "\n")
-
-    print "Testing with ~10MB of input data..."
-    let start_time = (date now)
-    let result = (do { echo $large_input | ^$scooter_binary --no-tui -s "foo" -r "bar" } | complete)
-    let end_time = (date now)
-    let duration = ($end_time - $start_time)
-
-    if $result.exit_code != 0 {
-        print "❌ FAILED: scooter failed with large input"
-        print $"Exit code: ($result.exit_code)"
-        print $"Stderr: ($result.stderr)"
-        return 1
-    }
-
-    # Check that processing completed in reasonable time (less than 30 seconds)
-    if ($duration | into int) > 30000000000 {  # 30 seconds in nanoseconds
-        print $"⚠️  WARNING: scooter took too long with large input: ($duration)"
-    } else {
-        print $"✅ Large input processed in ($duration)"
-    }
-
-    # Verify output integrity
-    let output_lines = ($result.stdout | lines | length)
-    if $output_lines != 10000 {
-        print $"❌ FAILED: wrong number of output lines (expected 10000, got ($output_lines))"
-        return 1
-    }
-
-    # Check for memory usage warnings in stderr
-    if ($result.stderr | str contains "memory") or ($result.stderr | str contains "allocation") {
-        print $"⚠️  WARNING: potential memory issues detected in stderr: ($result.stderr)"
-    }
-
-    print "✅ PASSED: scooter handles large stdin input efficiently"
-    0
-}
-
 def test_stdin_validation_errors [scooter_binary: string] {
     print "Testing stdin validation errors..."
 

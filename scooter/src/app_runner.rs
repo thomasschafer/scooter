@@ -401,7 +401,6 @@ pub fn format_replacement_results(
 }
 
 pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
-    // TODO: handle stdin
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
     let maybe_replace_state = runner.run_event_loop().await?;

@@ -555,10 +555,13 @@ fn build_preview_from_str<'a>(
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
 
-    let (before, cur, after) = utils::split_indexed_lines(lines, line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
-    if *cur.1 != selected.result.search_result.line {
-        bail!("File has changed since search (lines don't match)");
-    }
+    // `num_lines_to_show - 1` because diff takes up 2 lines
+    let (before, cur, after) =
+        utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
+    assert!(
+        *cur.1 == selected.result.search_result.line,
+        "Expected line didn't match actual",
+    );
     Ok(List::new(
         before
             .iter()
@@ -622,9 +625,13 @@ fn build_preview_from_file<'a>(
             Ok(list)
         }
     } else {
-        let lines = read_lines_range(path, start, end)?;
-        let (before, cur, after) =
-            utils::split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
+        let lines = read_lines_range(path, start, end)?.collect();
+        // `num_lines_to_show - 1` because diff takes up 2 lines
+        let Ok((before, cur, after)) =
+            utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
+        else {
+            bail!("File has changed since search (lines have changed)");
+        };
         if *cur.1 != selected.result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
