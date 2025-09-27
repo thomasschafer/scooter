@@ -1,6 +1,6 @@
 # scooter
 
-scooter is an interactive find-and-replace terminal UI app. By default it recursively searches through files in the current directory, but can also be used to process stdin.
+scooter is an interactive find-and-replace terminal UI app. By default it recursively searches through files in the current directory, but can also be used to process text from stdin.
 
 Search with either a fixed string or a regular expression, enter a replacement, and interactively toggle which instances you want to replace. If the instance you're attempting to replace has changed since the search was performed, e.g. if you've switched branches and that line no longer exists, that particular replacement won't occur: you'll see all such cases at the end.
 
@@ -82,6 +82,12 @@ In standard TUI mode the results are written to stderr, to avoid clashing with t
 cat input.txt | scooter 2> output.txt
 ```
 
+In `--no-tui` mode (`-N`), the results are instead written to stdout:
+
+```sh
+cat input.txt | scooter -N -s before -r after > output.txt
+```
+
 ### Search fields
 
 When on the search screen the following fields are available:
@@ -136,12 +142,6 @@ scooter is fast. Below is a benchmark for comparison, performing a find and repl
 <!-- BENCHMARK END -->
 
 Much of the speed is thanks to using the [ripgrep](https://github.com/BurntSushi/ripgrep) file walker, found in the [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crate.
-
-The `--no-tui` (`-N`) mode can be used like so:
-
-```sh
-scooter -N -s before -r after
-```
 
 Run `scooter --help` for a full list of flags.
 
