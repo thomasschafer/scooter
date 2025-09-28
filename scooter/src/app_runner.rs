@@ -16,6 +16,7 @@ use scooter_core::{
     },
     errors::AppError,
     fields::SearchFieldValues,
+    replace::ReplaceState,
 };
 use std::{
     collections::HashMap,
@@ -238,7 +239,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             EventHandlingResult::Rerender
                         }
                         Event::ExitAndReplace(state) => {
-                            return Ok(Some(ExitState{stats: None, stdout_state: Some(state)}));
+                            return Ok(Some(ExitState::StdinState(state)));
                         }
 
                     }
@@ -403,26 +404,52 @@ pub fn format_replacement_results(
 pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let maybe_replace_state = runner.run_event_loop().await?;
+    let mut exit_state = runner.run_event_loop().await?;
     runner.cleanup()?;
-    let maybe_stats = maybe_replace_state
-        .as_ref()
-        .and_then(|replace_state| replace_state.stats.as_ref())
-        .map(|stats| {
-            format_replacement_results(
-                stats.num_successes,
-                Some(stats.num_ignored),
-                Some(&stats.errors),
-            )
-        });
-    if let Some(mut state) = maybe_replace_state.and_then(|state| state.stdout_state) {
-        print_results(&mut state)?;
-    }
 
-    Ok(maybe_stats)
+    let stats = match exit_state {
+        Some(ExitState::Stats(stats)) => Some(stats),
+        Some(ExitState::StdinState(ref mut state)) => {
+            if runner.app.print_results {
+                let res = write_results_to_stderr_with_stats(state)?;
+                Some(res)
+            } else {
+                write_results_to_stderr(state)?;
+                None
+            }
+        }
+        None => None,
+    }
+    .map(|stats| {
+        format_replacement_results(
+            stats.num_successes,
+            Some(stats.num_ignored),
+            Some(&stats.errors),
+        )
+    });
+    Ok(stats)
 }
 
-fn print_results(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
+fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
+    write_results_to_stderr_impl(state, false).map(|res| {
+        assert!(res.is_none(), "Found Some stats, expected None");
+    })
+}
+
+fn write_results_to_stderr_with_stats(
+    state: &mut ExitAndReplaceState,
+) -> anyhow::Result<ReplaceState> {
+    write_results_to_stderr_impl(state, true)
+        .map(|res| res.expect("Found None stats, expected Some"))
+}
+
+fn write_results_to_stderr_impl(
+    state: &mut ExitAndReplaceState,
+    return_stats: bool,
+) -> anyhow::Result<Option<ReplaceState>> {
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
     let mut line_map = state
         .replace_results
         .iter_mut()
@@ -431,21 +458,37 @@ fn print_results(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
 
     for (idx, line) in state.stdin.lines().enumerate() {
         let line_number = idx + 1; // Ensure line-number is 1-indexed
-        let res = line_map.get_mut(&line_number).and_then(|res| {
-            assert_eq!(
-                line, res.search_result.line,
-                "line has changed since search"
-            );
-            if res.search_result.included {
-                res.replace_result = Some(ReplaceResult::Success);
-                Some(res.replacement.as_str())
-            } else {
-                None
-            }
-        });
-        writeln!(io::stderr(), "{}", res.unwrap_or(line))?;
+        let line_new = line_map
+            .get_mut(&line_number)
+            .and_then(|res| {
+                assert_eq!(
+                    line, res.search_result.line,
+                    "line has changed since search"
+                );
+                if res.search_result.included {
+                    res.replace_result = Some(ReplaceResult::Success);
+                    num_successes += 1;
+                    Some(res.replacement.as_str())
+                } else {
+                    num_ignored += 1;
+                    None
+                }
+            })
+            .unwrap_or(line);
+        writeln!(io::stderr(), "{line_new}")?;
     }
-    Ok(())
+
+    let res = if return_stats {
+        Some(ReplaceState {
+            num_successes,
+            num_ignored,
+            errors: Vec::new(),
+            replacement_errors_pos: 0,
+        })
+    } else {
+        None
+    };
+    Ok(res)
 }
 
 #[cfg(test)]

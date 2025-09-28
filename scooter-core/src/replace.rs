@@ -137,9 +137,7 @@ impl ReplaceState {
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => {
-                return EventHandlingResult::new_exit_state(None, None)
-            }
+            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit(None),
             _ => return EventHandlingResult::None,
         }
         EventHandlingResult::Rerender
@@ -442,19 +440,11 @@ mod tests {
 
         // Test exit with Enter
         let result = state.handle_key_results(KeyCode::Enter, KeyModifiers::NONE);
-        let EventHandlingResult::Exit(Some(boxed_state)) = result else {
-            panic!("Expected EventHandlingResult::Exit(Some(...)), found {result:?}");
-        };
-        assert!(boxed_state.stats.is_none());
-        assert!(boxed_state.stdout_state.is_none());
+        assert!(matches!(result, EventHandlingResult::Exit(None)));
 
         // Test exit with 'q'
         let result = state.handle_key_results(KeyCode::Char('q'), KeyModifiers::NONE);
-        let EventHandlingResult::Exit(Some(boxed_state)) = result else {
-            panic!("Expected EventHandlingResult::Exit(Some(...)), found {result:?}");
-        };
-        assert!(boxed_state.stats.is_none());
-        assert!(boxed_state.stdout_state.is_none());
+        assert!(matches!(result, EventHandlingResult::Exit(None)));
 
         // Test unhandled key
         let result = state.handle_key_results(KeyCode::Char('x'), KeyModifiers::NONE);

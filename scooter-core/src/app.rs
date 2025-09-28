@@ -41,23 +41,10 @@ pub enum InputSource {
     Stdin(Arc<String>),
 }
 
-pub struct ExitState {
-    pub stats: Option<ReplaceState>,
-    pub stdout_state: Option<ExitAndReplaceState>,
-}
-
-impl std::fmt::Debug for ExitState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let stdout_str = &match self.stdout_state {
-            None => "None",
-            Some(_) => "Some",
-        }
-        .to_string();
-        f.debug_struct("ExitState")
-            .field("stats", &self.stats)
-            .field("stdout", stdout_str)
-            .finish()
-    }
+#[derive(Debug)]
+pub enum ExitState {
+    Stats(ReplaceState),
+    StdinState(ExitAndReplaceState),
 }
 
 #[derive(Debug)]
@@ -68,14 +55,12 @@ pub enum EventHandlingResult {
 }
 
 impl EventHandlingResult {
-    pub(crate) fn new_exit_state(
-        stats: Option<ReplaceState>,
-        stdout_state: Option<ExitAndReplaceState>,
-    ) -> EventHandlingResult {
-        EventHandlingResult::Exit(Some(Box::new(ExitState {
-            stats,
-            stdout_state,
-        })))
+    pub(crate) fn new_exit_stats(stats: ReplaceState) -> EventHandlingResult {
+        Self::new_exit(ExitState::Stats(stats))
+    }
+
+    fn new_exit(exit_state: ExitState) -> EventHandlingResult {
+        EventHandlingResult::Exit(Some(Box::new(exit_state)))
     }
 }
 
@@ -528,7 +513,7 @@ pub struct App {
     errors: Vec<AppError>,
     include_hidden: bool,
     immediate_replace: bool,
-    print_results: bool,
+    pub print_results: bool,
     popup: Option<Popup>,
     advanced_regex: bool,
 }
@@ -931,7 +916,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    EventHandlingResult::new_exit_state(Some(replace_state), None)
+                    EventHandlingResult::new_exit_stats(replace_state)
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -1183,7 +1168,7 @@ impl<'a> App {
 
         if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
-            return EventHandlingResult::new_exit_state(None, None);
+            return EventHandlingResult::Exit(None);
         }
 
         if self.popup.is_some() {
@@ -1198,7 +1183,7 @@ impl<'a> App {
                     return EventHandlingResult::Rerender;
                 } else {
                     self.reset();
-                    return EventHandlingResult::new_exit_state(None, None);
+                    return EventHandlingResult::Exit(None);
                 }
             }
             (KeyCode::Char('r'), KeyModifiers::CONTROL) => {

@@ -139,12 +139,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
-    if let EventHandlingResult::Exit(Some(exit_state)) = res {
-        assert!(exit_state.stats.is_none());
-        assert!(exit_state.stdout_state.is_none());
-    } else {
-        panic!("Expected EventHandlingResult::Exit(Some(_))");
-    }
+    assert!(matches!(res, EventHandlingResult::Exit(None)));
 }
 
 #[tokio::test]
