@@ -258,14 +258,14 @@ def assert_test_result [result: record, expected_output: string, test_name: stri
         print $"Stderr: ($result.stderr)"
         return 1
     }
-    
+
     if $result.stdout != $expected_output {
         print $"❌ FAILED: ($test_name) - output mismatch"
         print $"Expected: ($expected_output)"
         print $"Actual: ($result.stdout)"
         return 1
     }
-    
+
     0
 }
 
@@ -275,14 +275,14 @@ def assert_error_result [result: record, expected_error_text: string, test_name:
         print $"Stdout: ($result.stdout)"
         return 1
     }
-    
+
     if not ($result.stderr | str contains $expected_error_text) {
         print $"❌ FAILED: ($test_name) - wrong error message"
         print $"Expected error to contain: ($expected_error_text)"
         print $"Actual stderr: ($result.stderr)"
         return 1
     }
-    
+
     0
 }
 
@@ -293,14 +293,14 @@ def assert_output_contains [result: record, expected_text: string, test_name: st
         print $"Stderr: ($result.stderr)"
         return 1
     }
-    
+
     if not ($result.stdout | str contains $expected_text) {
         print $"❌ FAILED: ($test_name) - missing expected text"
         print $"Expected to contain: ($expected_text)"
         print $"Actual stdout: ($result.stdout)"
         return 1
     }
-    
+
     0
 }
 
@@ -402,14 +402,14 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let test_input = "hello world foo bar\nline two with foo\nline three"
     let command2 = $"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X"
     let result2 = run_expect_command $command2
-    
+
     # Check multiple expected outputs
     let checks = [
         {text: "hello world baz bar", desc: "first line replacement"}
         {text: "line two with baz", desc: "second line replacement"}
         {text: "line three", desc: "preserved non-matching line"}
     ]
-    
+
     for check in $checks {
         let test_failed = assert_output_contains $result2 $check.text $check.desc
         if $test_failed != 0 {
