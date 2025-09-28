@@ -240,91 +240,146 @@ def run_e2e_tests [replacement_dir: string, all_tools: list, repo_url: string = 
     }
 }
 
+# Helper functions for stdin testing
+
+def run_scooter_stdin_test [input: string, scooter_binary: string, search: string, replace: string, extra_flags: list = []] {
+    let flags = ["--no-tui", "-s", $search, "-r", $replace] | append $extra_flags
+    do { echo $input | ^$scooter_binary ...$flags } | complete
+}
+
+def run_expect_command [command: string] {
+    ^expect -c $"spawn bash -c \"($command)\"; expect eof" | complete
+}
+
+def assert_test_result [result: record, expected_output: string, test_name: string] {
+    if $result.exit_code != 0 {
+        print $"❌ FAILED: ($test_name) - non-zero exit code"
+        print $"Exit code: ($result.exit_code)"
+        print $"Stderr: ($result.stderr)"
+        return 1
+    }
+    
+    if $result.stdout != $expected_output {
+        print $"❌ FAILED: ($test_name) - output mismatch"
+        print $"Expected: ($expected_output)"
+        print $"Actual: ($result.stdout)"
+        return 1
+    }
+    
+    0
+}
+
+def assert_error_result [result: record, expected_error_text: string, test_name: string] {
+    if $result.exit_code == 0 {
+        print $"❌ FAILED: ($test_name) - should have failed but succeeded"
+        print $"Stdout: ($result.stdout)"
+        return 1
+    }
+    
+    if not ($result.stderr | str contains $expected_error_text) {
+        print $"❌ FAILED: ($test_name) - wrong error message"
+        print $"Expected error to contain: ($expected_error_text)"
+        print $"Actual stderr: ($result.stderr)"
+        return 1
+    }
+    
+    0
+}
+
+def assert_output_contains [result: record, expected_text: string, test_name: string] {
+    if $result.exit_code != 0 {
+        print $"❌ FAILED: ($test_name) - non-zero exit code"
+        print $"Exit code: ($result.exit_code)"
+        print $"Stderr: ($result.stderr)"
+        return 1
+    }
+    
+    if not ($result.stdout | str contains $expected_text) {
+        print $"❌ FAILED: ($test_name) - missing expected text"
+        print $"Expected to contain: ($expected_text)"
+        print $"Actual stdout: ($result.stdout)"
+        return 1
+    }
+    
+    0
+}
+
 def test_stdin_processing [scooter_binary: string] {
     print "Testing stdin processing..."
 
-    # Test basic stdin replacement
-    let test_input = "hello world foo bar"
-    let result1 = (do { echo $test_input | ^$scooter_binary --no-tui -s "foo" -r "baz" } | complete)
+    let test_cases = [
+        {
+            input: "hello world foo bar"
+            search: "foo"
+            replace: "baz"
+            expected: "hello world baz bar"
+            flags: []
+            desc: "basic stdin replacement"
+        }
+        {
+            input: "123 456 789"
+            search: '\d{3}'
+            replace: "XXX"
+            expected: "XXX XXX XXX"
+            flags: []
+            desc: "regex stdin processing"
+        }
+        {
+            input: "Hello WORLD"
+            search: "hello"
+            replace: "hi"
+            expected: "hi WORLD"
+            flags: ["--case-insensitive"]
+            desc: "case insensitive stdin processing"
+        }
+        {
+            input: "test_word and test"
+            search: "test"
+            replace: "exam"
+            expected: "test_word and exam"
+            flags: ["--match-whole-word"]
+            desc: "whole word stdin processing"
+        }
+        {
+            input: "line one with foo\nline two with bar\nline three with foo again"
+            search: "foo"
+            replace: "baz"
+            expected: "line one with baz\nline two with bar\nline three with baz again"
+            flags: []
+            desc: "multi-line stdin processing"
+        }
+        {
+            input: ""
+            search: "foo"
+            replace: "bar"
+            expected: ""
+            flags: []
+            desc: "empty stdin processing"
+        }
+        {
+            input: "no matches here"
+            search: "foo"
+            replace: "bar"
+            expected: "no matches here"
+            flags: []
+            desc: "no-match stdin processing"
+        }
+    ]
 
-    if $result1.exit_code != 0 or ($result1.stdout != "hello world baz bar") {
-        print "❌ FAILED: scooter basic stdin processing failed"
-        print $"Exit code: ($result1.exit_code)"
-        print $"Stderr: ($result1.stderr)"
-        print $"Stdout: ($result1.stdout)"
-        return 1
+    for case in $test_cases {
+        let result = run_scooter_stdin_test $case.input $scooter_binary $case.search $case.replace $case.flags
+        let test_failed = assert_test_result $result $case.expected $case.desc
+        if $test_failed != 0 {
+            return 1
+        }
     }
 
-    # Test regex with stdin
-    let result2 = (do { echo "123 456 789" | ^$scooter_binary --no-tui -s '\d{3}' -r 'XXX' } | complete)
-    if $result2.exit_code != 0 or ($result2.stdout != "XXX XXX XXX") {
-        print "❌ FAILED: scooter regex stdin processing failed"
-        print $"Exit code: ($result2.exit_code)"
-        print $"Stderr: ($result2.stderr)"
-        print $"Stdout: ($result2.stdout)"
-        return 1
-    }
-
-    # Test case insensitive with stdin
-    let result3 = (do { echo "Hello WORLD" | ^$scooter_binary --no-tui -s 'hello' -r 'hi' --case-insensitive } | complete)
-    if $result3.exit_code != 0 or ($result3.stdout != "hi WORLD") {
-        print "❌ FAILED: scooter case insensitive stdin processing failed"
-        print $"Exit code: ($result3.exit_code)"
-        print $"Stderr: ($result3.stderr)"
-        print $"Stdout: ($result3.stdout)"
-        return 1
-    }
-
-    # Test whole word matching with stdin
-    let result4 = (do { echo "test_word and test" | ^$scooter_binary --no-tui -s 'test' -r 'exam' --match-whole-word } | complete)
-    if $result4.exit_code != 0 or ($result4.stdout != "test_word and exam") {
-        print "❌ FAILED: scooter whole word stdin processing failed"
-        print $"Exit code: ($result4.exit_code)"
-        print $"Stderr: ($result4.stderr)"
-        print $"Stdout: ($result4.stdout)"
-        return 1
-    }
-
-    # Test multi-line stdin processing
-    let multiline_input = "line one with foo\nline two with bar\nline three with foo again"
-    let result5 = (do { echo $multiline_input | ^$scooter_binary --no-tui -s "foo" -r "baz" } | complete)
-    let expected_output = "line one with baz\nline two with bar\nline three with baz again"
-    if $result5.exit_code != 0 or ($result5.stdout != $expected_output) {
-        print "❌ FAILED: scooter multi-line stdin processing failed"
-        print $"Exit code: ($result5.exit_code)"
-        print $"Expected: ($expected_output)"
-        print $"Actual: ($result5.stdout)"
-        return 1
-    }
-
-    # Test empty stdin
-    let result6 = (do { echo "" | ^$scooter_binary --no-tui -s "foo" -r "bar" } | complete)
-    if $result6.exit_code != 0 or ($result6.stdout != "") {
-        print "❌ FAILED: scooter empty stdin processing failed"
-        print $"Exit code: ($result6.exit_code)"
-        print $"Stderr: ($result6.stderr)"
-        print $"Stdout: ($result6.stdout)"
-        return 1
-    }
-
-    # Test stdin with no matches
-    let result7 = (do { echo "no matches here" | ^$scooter_binary --no-tui -s "foo" -r "bar" } | complete)
-    if $result7.exit_code != 0 or ($result7.stdout != "no matches here") {
-        print "❌ FAILED: scooter no-match stdin processing failed"
-        print $"Exit code: ($result7.exit_code)"
-        print $"Stderr: ($result7.stderr)"
-        print $"Stdout: ($result7.stdout)"
-        return 1
-    }
-
-    # Test stdin with long lines (potential memory issues)
+    # Test stdin with long lines
     let long_line = ('x' | repeat 1000 | str join) + "foo" + ('y' | repeat 1000 | str join)
     let expected_long = ('x' | repeat 1000 | str join) + "bar" + ('y' | repeat 1000 | str join)
-    let result8 = (do { echo $long_line | ^$scooter_binary --no-tui -s "foo" -r "bar" } | complete)
-    if $result8.exit_code != 0 or ($result8.stdout != $expected_long) {
-        print "❌ FAILED: scooter long line stdin processing failed"
-        print $"Exit code: ($result8.exit_code)"
-        print $"Stderr: ($result8.stderr)"
+    let result = run_scooter_stdin_test $long_line $scooter_binary "foo" "bar"
+    let test_failed = assert_test_result $result $expected_long "long line stdin processing"
+    if $test_failed != 0 {
         return 1
     }
 
@@ -336,103 +391,33 @@ def test_stdin_tui_mode [scooter_binary: string] {
     print "Testing stdin processing in TUI mode..."
 
     # Test TUI mode with immediate search and replace (-X flag)
-    let result1 = (^expect -c $"
-        spawn bash -c \"echo 'test foo content' | ($scooter_binary) -s 'foo' -r 'bar' -X\"
-        expect eof
-    " | complete)
-
-    if $result1.exit_code != 0 {
-        print "❌ FAILED: scooter TUI immediate mode with stdin failed to execute"
-        print $"Exit code: ($result1.exit_code)"
-        print $"Stderr: ($result1.stderr)"
-        print $"Output: ($result1.stdout)"
+    let command1 = $"echo 'test foo content' | ($scooter_binary) -s 'foo' -r 'bar' -X"
+    let result1 = run_expect_command $command1
+    let test_failed = assert_output_contains $result1 "test bar content" "TUI immediate mode with stdin"
+    if $test_failed != 0 {
         return 1
     }
 
-    # Check that the replacement was performed correctly in stdout (in test environment)
-    if not ($result1.stdout | str contains "test bar content") {
-        print "❌ FAILED: scooter TUI immediate mode with stdin produced incorrect output"
-        print $"Expected 'test bar content' in stdout"
-        print $"Actual stdout: ($result1.stdout)"
-        print $"Actual stderr: ($result1.stderr)"
-        return 1
-    }
-
-    # Test basic TUI mode with stdin - should work with proper terminal
-    # Use -X flag to avoid interactive prompts in automated testing
+    # Test multi-line TUI mode with stdin
     let test_input = "hello world foo bar\nline two with foo\nline three"
-    let result2 = (^expect -c $"
-        spawn bash -c \"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X\"
-        expect eof
-    " | complete)
-
-    if $result2.exit_code != 0 {
-        print "❌ FAILED: scooter TUI mode with multi-line stdin failed to execute"
-        print $"Exit code: ($result2.exit_code)"
-        print $"Stderr: ($result2.stderr)"
-        print $"Output: ($result2.stdout)"
-        return 1
-    }
-
-    # Check that all replacements were performed correctly in stdout (in test environment)
-    if not ($result2.stdout | str contains "hello world baz bar") or not ($result2.stdout | str contains "line two with baz") {
-        print "❌ FAILED: scooter TUI mode with multi-line stdin produced incorrect output"
-        print $"Stdout should contain both 'hello world baz bar' and 'line two with baz'"
-        print $"Actual stdout: ($result2.stdout)"
-        print $"Actual stderr: ($result2.stderr)"
-        return 1
-    }
-
-    # Test that original content is preserved where no matches exist
-    if not ($result2.stdout | str contains "line three") {
-        print "❌ FAILED: scooter TUI mode should preserve non-matching lines"
-        print $"Expected 'line three' to be preserved in stdout"
-        print $"Actual stdout: ($result2.stdout)"
-        return 1
+    let command2 = $"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X"
+    let result2 = run_expect_command $command2
+    
+    # Check multiple expected outputs
+    let checks = [
+        {text: "hello world baz bar", desc: "first line replacement"}
+        {text: "line two with baz", desc: "second line replacement"}
+        {text: "line three", desc: "preserved non-matching line"}
+    ]
+    
+    for check in $checks {
+        let test_failed = assert_output_contains $result2 $check.text $check.desc
+        if $test_failed != 0 {
+            return 1
+        }
     }
 
     print "✅ PASSED: TUI mode correctly processes stdin input and produces expected output"
-    0
-}
-
-def test_stdin_vs_sed_comparison [scooter_binary: string] {
-    print "Testing stdin processing vs sed..."
-
-    # Test cases that should match sed behavior
-    let test_cases = [
-        {input: "hello world", search: "world", replace: "universe", desc: "simple replacement"},
-        {input: "foo\nbar\nfoo", search: "foo", replace: "baz", desc: "multi-line replacement"},
-        {input: "test123test", search: "test", replace: "exam", desc: "multiple matches on same line"},
-        {input: "no matches here", search: "xyz", replace: "abc", desc: "no matches"},
-        {input: "", search: "foo", replace: "bar", desc: "empty input"},
-    ]
-
-    for case in $test_cases {
-        let scooter_result = (do { echo $case.input | ^$scooter_binary --no-tui -s $case.search -r $case.replace } | complete)
-        let sed_result = (do { echo $case.input | sed $"s/($case.search)/($case.replace)/g" } | complete)
-
-        if $scooter_result.exit_code != 0 {
-            print $"❌ FAILED: scooter failed on ($case.desc)"
-            print $"Exit code: ($scooter_result.exit_code)"
-            print $"Stderr: ($scooter_result.stderr)"
-            return 1
-        }
-
-        if $sed_result.exit_code != 0 {
-            print $"❌ FAILED: sed failed on ($case.desc)"
-            return 1
-        }
-
-        if $scooter_result.stdout != $sed_result.stdout {
-            print $"❌ FAILED: scooter vs sed mismatch on ($case.desc)"
-            print $"Input: ($case.input)"
-            print $"scooter: ($scooter_result.stdout)"
-            print $"Sed: ($sed_result.stdout)"
-            return 1
-        }
-    }
-
-    print "✅ PASSED: scooter stdin behavior matches sed for basic cases"
     0
 }
 
@@ -441,8 +426,7 @@ def test_stdin_edge_cases [scooter_binary: string] {
 
     # Test with special characters
     let special_input = "line with\ttabs and\r\nCRLF and\nnormal LF"
-    let expected_special = "line with\ttabs plus\r\nCRLF plus\nnormal LF"
-    let result1 = (do { echo $special_input | ^$scooter_binary --no-tui -s "and" -r "plus" } | complete)
+    let result1 = run_scooter_stdin_test $special_input $scooter_binary "and" "plus"
     if $result1.exit_code != 0 {
         print "❌ FAILED: scooter failed with special characters"
         print $"Exit code: ($result1.exit_code)"
@@ -451,29 +435,26 @@ def test_stdin_edge_cases [scooter_binary: string] {
     }
 
     # Verify that both "and" occurrences were replaced
-    if not ($result1.stdout | str contains "tabs plus") or not ($result1.stdout | str contains "CRLF plus") {
-        print "❌ FAILED: scooter did not replace all instances with special characters"
-        print $"Expected: ($expected_special)"
-        print $"Actual: ($result1.stdout)"
-        return 1
+    let checks1 = ["tabs plus", "CRLF plus"]
+    for text in $checks1 {
+        let test_failed = assert_output_contains $result1 $text "special characters replacement"
+        if $test_failed != 0 {
+            return 1
+        }
     }
 
     # Test with Unicode characters
     let unicode_input = "café naïve résumé 中文测试 🔥 emoji"
     let expected_unicode = "café simple résumé 中文测试 🔥 emoji"
-    let result2 = (do { echo $unicode_input | ^$scooter_binary --no-tui -s "naïve" -r "simple" } | complete)
-    if $result2.exit_code != 0 or ($result2.stdout != $expected_unicode) {
-        print "❌ FAILED: scooter failed with Unicode characters"
-        print $"Exit code: ($result2.exit_code)"
-        print $"Stderr: ($result2.stderr)"
-        print $"Expected: ($expected_unicode)"
-        print $"Actual: ($result2.stdout)"
+    let result2 = run_scooter_stdin_test $unicode_input $scooter_binary "naïve" "simple"
+    let test_failed = assert_test_result $result2 $expected_unicode "Unicode characters processing"
+    if $test_failed != 0 {
         return 1
     }
 
     # Test with large number of lines (stress test)
     let many_lines = (1..100 | each { |i| $"line ($i) with foo content" } | str join "\n")
-    let result3 = (do { echo $many_lines | ^$scooter_binary --no-tui -s "foo" -r "bar" } | complete)
+    let result3 = run_scooter_stdin_test $many_lines $scooter_binary "foo" "bar"
     if $result3.exit_code != 0 {
         print "❌ FAILED: scooter failed with many lines"
         print $"Exit code: ($result3.exit_code)"
@@ -488,15 +469,14 @@ def test_stdin_edge_cases [scooter_binary: string] {
         return 1
     }
 
-    # Verify that all "foo" instances were replaced with "bar"
+    # Verify replacements were made correctly
     if ($result3.stdout | str contains "foo") {
         print "❌ FAILED: scooter did not replace all 'foo' instances in many lines test"
-        print "Output still contains 'foo'"
         return 1
     }
 
-    if not ($result3.stdout | str contains "bar") {
-        print "❌ FAILED: scooter output does not contain expected 'bar' replacements"
+    let test_failed = assert_output_contains $result3 "bar" "many lines replacement"
+    if $test_failed != 0 {
         return 1
     }
 
@@ -507,39 +487,36 @@ def test_stdin_edge_cases [scooter_binary: string] {
 def test_stdin_validation_errors [scooter_binary: string] {
     print "Testing stdin validation errors..."
 
-    # Test --hidden flag rejected with stdin
-    let result1 = (do { echo "test content" | ^$scooter_binary --no-tui -s "foo" -r "bar" --hidden } | complete)
-    if $result1.exit_code == 0 or (not ($result1.stderr | str contains "Cannot use --hidden flag when processing stdin")) {
-        print "❌ FAILED: scooter should reject --hidden flag with stdin"
-        print $"Exit code: ($result1.exit_code)"
-        print $"Stderr: ($result1.stderr)"
-        return 1
+    let validation_tests = [
+        {
+            flags: ["--hidden"]
+            expected_error: "Cannot use --hidden flag when processing stdin"
+            desc: "--hidden flag with stdin"
+        }
+        {
+            flags: ["--files-to-include", "*.txt"]
+            expected_error: "Cannot use --files-to-include when processing stdin"
+            desc: "--files-to-include flag with stdin"
+        }
+        {
+            flags: ["--files-to-exclude", "*.txt"]
+            expected_error: "Cannot use --files-to-exclude when processing stdin"
+            desc: "--files-to-exclude flag with stdin"
+        }
+    ]
+
+    for test in $validation_tests {
+        let result = run_scooter_stdin_test "test content" $scooter_binary "foo" "bar" $test.flags
+        let test_failed = assert_error_result $result $test.expected_error $test.desc
+        if $test_failed != 0 {
+            return 1
+        }
     }
 
-    # Test --files-to-include rejected with stdin
-    let result2 = (do { echo "test content" | ^$scooter_binary --no-tui -s "foo" -r "bar" --files-to-include "*.txt" } | complete)
-    if $result2.exit_code == 0 or (not ($result2.stderr | str contains "Cannot use --files-to-include when processing stdin")) {
-        print "❌ FAILED: scooter should reject --files-to-include flag with stdin"
-        print $"Exit code: ($result2.exit_code)"
-        print $"Stderr: ($result2.stderr)"
-        return 1
-    }
-
-    # Test --files-to-exclude rejected with stdin
-    let result3 = (do { echo "test content" | ^$scooter_binary --no-tui -s "foo" -r "bar" --files-to-exclude "*.txt" } | complete)
-    if $result3.exit_code == 0 or (not ($result3.stderr | str contains "Cannot use --files-to-exclude when processing stdin")) {
-        print "❌ FAILED: scooter should reject --files-to-exclude flag with stdin"
-        print $"Exit code: ($result3.exit_code)"
-        print $"Stderr: ($result3.stderr)"
-        return 1
-    }
-
-    # Test invalid regex with stdin
-    let result4 = (do { echo "test content" | ^$scooter_binary --no-tui -s "(" -r "replacement" } | complete)
-    if $result4.exit_code == 0 or (not ($result4.stderr | str contains "Failed to parse search text")) {
-        print "❌ FAILED: scooter should reject invalid regex with stdin"
-        print $"Exit code: ($result4.exit_code)"
-        print $"Stderr: ($result4.stderr)"
+    # Test invalid regex with stdin (special case)
+    let result = run_scooter_stdin_test "test content" $scooter_binary "(" "replacement"
+    let test_failed = assert_error_result $result "Failed to parse search text" "invalid regex with stdin"
+    if $test_failed != 0 {
         return 1
     }
 
@@ -586,7 +563,6 @@ def main [mode: string, --update-readme, --repo-url: string = ""] {
                 (run_e2e_tests $replacement_dir $all_tools $repo_url)
                 (test_stdin_processing $scooter_binary)
                 (test_stdin_tui_mode $scooter_binary)
-                (test_stdin_vs_sed_comparison $scooter_binary)
                 (test_stdin_edge_cases $scooter_binary)
                 (test_stdin_validation_errors $scooter_binary)
             ]

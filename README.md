@@ -82,7 +82,7 @@ In standard TUI mode the results are written to stderr, to avoid clashing with t
 cat input.txt | scooter 2> output.txt
 ```
 
-In `--no-tui` mode (`-N`), the results are instead written to stdout:
+In `--no-tui` mode (`-N`), the results are instead written to stdout. For example:
 
 ```sh
 cat input.txt | scooter -N -s before -r after > output.txt
