@@ -1323,7 +1323,7 @@ impl<'a> App {
                 }
             });
 
-            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92));
+            let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
             rerender_interval.tick().await;
 
             loop {

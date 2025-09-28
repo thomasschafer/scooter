@@ -1780,10 +1780,10 @@ test_with_both_regex_modes!(
         let input_text = indoc! {"
             This is a line with START
             END of pattern here that should not match.
-            
+
             Another line START with
             END in next line.
-            
+
             START pattern on this line only END."
         };
 
@@ -1804,10 +1804,10 @@ test_with_both_regex_modes!(
             indoc! {"
                 This is a line with START
                 END of pattern here that should not match.
-                
+
                 Another line START with
                 END in next line.
-                
+
                 REPLACED."
             }
         );
