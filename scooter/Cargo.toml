@@ -43,7 +43,7 @@ crossterm = { version = "0.28", features = [
 insta = "1.43.2"
 rand = "0.9.2"
 serial_test = "3.2.0"
-tempfile = "3.22.0"
+tempfile = "3.23.0"
 
 [lib]
 name = "scooter"
