@@ -27,7 +27,7 @@ ratatui = "0.29.0"
 regex = "1.11.2"
 serde = "1.0.228"
 simple-log = "2.4.0"
-syntect = "5.2.0"
+syntect = "5.3.0"
 termini = "1.0.0"
 tokio = { version = "1.47.1", features = ["full"] }
 toml = "0.9.7"
