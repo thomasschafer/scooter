@@ -238,7 +238,6 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
-    // TODO: verify output in all cases
     let results = if args.no_tui {
         let results = if let Some(stdin_content) = config.stdin_content {
             run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?

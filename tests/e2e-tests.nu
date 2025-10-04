@@ -47,7 +47,7 @@ def run_tool [base_dir: string, name: string, command: string] {
     let previous_dir = $env.PWD
     cd $tool_dir
 
-    ^expect -c $"spawn bash -c \"($command)\"; expect eof" | complete
+    run_expect_command $command
 
     cd $previous_dir
 
@@ -240,15 +240,14 @@ def run_e2e_tests [replacement_dir: string, all_tools: list, repo_url: string = 
     }
 }
 
-# Helper functions for stdin testing
-
-def run_scooter_stdin_test [input: string, scooter_binary: string, search: string, replace: string, extra_flags: list = []] {
+def run_scooter_stdin_no_tui_test [input: string, scooter_binary: string, search: string, replace: string, extra_flags: list = []] {
     let flags = ["--no-tui", "-s", $search, "-r", $replace] | append $extra_flags
     do { echo $input | ^$scooter_binary ...$flags } | complete
 }
 
 def run_expect_command [command: string] {
-    ^expect -c $"spawn bash -c \"($command)\"; expect eof" | complete
+    let expect_script = 'log_user 0; spawn bash -c "' + $command + '"; log_user 1; expect -timeout -1 eof; puts $expect_out(buffer)'
+    ^expect -c $expect_script | complete
 }
 
 def assert_test_result [result: record, expected_output: string, test_name: string] {
@@ -259,10 +258,13 @@ def assert_test_result [result: record, expected_output: string, test_name: stri
         return 1
     }
 
-    if $result.stdout != $expected_output {
+    # Strip ANSI escape codes from stdout for comparison
+    let cleaned_stdout = ($result.stdout | ansi strip)
+
+    if $cleaned_stdout != $expected_output {
         print $"❌ FAILED: ($test_name) - output mismatch"
         print $"Expected: ($expected_output)"
-        print $"Actual: ($result.stdout)"
+        print $"Actual: ($cleaned_stdout)"
         return 1
     }
 
@@ -294,10 +296,13 @@ def assert_output_contains [result: record, expected_text: string, test_name: st
         return 1
     }
 
-    if not ($result.stdout | str contains $expected_text) {
-        print $"❌ FAILED: ($test_name) - missing expected text"
-        print $"Expected to contain: ($expected_text)"
-        print $"Actual stdout: ($result.stdout)"
+    # Strip ANSI escape codes from stdout for comparison
+    let cleaned_stdout = ($result.stdout | ansi strip)
+
+    if not ($cleaned_stdout | str contains $expected_text) {
+        print $"❌ FAILED: ($test_name) - missing expected text\n"
+        print $"Expected to contain:\n($expected_text)\n\n"
+        print $"Actual stdout:\n($cleaned_stdout)\n"
         return 1
     }
 
@@ -367,7 +372,7 @@ def test_stdin_processing [scooter_binary: string] {
     ]
 
     for case in $test_cases {
-        let result = run_scooter_stdin_test $case.input $scooter_binary $case.search $case.replace $case.flags
+        let result = run_scooter_stdin_no_tui_test $case.input $scooter_binary $case.search $case.replace $case.flags
         let test_failed = assert_test_result $result $case.expected $case.desc
         if $test_failed != 0 {
             return 1
@@ -377,7 +382,7 @@ def test_stdin_processing [scooter_binary: string] {
     # Test stdin with long lines
     let long_line = ('x' | repeat 1000 | str join) + "foo" + ('y' | repeat 1000 | str join)
     let expected_long = ('x' | repeat 1000 | str join) + "bar" + ('y' | repeat 1000 | str join)
-    let result = run_scooter_stdin_test $long_line $scooter_binary "foo" "bar"
+    let result = run_scooter_stdin_no_tui_test $long_line $scooter_binary "foo" "bar"
     let test_failed = assert_test_result $result $expected_long "long line stdin processing"
     if $test_failed != 0 {
         return 1
@@ -390,10 +395,15 @@ def test_stdin_processing [scooter_binary: string] {
 def test_stdin_tui_mode [scooter_binary: string] {
     print "Testing stdin processing in TUI mode..."
 
-    # Test TUI mode with immediate search and replace (-X flag)
+    # Test TUI mode with immediate search and replace
     let command1 = $"echo 'test foo content' | ($scooter_binary) -s 'foo' -r 'bar' -X"
     let result1 = run_expect_command $command1
-    let test_failed = assert_output_contains $result1 "test bar content" "TUI immediate mode with stdin"
+    let test_failed = (
+        assert_output_contains
+        $result1
+        "test bar content\nSuccessful replacements (lines): 1\nIgnored (lines): 0\nErrors: 0"
+        "TUI immediate mode with stdin: single line"
+    )
     if $test_failed != 0 {
         return 1
     }
@@ -402,19 +412,14 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let test_input = "hello world foo bar\nline two with foo\nline three"
     let command2 = $"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X"
     let result2 = run_expect_command $command2
-
-    # Check multiple expected outputs
-    let checks = [
-        {text: "hello world baz bar", desc: "first line replacement"}
-        {text: "line two with baz", desc: "second line replacement"}
-        {text: "line three", desc: "preserved non-matching line"}
-    ]
-
-    for check in $checks {
-        let test_failed = assert_output_contains $result2 $check.text $check.desc
-        if $test_failed != 0 {
-            return 1
-        }
+    let test_failed = (
+        assert_output_contains
+        $result2
+        "hello world baz bar\nline two with baz\nline three\nSuccessful replacements (lines): 2\nIgnored (lines): 0\nErrors: 0"
+        "TUI immediate mode with stdin: multiline with printed results"
+    )
+    if $test_failed != 0 {
+        return 1
     }
 
     print "✅ PASSED: TUI mode correctly processes stdin input and produces expected output"
@@ -426,7 +431,7 @@ def test_stdin_edge_cases [scooter_binary: string] {
 
     # Test with special characters
     let special_input = "line with\ttabs and\r\nCRLF and\nnormal LF"
-    let result1 = run_scooter_stdin_test $special_input $scooter_binary "and" "plus"
+    let result1 = run_scooter_stdin_no_tui_test $special_input $scooter_binary "and" "plus"
     if $result1.exit_code != 0 {
         print "❌ FAILED: scooter failed with special characters"
         print $"Exit code: ($result1.exit_code)"
@@ -446,7 +451,7 @@ def test_stdin_edge_cases [scooter_binary: string] {
     # Test with Unicode characters
     let unicode_input = "café naïve résumé 中文测试 🔥 emoji"
     let expected_unicode = "café simple résumé 中文测试 🔥 emoji"
-    let result2 = run_scooter_stdin_test $unicode_input $scooter_binary "naïve" "simple"
+    let result2 = run_scooter_stdin_no_tui_test $unicode_input $scooter_binary "naïve" "simple"
     let test_failed = assert_test_result $result2 $expected_unicode "Unicode characters processing"
     if $test_failed != 0 {
         return 1
@@ -454,7 +459,7 @@ def test_stdin_edge_cases [scooter_binary: string] {
 
     # Test with large number of lines (stress test)
     let many_lines = (1..100 | each { |i| $"line ($i) with foo content" } | str join "\n")
-    let result3 = run_scooter_stdin_test $many_lines $scooter_binary "foo" "bar"
+    let result3 = run_scooter_stdin_no_tui_test $many_lines $scooter_binary "foo" "bar"
     if $result3.exit_code != 0 {
         print "❌ FAILED: scooter failed with many lines"
         print $"Exit code: ($result3.exit_code)"
@@ -506,7 +511,7 @@ def test_stdin_validation_errors [scooter_binary: string] {
     ]
 
     for test in $validation_tests {
-        let result = run_scooter_stdin_test "test content" $scooter_binary "foo" "bar" $test.flags
+        let result = run_scooter_stdin_no_tui_test "test content" $scooter_binary "foo" "bar" $test.flags
         let test_failed = assert_error_result $result $test.expected_error $test.desc
         if $test_failed != 0 {
             return 1
@@ -514,7 +519,7 @@ def test_stdin_validation_errors [scooter_binary: string] {
     }
 
     # Test invalid regex with stdin (special case)
-    let result = run_scooter_stdin_test "test content" $scooter_binary "(" "replacement"
+    let result = run_scooter_stdin_no_tui_test "test content" $scooter_binary "(" "replacement"
     let test_failed = assert_error_result $result "Failed to parse search text" "invalid regex with stdin"
     if $test_failed != 0 {
         return 1
