@@ -59,7 +59,7 @@
             echo "Building..."
             cargo build --release --locked
             echo "Running end-to-end tests..."
-            nu tests/compare-tools.nu test "$@"
+            nu tests/e2e-tests.nu test "$@"
           '';
         };
 
@@ -70,7 +70,7 @@
             echo "Building..."
             cargo build --release --locked
             echo "Running benchmarks..."
-            nu tests/compare-tools.nu benchmark "$@"
+            nu tests/e2e-tests.nu benchmark "$@"
           '';
         };
 

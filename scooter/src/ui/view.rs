@@ -9,22 +9,24 @@ use ratatui::{
     Frame,
 };
 use scooter_core::{
-    app::{App, AppEvent, Event, FocussedSection, Popup, Screen, SearchState},
+    app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
     diff::{line_diff, Diff, DiffColour},
     errors::AppError,
     fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
     utils::{
-        last_n_chars, read_lines_range_highlighted, relative_path_from, split_indexed_lines,
-        strip_control_chars, HighlightedLine,
+        self, last_n_chars, read_lines_range_highlighted, relative_path_from, strip_control_chars,
+        HighlightedLine,
     },
 };
 use std::{
     cmp::min,
-    fs, iter,
+    fs,
+    io::Cursor,
+    iter,
     num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, Mutex, OnceLock},
+    sync::{atomic::Ordering, Arc, Mutex, OnceLock},
     time::Duration,
 };
 use syntect::{
@@ -202,10 +204,10 @@ fn display_duration(duration: Duration) -> String {
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_search_results(
     frame: &mut Frame<'_>,
+    input_source: &InputSource,
     is_complete: bool,
     search_state: &mut SearchState,
     time_taken: Duration,
-    base_path: &Path,
     area: Rect,
     theme: Option<&Theme>,
     true_colour: bool,
@@ -273,6 +275,10 @@ fn render_search_results(
         (list_area, preview_area)
     };
 
+    let base_path = match &input_source {
+        InputSource::Directory(dir) => dir,
+        InputSource::Stdin(_) => &PathBuf::from("."),
+    };
     let search_results = build_search_results(
         search_state,
         base_path,
@@ -292,7 +298,14 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height as usize;
 
-        match build_preview_list(lines_to_show, selected, theme, true_colour, event_sender) {
+        match build_preview_list(
+            input_source,
+            lines_to_show,
+            selected,
+            theme,
+            true_colour,
+            event_sender,
+        ) {
             Ok(preview) => {
                 frame.render_widget(preview, preview_area);
             }
@@ -510,27 +523,81 @@ fn read_lines_range_highlighted_with_cache(
 }
 
 fn build_preview_list<'a>(
+    input_source: &InputSource,
     num_lines_to_show: usize,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<List<'a>> {
+    match input_source {
+        InputSource::Directory(_) => build_preview_from_file(
+            num_lines_to_show,
+            selected,
+            syntax_highlighting_theme,
+            true_colour,
+            event_sender,
+        ),
+        InputSource::Stdin(stdin) => build_preview_from_str(stdin, num_lines_to_show, selected),
+    }
+}
+
+fn build_preview_from_str<'a>(
+    stdin: &Arc<String>,
+    num_lines_to_show: usize,
+    selected: &SearchResultLines<'_>,
+) -> anyhow::Result<List<'a>> {
+    // Line numbers are 1-indexed
+    let line_idx = selected.result.search_result.line_number - 1;
+    let start = line_idx.saturating_sub(num_lines_to_show);
+    let end = line_idx + num_lines_to_show;
+
+    let cursor = Cursor::new(stdin.as_bytes());
+    let lines = utils::surrounding_line_window(cursor, start, end).collect();
+
+    // `num_lines_to_show - 1` because diff takes up 2 lines
+    let (before, cur, after) =
+        utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
+    assert!(
+        *cur.1 == selected.result.search_result.line,
+        "Expected line didn't match actual",
+    );
+    Ok(List::new(
+        before
+            .iter()
+            .map(|(_, l)| to_line_plain(l))
+            .chain([
+                ListItem::new(selected.old_line_diff.clone()),
+                ListItem::new(selected.new_line_diff.clone()),
+            ])
+            .chain(after.iter().map(|(_, l)| to_line_plain(l))),
+    ))
+}
+
+fn build_preview_from_file<'a>(
+    num_lines_to_show: usize,
+    selected: &SearchResultLines<'_>,
+    syntax_highlighting_theme: Option<&Theme>,
+    true_colour: bool,
+    event_sender: UnboundedSender<Event>,
+) -> anyhow::Result<List<'a>> {
+    let path = selected
+        .result
+        .search_result
+        .path
+        .as_ref()
+        .expect("attempted to build preview list from file with no path");
+
+    // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show);
     let end = line_idx + num_lines_to_show;
 
     if let Some(theme) = syntax_highlighting_theme {
-        let lines = read_lines_range_highlighted_with_cache(
-            &selected.result.search_result.path,
-            start,
-            end,
-            theme,
-            event_sender,
-        )?;
+        let lines = read_lines_range_highlighted_with_cache(path, start, end, theme, event_sender)?;
         // `num_lines_to_show - 1` because diff takes up 2 lines
         let Ok((before, cur, after)) =
-            split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
+            utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
         else {
             bail!("File has changed since search (lines have changed)");
         };
@@ -558,9 +625,13 @@ fn build_preview_list<'a>(
             Ok(list)
         }
     } else {
-        let lines = read_lines_range(&selected.result.search_result.path, start, end)?;
-        let (before, cur, after) =
-            split_indexed_lines(lines.collect::<Vec<_>>(), line_idx, num_lines_to_show - 1)?; // -1 because diff takes up 2 lines
+        let lines = read_lines_range(path, start, end)?.collect();
+        // `num_lines_to_show - 1` because diff takes up 2 lines
+        let Ok((before, cur, after)) =
+            utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
+        else {
+            bail!("File has changed since search (lines have changed)");
+        };
         if *cur.1 != selected.result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
@@ -656,7 +727,10 @@ fn file_path_line<'a>(
         },
     );
     let left_content_len = left_content.chars().count();
-    let mut path = relative_path_from(base_path, &result.search_result.path);
+    let mut path = match &result.search_result.path {
+        Some(path) => relative_path_from(base_path, path),
+        None => "stdin".to_string(),
+    };
     let line_num = format!(":{}", result.search_result.line_number);
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
@@ -851,7 +925,6 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
 
     render_key_hints(app, frame, footer_area);
 
-    let base_path = &app.directory;
     let show_popup = app.show_popup();
     match &mut app.current_screen {
         Screen::SearchFields(ref mut search_fields_state) => {
@@ -887,10 +960,10 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
                 };
                 render_search_results(
                     frame,
+                    &app.input_source,
                     is_complete,
                     state,
                     elapsed,
-                    base_path,
                     results,
                     config.get_theme(),
                     config.style.true_color,
@@ -1040,7 +1113,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 5, 5).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 5, 5).unwrap();
 
         assert_eq!(cur, (5, "Line 5".to_string()));
         assert_eq!(
@@ -1058,7 +1131,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 0, 3).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 0, 3).unwrap();
 
         assert_eq!(cur, (0, "Line 0".to_string()));
         assert_eq!(before, vec![]); // No lines before 0
@@ -1073,7 +1146,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 10, 3).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 10, 3).unwrap();
 
         assert_eq!(cur, (10, "Line 10".to_string()));
         assert_eq!(
@@ -1088,7 +1161,7 @@ mod tests {
         let lines: Vec<(usize, String)> =
             (0..=10).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let (before, cur, after) = split_indexed_lines(lines, 5, 1).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 5, 1).unwrap();
 
         assert_eq!(cur, (5, "Line 5".to_string()));
         assert_eq!(before, vec![]);
@@ -1101,7 +1174,7 @@ mod tests {
             .map(|idx| (idx, vec![idx, (idx * 2)]))
             .collect::<Vec<_>>();
 
-        let (before, cur, after) = split_indexed_lines(lines, 3, 2).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 3, 2).unwrap();
 
         assert_eq!(cur, (3, vec![3, 6]));
         assert_eq!(before, vec![]);
@@ -1118,7 +1191,7 @@ mod tests {
             (50, "Line 50"),
         ];
 
-        let (before, cur, after) = split_indexed_lines(lines, 30, 3).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 30, 3).unwrap();
 
         assert_eq!(cur, (30, "Line 30"));
         // Both before and after should be empty - `num_lines_to_show` should be just sequential lines
@@ -1136,7 +1209,7 @@ mod tests {
             (50, "Line 50"),
         ];
 
-        let (before, cur, after) = split_indexed_lines(lines, 30, 30).unwrap();
+        let (before, cur, after) = utils::split_indexed_lines(lines, 30, 30).unwrap();
 
         assert_eq!(cur, (30, "Line 30"));
         assert_eq!(before, vec![(20, "Line 20")]);
@@ -1148,7 +1221,7 @@ mod tests {
     fn test_split_lines_line_idx_not_found() {
         let lines: Vec<(usize, String)> = (0..=5).map(|idx| (idx, format!("Line {idx}"))).collect();
 
-        let _ = split_indexed_lines(lines, 10, 3).unwrap();
+        let _ = utils::split_indexed_lines(lines, 10, 3).unwrap();
         // Should panic because line 10 is not in the data
     }
 }
