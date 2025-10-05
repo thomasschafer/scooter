@@ -1,7 +1,11 @@
 use anyhow::anyhow;
 use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use serde::{de, Deserialize, Deserializer};
-use std::{fs, path::PathBuf, sync::OnceLock};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 use syntect::highlighting::{Theme, ThemeSet};
 
 pub const APP_NAME: &str = "scooter";
@@ -18,20 +22,16 @@ fn get_theme_set() -> &'static ThemeSet {
     })
 }
 
-static CONFIG_DIR_OVERRIDE: OnceLock<Option<PathBuf>> = OnceLock::new();
+static CONFIG_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
-pub fn set_config_dir_override(dir: Option<PathBuf>) {
+pub fn set_config_dir_override(dir: &Path) {
     CONFIG_DIR_OVERRIDE
-        .set(dir)
+        .set(dir.to_path_buf())
         .expect("Config dir override should only be set once");
 }
 
 fn config_dir() -> PathBuf {
-    get_config_dir(CONFIG_DIR_OVERRIDE.get().and_then(|o| o.as_ref()))
-}
-
-fn get_config_dir(override_dir: Option<&PathBuf>) -> PathBuf {
-    if let Some(dir) = override_dir {
+    if let Some(dir) = CONFIG_DIR_OVERRIDE.get() {
         return dir.clone();
     }
     let strategy = choose_base_strategy().expect("Unable to find config directory!");
@@ -403,42 +403,5 @@ command = "vim %file +%line"
             config.get_theme(),
             Some(&load_theme("base16-ocean.dark").unwrap())
         );
-    }
-
-    #[test]
-    fn test_config_dir_default() {
-        let dir = get_config_dir(None);
-        assert!(dir.ends_with(APP_NAME));
-    }
-
-    #[test]
-    fn test_config_dir_with_override() {
-        let custom_dir = PathBuf::from("/custom/config/path");
-        let dir = get_config_dir(Some(&custom_dir));
-        assert_eq!(dir, custom_dir);
-    }
-
-    #[test]
-    fn test_config_dir_override_used_for_config_file() {
-        let custom_dir = PathBuf::from("/custom/config");
-        let config_file = custom_dir.join("config.toml");
-
-        // Test that when we pass an override, it would be used for the config file path
-        let result_dir = get_config_dir(Some(&custom_dir));
-        let result_config_file = result_dir.join("config.toml");
-
-        assert_eq!(result_config_file, config_file);
-    }
-
-    #[test]
-    fn test_config_dir_override_used_for_themes_folder() {
-        let custom_dir = PathBuf::from("/custom/config");
-        let themes_folder = custom_dir.join("themes/");
-
-        // Test that when we pass an override, it would be used for the themes folder path
-        let result_dir = get_config_dir(Some(&custom_dir));
-        let result_themes_folder = result_dir.join("themes/");
-
-        assert_eq!(result_themes_folder, themes_folder);
     }
 }

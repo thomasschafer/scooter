@@ -247,7 +247,9 @@ impl<'a> From<&'a Args> for SearchFieldValues<'a> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    config::set_config_dir_override(args.config_dir.clone());
+    if let Some(config_dir) = &args.config_dir {
+        config::set_config_dir_override(config_dir);
+    }
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
