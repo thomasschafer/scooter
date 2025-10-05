@@ -241,7 +241,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         Event::ExitAndReplace(state) => {
                             return Ok(Some(ExitState::StdinState(state)));
                         }
-
                     }
                 }
                 Some(event) = self.app.background_processing_recv() => {

@@ -61,6 +61,11 @@ pub fn surrounding_line_window<R>(
 where
     R: BufReadExt,
 {
+    assert!(
+        start <= end,
+        "Expected start <= end, found start={start}, end={end}"
+    );
+
     reader
         .lines_with_endings()
         .enumerate()
@@ -83,16 +88,12 @@ pub fn read_lines_range(
     start: usize,
     end: usize,
 ) -> io::Result<impl Iterator<Item = (usize, String)>> {
-    assert!(
-        start <= end,
-        "Expected start <= end, found start={start}, end={end}"
-    );
-
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
     Ok(surrounding_line_window(reader, start, end))
 }
+
 /// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
 /// and is no larger than `max_size`.
 ///

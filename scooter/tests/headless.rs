@@ -41,7 +41,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned());
 
         assert_test_files!(
             &temp_dir,
@@ -968,7 +968,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned());
 
         // Verify only .txt files were modified
         assert_test_files!(
@@ -1026,7 +1026,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 0 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 0 files updated\n".to_owned());
 
         Ok(())
     }
@@ -1090,7 +1090,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned());
 
         // Verify non-.txt files were modified
         assert_test_files!(
@@ -1236,7 +1236,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned());
 
         // Verify only source .rs files were modified, not test files or docs
         assert_test_files!(
@@ -1372,7 +1372,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned(),);
+        assert_eq!(result.unwrap(), "Success: 2 files updated\n".to_owned());
 
         assert_test_files!(
             &temp_dir,
@@ -1480,8 +1480,8 @@ test_with_both_regex_modes!(
         };
 
         let search_config = SearchConfig {
-            search_text: r"username: (\w+), email: ([^@]+)@",
-            replacement_text: "user: $1 (contact: $2 at",
+            search_text: r"username: (\w+), email: ([^@]+)@(.*)",
+            replacement_text: "user: $1 (contact: $2 at $3)",
             fixed_strings: false,
             match_case: true,
             match_whole_word: false,
@@ -1493,8 +1493,8 @@ test_with_both_regex_modes!(
         assert_eq!(
             result.unwrap(),
             indoc! {"
-                user: john_doe (contact: john atexample.com
-                user: jane_smith (contact: jane atexample.com"
+                user: john_doe (contact: john at example.com)
+                user: jane_smith (contact: jane at example.com)"
             }
         );
 

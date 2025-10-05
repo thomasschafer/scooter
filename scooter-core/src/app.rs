@@ -832,17 +832,12 @@ impl<'a> App {
                         );
                     }
                     Searcher::TextSearcher { search_config } => {
-                        let temp_placeholder = InputSource::Stdin(Arc::new("".to_string()));
-                        let InputSource::Stdin(stdin) = std::mem::replace(
-                            &mut self.input_source,
-                            // We'll exit after this so doesn't matter what we put here
-                            temp_placeholder,
-                        ) else {
+                        let InputSource::Stdin(ref stdin) = self.input_source else {
                             panic!("Expected stdin input source, found {:?}", self.input_source)
                         };
                         self.event_sender
                             .send(Event::ExitAndReplace(ExitAndReplaceState {
-                                stdin,
+                                stdin: Arc::clone(stdin),
                                 replace_results: state.results,
                                 search_config,
                             }))
@@ -947,7 +942,7 @@ impl<'a> App {
             let searcher = self
                 .searcher
                 .as_ref()
-                .expect("file_searcher should not be None when adding search results");
+                .expect("searcher should not be None when adding search results");
             for res in results {
                 let updated = add_replacement(res, searcher.search(), searcher.replace());
                 if let Some(updated) = updated {
