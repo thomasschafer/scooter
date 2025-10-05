@@ -18,7 +18,22 @@ fn get_theme_set() -> &'static ThemeSet {
     })
 }
 
+static CONFIG_DIR_OVERRIDE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+pub fn set_config_dir_override(dir: Option<PathBuf>) {
+    CONFIG_DIR_OVERRIDE
+        .set(dir)
+        .expect("Config dir override should only be set once");
+}
+
 fn config_dir() -> PathBuf {
+    get_config_dir(CONFIG_DIR_OVERRIDE.get().and_then(|o| o.as_ref()))
+}
+
+fn get_config_dir(override_dir: Option<&PathBuf>) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return dir.clone();
+    }
     let strategy = choose_base_strategy().expect("Unable to find config directory!");
     strategy.config_dir().join(APP_NAME)
 }
@@ -114,8 +129,10 @@ pub struct PreviewConfig {
     /// The default is `"base16-eighties.dark"`. Other built-in options are
     /// `"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
     ///
-    /// You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
-    /// and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+    /// You can use other themes by adding `.tmTheme` files to `<scooter-config-dir>/themes` and then specifying their name here.
+    /// By default, `<scooter-config-dir>` is `~/.config/scooter/` on Linux or macOS, or `%AppData%\scooter\` on Windows, and can be overriden with the `--config-dir` flag.
+    ///
+    /// For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
     /// ```sh
     /// wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
     /// ```
@@ -386,5 +403,42 @@ command = "vim %file +%line"
             config.get_theme(),
             Some(&load_theme("base16-ocean.dark").unwrap())
         );
+    }
+
+    #[test]
+    fn test_config_dir_default() {
+        let dir = get_config_dir(None);
+        assert!(dir.ends_with(APP_NAME));
+    }
+
+    #[test]
+    fn test_config_dir_with_override() {
+        let custom_dir = PathBuf::from("/custom/config/path");
+        let dir = get_config_dir(Some(&custom_dir));
+        assert_eq!(dir, custom_dir);
+    }
+
+    #[test]
+    fn test_config_dir_override_used_for_config_file() {
+        let custom_dir = PathBuf::from("/custom/config");
+        let config_file = custom_dir.join("config.toml");
+
+        // Test that when we pass an override, it would be used for the config file path
+        let result_dir = get_config_dir(Some(&custom_dir));
+        let result_config_file = result_dir.join("config.toml");
+
+        assert_eq!(result_config_file, config_file);
+    }
+
+    #[test]
+    fn test_config_dir_override_used_for_themes_folder() {
+        let custom_dir = PathBuf::from("/custom/config");
+        let themes_folder = custom_dir.join("themes/");
+
+        // Test that when we pass an override, it would be used for the themes folder path
+        let result_dir = get_config_dir(Some(&custom_dir));
+        let result_themes_folder = result_dir.join("themes/");
+
+        assert_eq!(result_themes_folder, themes_folder);
     }
 }

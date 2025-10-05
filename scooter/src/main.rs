@@ -99,6 +99,10 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
+
+    /// Override the config directory (default: ~/.config/scooter on Linux/macOS, %AppData%\scooter on Windows)
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
@@ -235,6 +239,7 @@ impl<'a> From<&'a Args> for SearchFieldValues<'a> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    config::set_config_dir_override(args.config_dir.clone());
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
@@ -301,6 +306,7 @@ mod tests {
             case_insensitive: false,
             files_to_include: None,
             files_to_exclude: None,
+            config_dir: None,
         }
     }
 
