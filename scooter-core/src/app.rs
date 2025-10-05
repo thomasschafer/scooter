@@ -1,6 +1,7 @@
 use std::{
     cmp::{max, min},
-    iter::Iterator,
+    io::Cursor,
+    iter::{self, Iterator},
     mem,
     path::PathBuf,
     sync::{
@@ -11,15 +12,16 @@ use std::{
 };
 
 use frep_core::{
+    line_reader::{BufReadExt, LineEnding},
     replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, SearchResult, SearchResultWithReplacement},
+    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
-        validate_search_configuration, SearchConfiguration, ValidationErrorHandler,
+        validate_search_configuration, DirConfig, SearchConfig, ValidationErrorHandler,
         ValidationResult,
     },
 };
 use ignore::WalkState;
-use log::warn;
+use log::{debug, warn};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::{self, JoinHandle},
@@ -29,18 +31,42 @@ use crate::{
     errors::AppError,
     fields::{FieldName, KeyCode, KeyModifiers, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
+    search::Searcher,
     utils::ceil_div,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+pub enum InputSource {
+    Directory(PathBuf),
+    Stdin(Arc<String>),
+}
+
+#[derive(Debug)]
+pub enum ExitState {
+    Stats(ReplaceState),
+    StdinState(ExitAndReplaceState),
+}
+
+#[derive(Debug)]
 pub enum EventHandlingResult {
     Rerender,
-    Exit(Option<ReplaceState>),
+    Exit(Option<Box<ExitState>>),
     None,
+}
+
+impl EventHandlingResult {
+    pub(crate) fn new_exit_stats(stats: ReplaceState) -> EventHandlingResult {
+        Self::new_exit(ExitState::Stats(stats))
+    }
+
+    fn new_exit(exit_state: ExitState) -> EventHandlingResult {
+        EventHandlingResult::Exit(Some(Box::new(exit_state)))
+    }
 }
 
 #[derive(Debug)]
 pub enum BackgroundProcessingEvent {
+    AddSearchResult(SearchResult),
     AddSearchResults(Vec<SearchResult>),
     SearchCompleted,
     ReplacementCompleted(ReplaceState),
@@ -61,10 +87,18 @@ pub enum AppEvent {
 }
 
 #[derive(Debug)]
+pub struct ExitAndReplaceState {
+    pub stdin: Arc<String>,
+    pub search_config: ParsedSearchConfig,
+    pub replace_results: Vec<SearchResultWithReplacement>,
+}
+
+#[derive(Debug)]
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
     App(AppEvent),
     PerformReplacement,
+    ExitAndReplace(ExitAndReplaceState),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -472,21 +506,30 @@ impl Default for AppRunConfig {
 pub struct App {
     pub current_screen: Screen,
     pub search_fields: SearchFields,
-    pub file_searcher: Option<FileSearcher>,
-    pub directory: PathBuf,
+    pub searcher: Option<Searcher>,
+    pub input_source: InputSource,
     disable_prepopulated_fields: bool,
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
     immediate_replace: bool,
-    print_results: bool,
+    pub print_results: bool,
     popup: Option<Popup>,
     advanced_regex: bool,
 }
 
+#[derive(Debug)]
+enum SearchStrategy {
+    Files(FileSearcher),
+    Text {
+        haystack: Arc<String>,
+        config: ParsedSearchConfig,
+    },
+}
+
 impl<'a> App {
     fn new(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
@@ -503,8 +546,8 @@ impl<'a> App {
         let mut app = Self {
             current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
-            file_searcher: None,
-            directory,
+            searcher: None,
+            input_source,
             include_hidden: app_run_config.include_hidden,
             disable_prepopulated_fields,
             errors: vec![],
@@ -523,14 +566,14 @@ impl<'a> App {
     }
 
     pub fn new_with_receiver(
-        directory: PathBuf,
+        input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
         disable_prepopulated_fields: bool,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
-            directory,
+            input_source,
             search_field_values,
             event_sender,
             app_run_config,
@@ -565,7 +608,7 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            self.directory.clone(),
+            self.input_source.clone(),
             &SearchFieldValues::default(),
             self.event_sender.clone(),
             &AppRunConfig {
@@ -623,7 +666,7 @@ impl<'a> App {
 
     pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.file_searcher = Some(search_config);
+            self.searcher = Some(search_config);
         } else {
             return EventHandlingResult::Rerender;
         }
@@ -639,23 +682,38 @@ impl<'a> App {
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
         let cancelled = Arc::new(AtomicBool::new(false));
-
-        let file_searcher = self
-            .file_searcher
-            .clone()
-            .expect("Fields should have been parsed");
-
-        Self::spawn_update_search_results(
-            file_searcher,
-            &background_processing_sender,
-            self.event_sender.clone(),
+        let search_state = SearchState::new(
+            background_processing_sender.clone(),
+            background_processing_receiver,
             cancelled.clone(),
         );
-        search_fields_state.search_state = Some(SearchState::new(
-            background_processing_sender,
-            background_processing_receiver,
+
+        let strategy = match &self.searcher {
+            Some(Searcher::FileSearcher(file_searcher)) => {
+                SearchStrategy::Files(file_searcher.clone())
+            }
+            Some(Searcher::TextSearcher { search_config }) => {
+                let InputSource::Stdin(ref stdin) = self.input_source else {
+                    panic!("Expected InputSource::Stdin, found {:?}", self.input_source);
+                };
+                SearchStrategy::Text {
+                    haystack: Arc::clone(stdin),
+                    config: search_config.clone(),
+                }
+            }
+            None => {
+                panic!("Fields should have been parsed")
+            }
+        };
+
+        Self::spawn_search_task(
+            strategy,
+            background_processing_sender.clone(),
+            self.event_sender.clone(),
             cancelled,
-        ));
+        );
+
+        search_fields_state.search_state = Some(search_state);
 
         EventHandlingResult::Rerender
     }
@@ -713,7 +771,7 @@ impl<'a> App {
             return EventHandlingResult::None;
         };
         let file_searcher = self
-            .file_searcher
+            .searcher
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
@@ -736,26 +794,7 @@ impl<'a> App {
     }
 
     pub fn perform_replacement(&mut self) {
-        if !self.search_has_completed() {
-            self.add_error(AppError {
-                name: "Search still in progress".to_string(),
-                long: "Try again when search is complete".to_string(),
-            });
-            return;
-        } else if !self.is_preview_updated() {
-            self.add_error(AppError {
-                name: "Updating replacement preview".to_string(),
-                long: "Try again when complete".to_string(),
-            });
-            return;
-        } else if !self
-            .background_processing_reciever()
-            .is_some_and(|r| r.is_empty())
-        {
-            self.add_error(AppError {
-                name: "Background processing in progress".to_string(),
-                long: "Try again in a moment".to_string(),
-            });
+        if !self.ready_to_replace() {
             return;
         }
 
@@ -778,17 +817,33 @@ impl<'a> App {
                     .count();
                 let replacements_completed = Arc::new(AtomicUsize::new(0));
 
-                let Some(search_config) = self.validate_fields().unwrap() else {
+                let Some(searcher) = self.validate_fields().unwrap() else {
                     panic!("Attempted to replace with invalid fields");
                 };
-                replace::perform_replacement(
-                    state.results,
-                    background_processing_sender.clone(),
-                    cancelled.clone(),
-                    replacements_completed.clone(),
-                    self.event_sender.clone(),
-                    Some(search_config),
-                );
+                match searcher {
+                    Searcher::FileSearcher(file_searcher) => {
+                        replace::perform_replacement(
+                            state.results,
+                            background_processing_sender.clone(),
+                            cancelled.clone(),
+                            replacements_completed.clone(),
+                            self.event_sender.clone(),
+                            Some(file_searcher),
+                        );
+                    }
+                    Searcher::TextSearcher { search_config } => {
+                        let InputSource::Stdin(ref stdin) = self.input_source else {
+                            panic!("Expected stdin input source, found {:?}", self.input_source)
+                        };
+                        self.event_sender
+                            .send(Event::ExitAndReplace(ExitAndReplaceState {
+                                stdin: Arc::clone(stdin),
+                                replace_results: state.results,
+                                search_config,
+                            }))
+                            .expect("Failed to send ExitAndReplace event");
+                    }
+                }
 
                 self.current_screen =
                     Screen::PerformingReplacement(PerformingReplacementState::new(
@@ -802,45 +857,42 @@ impl<'a> App {
         }
     }
 
+    fn ready_to_replace(&mut self) -> bool {
+        if !self.search_has_completed() {
+            self.add_error(AppError {
+                name: "Search still in progress".to_string(),
+                long: "Try again when search is complete".to_string(),
+            });
+            return false;
+        } else if !self.is_preview_updated() {
+            self.add_error(AppError {
+                name: "Updating replacement preview".to_string(),
+                long: "Try again when complete".to_string(),
+            });
+            return false;
+        } else if !self
+            .background_processing_reciever()
+            .is_some_and(|r| r.is_empty())
+        {
+            self.add_error(AppError {
+                name: "Background processing in progress".to_string(),
+                long: "Try again in a moment".to_string(),
+            });
+            return false;
+        }
+        true
+    }
+
     pub fn handle_background_processing_event(
         &mut self,
         event: BackgroundProcessingEvent,
     ) -> EventHandlingResult {
         match event {
+            BackgroundProcessingEvent::AddSearchResult(result) => {
+                self.add_search_results(iter::once(result))
+            }
             BackgroundProcessingEvent::AddSearchResults(results) => {
-                let mut rerender = false;
-                if let Screen::SearchFields(SearchFieldsState {
-                    search_state: Some(search_in_progress_state),
-                    ..
-                }) = &mut self.current_screen
-                {
-                    let mut results_with_replacements = Vec::new();
-                    let file_searcher = self
-                        .file_searcher
-                        .as_ref()
-                        .expect("file_searcher should not be None when adding search results");
-                    for res in results {
-                        let updated =
-                            add_replacement(res, file_searcher.search(), file_searcher.replace());
-                        if let Some(updated) = updated {
-                            results_with_replacements.push(updated);
-                        }
-                    }
-                    search_in_progress_state
-                        .results
-                        .append(&mut results_with_replacements);
-
-                    // Slightly random duration so that time taken isn't a round number
-                    if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
-                        rerender = true;
-                        search_in_progress_state.last_render = Instant::now();
-                    }
-                }
-                if rerender {
-                    EventHandlingResult::Rerender
-                } else {
-                    EventHandlingResult::None
-                }
+                self.add_search_results(results)
             }
             BackgroundProcessingEvent::SearchCompleted => {
                 if let Screen::SearchFields(SearchFieldsState {
@@ -859,7 +911,7 @@ impl<'a> App {
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
                 if self.print_results {
-                    EventHandlingResult::Exit(Some(replace_state))
+                    EventHandlingResult::new_exit_stats(replace_state)
                 } else {
                     self.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
@@ -873,6 +925,44 @@ impl<'a> App {
                 end,
                 cancelled,
             } => self.update_replacements(start, end, cancelled),
+        }
+    }
+
+    fn add_search_results<I>(&mut self, results: I) -> EventHandlingResult
+    where
+        I: IntoIterator<Item = SearchResult>,
+    {
+        let mut rerender = false;
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(search_in_progress_state),
+            ..
+        }) = &mut self.current_screen
+        {
+            let mut results_with_replacements = Vec::new();
+            let searcher = self
+                .searcher
+                .as_ref()
+                .expect("searcher should not be None when adding search results");
+            for res in results {
+                let updated = add_replacement(res, searcher.search(), searcher.replace());
+                if let Some(updated) = updated {
+                    results_with_replacements.push(updated);
+                }
+            }
+            search_in_progress_state
+                .results
+                .append(&mut results_with_replacements);
+
+            // Slightly random duration so that time taken isn't a round number
+            if search_in_progress_state.last_render.elapsed() >= Duration::from_millis(92) {
+                rerender = true;
+                search_in_progress_state.last_render = Instant::now();
+            }
+        }
+        if rerender {
+            EventHandlingResult::Rerender
+        } else {
+            EventHandlingResult::None
         }
     }
 
@@ -955,7 +1045,7 @@ impl<'a> App {
             self.disable_prepopulated_fields,
         );
         if let Some(search_config) = self.validate_fields().unwrap() {
-            self.file_searcher = Some(search_config);
+            self.searcher = Some(search_config);
         } else {
             return Some(EventHandlingResult::Rerender);
         }
@@ -963,7 +1053,7 @@ impl<'a> App {
             return Some(EventHandlingResult::None);
         };
         let file_searcher = self
-            .file_searcher
+            .searcher
             .as_ref()
             .expect("Fields should have been parsed");
 
@@ -1047,12 +1137,14 @@ impl<'a> App {
                     let selected = search_in_progress_state
                         .primary_selected_field_mut()
                         .expect("Expected to find selected field");
-                    self.event_sender
-                        .send(Event::LaunchEditor((
-                            selected.search_result.path.clone(),
-                            selected.search_result.line_number,
-                        )))
-                        .expect("Failed to send event");
+                    if let Some(ref path) = selected.search_result.path {
+                        self.event_sender
+                            .send(Event::LaunchEditor((
+                                path.clone(),
+                                selected.search_result.line_number,
+                            )))
+                            .expect("Failed to send event");
+                    }
                 }
                 Some(EventHandlingResult::Rerender)
             }
@@ -1133,52 +1225,97 @@ impl<'a> App {
         }
     }
 
-    pub fn validate_fields(&mut self) -> anyhow::Result<Option<FileSearcher>> {
-        let search_config = SearchConfiguration {
+    pub fn validate_fields(&mut self) -> anyhow::Result<Option<Searcher>> {
+        let search_config = SearchConfig {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
             advanced_regex: self.advanced_regex,
-            include_globs: Some(self.search_fields.include_files().text()),
-            exclude_globs: Some(self.search_fields.exclude_files().text()),
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
-            include_hidden: self.include_hidden,
-            directory: self.directory.clone(),
+        };
+        let dir_config = match &self.input_source {
+            InputSource::Directory(directory) => Some(DirConfig {
+                include_globs: Some(self.search_fields.include_files().text()),
+                exclude_globs: Some(self.search_fields.exclude_files().text()),
+                include_hidden: self.include_hidden,
+                directory: directory.clone(),
+            }),
+            InputSource::Stdin(_) => None,
         };
 
         let mut error_handler = AppErrorHandler::new();
-        let result = validate_search_configuration(search_config, &mut error_handler)?;
+        let result = validate_search_configuration(search_config, dir_config, &mut error_handler)?;
         error_handler.apply_to_app(self);
 
-        match result {
-            ValidationResult::Success(search_config) => {
-                let file_searcher = FileSearcher::new(search_config);
-                Ok(Some(file_searcher))
-            }
-            ValidationResult::ValidationErrors => Ok(None),
-        }
+        let maybe_searcher = match result {
+            ValidationResult::Success((search_config, dir_config)) => match &self.input_source {
+                InputSource::Directory(_) => {
+                    let file_searcher = FileSearcher::new(
+                        search_config,
+                        dir_config.expect("Found None dir_config when searching through files"),
+                    );
+                    Some(Searcher::FileSearcher(file_searcher))
+                }
+                InputSource::Stdin(_) => Some(Searcher::TextSearcher { search_config }),
+            },
+            ValidationResult::ValidationErrors => None,
+        };
+        Ok(maybe_searcher)
     }
 
-    pub fn spawn_update_search_results(
-        file_searcher: FileSearcher,
-        sender: &UnboundedSender<BackgroundProcessingEvent>,
+    fn spawn_search_task(
+        strategy: SearchStrategy,
+        background_processing_sender: UnboundedSender<BackgroundProcessingEvent>,
         event_sender: UnboundedSender<Event>,
         cancelled: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        let sender = sender.clone();
         tokio::spawn(async move {
-            let sender_for_search = sender.clone();
+            let sender_for_search = background_processing_sender.clone();
             let mut search_handle = task::spawn_blocking(move || {
-                file_searcher.walk_files(Some(&cancelled), || {
-                    let sender = sender_for_search.clone();
-                    Box::new(move |results| {
-                        // Ignore error - likely state reset, thread about to be killed
-                        let _ = sender.send(BackgroundProcessingEvent::AddSearchResults(results));
+                match strategy {
+                    SearchStrategy::Files(file_searcher) => {
+                        file_searcher.walk_files(Some(&cancelled), || {
+                            let sender = sender_for_search.clone();
+                            Box::new(move |results| {
+                                // Ignore error - likely state reset, thread about to be killed
+                                let _ = sender
+                                    .send(BackgroundProcessingEvent::AddSearchResults(results));
+                                WalkState::Continue
+                            })
+                        });
+                    }
+                    SearchStrategy::Text { haystack, config } => {
+                        let cursor = Cursor::new(haystack.as_bytes());
+                        for (idx, line_result) in cursor.lines_with_endings().enumerate() {
+                            if cancelled.load(Ordering::Relaxed) {
+                                break;
+                            }
 
-                        WalkState::Continue
-                    })
-                });
+                            let (line_ending, line) = match read_line(line_result) {
+                                Ok(res) => res,
+                                Err(e) => {
+                                    debug!("Error when reading line {idx}: {e}");
+                                    continue;
+                                }
+                            };
+                            if replacement_if_match(&line, &config.search, &config.replace)
+                                .is_some()
+                            {
+                                let result = SearchResult {
+                                    path: None,
+                                    line_number: idx + 1,
+                                    line,
+                                    line_ending,
+                                    included: true,
+                                };
+                                // Ignore error - likely state reset, thread about to be killed
+                                let _ = sender_for_search
+                                    .send(BackgroundProcessingEvent::AddSearchResult(result));
+                            }
+                        }
+                    }
+                }
             });
 
             let mut rerender_interval = tokio::time::interval(Duration::from_millis(92)); // Slightly random duration so that time taken isn't a round number
@@ -1198,7 +1335,9 @@ impl<'a> App {
                 }
             }
 
-            if let Err(err) = sender.send(BackgroundProcessingEvent::SearchCompleted) {
+            if let Err(err) =
+                background_processing_sender.send(BackgroundProcessingEvent::SearchCompleted)
+            {
                 // Log and ignore error: likely have gone back to previous screen
                 warn!("Found error when attempting to send SearchCompleted event: {err}");
             }
@@ -1422,6 +1561,14 @@ impl<'a> App {
     }
 }
 
+fn read_line(
+    line_result: Result<(Vec<u8>, LineEnding), std::io::Error>,
+) -> anyhow::Result<(LineEnding, String)> {
+    let (line_bytes, line_ending) = line_result?;
+    let line = String::from_utf8(line_bytes)?;
+    Ok((line_ending, line))
+}
+
 #[allow(clippy::struct_field_names)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AppErrorHandler {
@@ -1482,7 +1629,6 @@ mod tests {
         search::{SearchResult, SearchResultWithReplacement},
     };
     use rand::Rng;
-    use std::path::Path;
 
     use super::*;
 
@@ -1494,7 +1640,7 @@ mod tests {
     fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1509,7 +1655,7 @@ mod tests {
         (0..num_results)
             .map(|i| SearchResultWithReplacement {
                 search_result: SearchResult {
-                    path: PathBuf::from(format!("test{i}.txt")),
+                    path: Some(PathBuf::from(format!("test{i}.txt"))),
                     line_number: 1,
                     line: format!("test line {i}").to_string(),
                     line_ending: LineEnding::Lf,
@@ -1615,7 +1761,7 @@ mod tests {
     fn success_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1629,7 +1775,7 @@ mod tests {
     fn ignored_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
@@ -1643,7 +1789,7 @@ mod tests {
     fn error_result() -> SearchResultWithReplacement {
         SearchResultWithReplacement {
             search_result: SearchResult {
-                path: Path::new("random/file").to_path_buf(),
+                path: Some(PathBuf::from("random/file")),
                 line_number: random_num(),
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,

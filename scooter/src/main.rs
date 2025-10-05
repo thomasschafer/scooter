@@ -1,15 +1,21 @@
 use anyhow::bail;
-use app_runner::{run_app_tui, AppConfig};
 use clap::Parser;
-use headless::run_headless;
+use frep_core::validation::{DirConfig, SearchConfig};
 use log::LevelFilter;
-use logging::{setup_logging, DEFAULT_LOG_LEVEL};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    io::{self, IsTerminal, Read},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use scooter_core::{
     app::AppRunConfig,
     fields::{FieldValue, SearchFieldValues},
 };
+
+use app_runner::{run_app_tui, AppConfig};
+use headless::{run_headless, run_headless_with_stdin};
+use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 
 mod app_runner;
 mod config;
@@ -125,11 +131,7 @@ fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
 }
 
 fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
-    if args
-        .search_text
-        .as_ref()
-        .is_none_or(std::string::String::is_empty)
-    {
+    if args.search_text.as_ref().is_none_or(String::is_empty) {
         for (name, enabled) in [
             ("--immediate-search", args.immediate_search),
             ("--immediate", args.immediate),
@@ -144,12 +146,42 @@ fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
+    if io::stdin().is_terminal() {
+        return Ok(None);
+    }
+
+    let mut stdin_content = String::new();
+    io::stdin().read_to_string(&mut stdin_content)?;
+
+    Ok(Some(stdin_content))
+}
+
+fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Result<()> {
+    if stdin_content.is_some() {
+        // File system args
+        if args.hidden {
+            bail!("Cannot use --hidden flag when processing stdin");
+        }
+        if args.files_to_include.is_some() {
+            bail!("Cannot use --files-to-include when processing stdin");
+        }
+        if args.files_to_exclude.is_some() {
+            bail!("Cannot use --files-to-exclude when processing stdin");
+        }
+    }
+    Ok(())
+}
+
 impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
     type Error = anyhow::Error;
 
     fn try_from(args: &'a Args) -> anyhow::Result<Self> {
+        let stdin_content = detect_and_read_stdin()?;
+
         validate_flag_combinations(args)?;
         validate_search_text_required(args)?;
+        validate_stdin_usage(args, stdin_content.as_deref())?;
 
         let immediate = args.immediate || args.no_tui;
 
@@ -164,6 +196,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
             },
+            stdin_content,
         })
     }
 }
@@ -206,16 +239,41 @@ async fn main() -> anyhow::Result<()> {
     setup_logging(config.log_level)?;
 
     let results = if args.no_tui {
-        let res = run_headless(config.try_into()?)?;
-        Some(res)
+        let results = if let Some(stdin_content) = config.stdin_content {
+            run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?
+        } else {
+            run_headless(search_config_from_args(&args), dir_config_from_args(&args))?
+        };
+        Some(results)
     } else {
         run_app_tui(config).await?
     };
 
     if let Some(results) = results {
-        println!("{results}");
+        print!("{results}");
     }
+
     Ok(())
+}
+
+fn dir_config_from_args(args: &Args) -> DirConfig<'_> {
+    DirConfig {
+        include_globs: args.files_to_include.as_deref(),
+        exclude_globs: args.files_to_exclude.as_deref(),
+        include_hidden: args.hidden,
+        directory: args.directory.clone(),
+    }
+}
+
+fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
+    SearchConfig {
+        search_text: args.search_text.as_deref().unwrap_or(""),
+        replacement_text: args.replace_text.as_deref().unwrap_or(""),
+        fixed_strings: args.fixed_strings,
+        advanced_regex: args.advanced_regex,
+        match_whole_word: args.match_whole_word,
+        match_case: !args.case_insensitive,
+    }
 }
 
 #[cfg(test)]

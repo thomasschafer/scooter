@@ -2,7 +2,7 @@ use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
 };
-use frep_core::{search::SearchResultWithReplacement, validation::SearchConfiguration};
+use frep_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use futures::{Stream, StreamExt};
 use log::{error, LevelFilter};
 use ratatui::{
@@ -11,16 +11,21 @@ use ratatui::{
     Terminal,
 };
 use scooter_core::{
-    app::{App, AppRunConfig, Event, EventHandlingResult},
+    app::{
+        App, AppRunConfig, Event, EventHandlingResult, ExitAndReplaceState, ExitState, InputSource,
+    },
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
 };
 use std::{
-    env, io,
+    collections::HashMap,
+    env,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
+    sync::Arc,
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -38,6 +43,7 @@ pub struct AppConfig<'a> {
     pub log_level: LevelFilter,
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
+    pub stdin_content: Option<String>,
 }
 
 impl Default for AppConfig<'_> {
@@ -47,26 +53,8 @@ impl Default for AppConfig<'_> {
             log_level: LevelFilter::from_str(DEFAULT_LOG_LEVEL).unwrap(),
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
+            stdin_content: None,
         }
-    }
-}
-
-impl<'a> TryFrom<AppConfig<'a>> for SearchConfiguration<'a> {
-    type Error = anyhow::Error;
-
-    fn try_from(config: AppConfig<'a>) -> anyhow::Result<Self> {
-        Ok(SearchConfiguration {
-            search_text: config.search_field_values.search.value,
-            replacement_text: config.search_field_values.replace.value,
-            fixed_strings: config.search_field_values.fixed_strings.value,
-            advanced_regex: config.app_run_config.advanced_regex,
-            include_globs: Some(config.search_field_values.include_files.value),
-            exclude_globs: Some(config.search_field_values.exclude_files.value),
-            match_whole_word: config.search_field_values.match_whole_word.value,
-            match_case: config.search_field_values.match_case.value,
-            include_hidden: config.app_run_config.include_hidden,
-            directory: config.directory,
-        })
     }
 }
 
@@ -164,8 +152,14 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     ) -> anyhow::Result<Self> {
         let config = load_config().expect("Failed to read config file");
 
+        let input_source = if let Some(stdin_content) = app_config.stdin_content {
+            InputSource::Stdin(Arc::new(stdin_content))
+        } else {
+            InputSource::Directory(app_config.directory.clone())
+        };
+
         let (app, event_receiver) = App::new_with_receiver(
-            app_config.directory,
+            input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
             config.search.disable_prepopulated_fields,
@@ -197,7 +191,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         Ok(())
     }
 
-    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ReplaceState>> {
+    pub async fn run_event_loop(&mut self) -> anyhow::Result<Option<ExitState>> {
         loop {
             let event_handling_result = tokio::select! {
                 Some(Ok(event)) = self.event_stream.next() => {
@@ -236,7 +230,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             }
                             self.tui.init()?;
                             res
-
                         }
                         Event::App(app_event) => {
                             self.app.handle_app_event(&app_event)
@@ -244,6 +237,9 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         Event::PerformReplacement => {
                             self.app.perform_replacement();
                             EventHandlingResult::Rerender
+                        }
+                        Event::ExitAndReplace(state) => {
+                            return Ok(Some(ExitState::StdinState(state)));
                         }
                     }
                 }
@@ -257,7 +253,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
             match event_handling_result {
                 EventHandlingResult::Rerender => self.draw()?,
-                EventHandlingResult::Exit(results) => return Ok(results),
+                EventHandlingResult::Exit(results) => return Ok(results.map(|t| *t)),
                 EventHandlingResult::None => {}
             }
         }
@@ -399,23 +395,99 @@ pub fn format_replacement_results(
         None => "".into(),
     };
 
-    format!("Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}")
+    format!(
+        "Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
+    )
 }
 
 pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<String>> {
     let mut runner = AppRunner::new_runner(app_config)?;
     runner.init()?;
-    let maybe_replace_state = runner.run_event_loop().await?;
+    let mut exit_state = runner.run_event_loop().await?;
     runner.cleanup()?;
-    let maybe_results = maybe_replace_state.map(|replace_state| {
+
+    let stats = match exit_state {
+        Some(ExitState::Stats(stats)) => Some(stats),
+        Some(ExitState::StdinState(ref mut state)) => {
+            if runner.app.print_results {
+                let res = write_results_to_stderr_with_stats(state)?;
+                Some(res)
+            } else {
+                write_results_to_stderr(state)?;
+                None
+            }
+        }
+        None => None,
+    }
+    .map(|stats| {
         format_replacement_results(
-            replace_state.num_successes,
-            Some(replace_state.num_ignored),
-            Some(&replace_state.errors),
+            stats.num_successes,
+            Some(stats.num_ignored),
+            Some(&stats.errors),
         )
     });
+    Ok(stats)
+}
 
-    Ok(maybe_results)
+fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
+    write_results_to_stderr_impl(state, false).map(|res| {
+        assert!(res.is_none(), "Found Some stats, expected None");
+    })
+}
+
+fn write_results_to_stderr_with_stats(
+    state: &mut ExitAndReplaceState,
+) -> anyhow::Result<ReplaceState> {
+    write_results_to_stderr_impl(state, true)
+        .map(|res| res.expect("Found None stats, expected Some"))
+}
+
+fn write_results_to_stderr_impl(
+    state: &mut ExitAndReplaceState,
+    return_stats: bool,
+) -> anyhow::Result<Option<ReplaceState>> {
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
+    let mut line_map = state
+        .replace_results
+        .iter_mut()
+        .map(|res| (res.search_result.line_number, res))
+        .collect::<HashMap<_, _>>();
+
+    for (idx, line) in state.stdin.lines().enumerate() {
+        let line_number = idx + 1; // Ensure line-number is 1-indexed
+        let line_new = line_map
+            .get_mut(&line_number)
+            .and_then(|res| {
+                assert_eq!(
+                    line, res.search_result.line,
+                    "line has changed since search"
+                );
+                if res.search_result.included {
+                    res.replace_result = Some(ReplaceResult::Success);
+                    num_successes += 1;
+                    Some(res.replacement.as_str())
+                } else {
+                    num_ignored += 1;
+                    None
+                }
+            })
+            .unwrap_or(line);
+        writeln!(io::stderr(), "{line_new}")?;
+    }
+
+    let res = if return_stats {
+        Some(ReplaceState {
+            num_successes,
+            num_ignored,
+            errors: Vec::new(),
+            replacement_errors_pos: 0,
+        })
+    } else {
+        None
+    };
+    Ok(res)
 }
 
 #[cfg(test)]
@@ -429,7 +501,7 @@ mod tests {
         let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
             result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0"
+            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
         );
     }
 
@@ -437,7 +509,7 @@ mod tests {
     fn test_format_replacement_results_with_errors() {
         let error_result = SearchResultWithReplacement {
             search_result: SearchResult {
-                path: PathBuf::from("file.txt"),
+                path: Some(PathBuf::from("file.txt")),
                 line_number: 10,
                 line: "line".to_string(),
                 line_ending: LineEnding::Lf,
@@ -448,7 +520,7 @@ mod tests {
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3"));
+        assert!(result.contains("Successful replacements (lines): 3\n"));
         assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
@@ -458,7 +530,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0");
+        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
     }
 }
