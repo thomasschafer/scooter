@@ -227,10 +227,12 @@ cargo install --path scooter --locked
 
 ## Configuration options
 
-scooter looks for a TOML configuration file at:
+By default, scooter looks for a TOML configuration file at:
 
 - Linux or macOS: `~/.config/scooter/config.toml`
 - Windows: `%AppData%\scooter\config.toml`
+
+You can override the config directory by using the `--config-dir` flag.
 
 The following options can be set in your configuration file:
 
@@ -264,8 +266,10 @@ The theme to use when syntax highlighting is enabled.
 The default is `"base16-eighties.dark"`. Other built-in options are
 `"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
 
-You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
-and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+You can use other themes by adding `.tmTheme` files to `<scooter-config-dir>/themes` and then specifying their name here.
+By default, `<scooter-config-dir>` is `~/.config/scooter/` on Linux or macOS, or `%AppData%\scooter\` on Windows, and can be overridden with the `--config-dir` flag.
+
+For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
 ```sh
 wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
 ```

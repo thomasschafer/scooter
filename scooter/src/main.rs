@@ -31,7 +31,7 @@ mod ui;
 #[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Directory in which to search
-    #[arg(index = 1, value_parser = parse_directory, default_value = ".")]
+    #[arg(index = 1, value_parser = parse_search_dir, default_value = ".")]
     directory: PathBuf,
 
     /// Include hidden files and directories, such as those whose name starts with a dot (.)
@@ -70,6 +70,10 @@ struct Args {
     #[arg(short = 'N', long)]
     no_tui: bool,
 
+    /// Override the config directory (default: ~/.config/scooter on Linux/macOS, %AppData%\scooter on Windows)
+    #[arg(short = 'c', long, value_parser = parse_config_dir)]
+    config_dir: Option<PathBuf>,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -105,13 +109,21 @@ fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
     LevelFilter::from_str(s).map_err(|_| format!("Invalid log level: {s}"))
 }
 
-fn parse_directory(dir: &str) -> anyhow::Result<PathBuf> {
+fn parse_search_dir(dir: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(dir);
     if path.exists() {
         Ok(path)
     } else {
         bail!("'{dir}' does not exist. Please provide a valid path.")
     }
+}
+
+fn parse_config_dir(dir: &str) -> anyhow::Result<PathBuf> {
+    let path = PathBuf::from(dir);
+    if path.exists() && !path.is_dir() {
+        bail!("'{dir}' exists but is not a directory. Please provide a valid directory path.")
+    }
+    Ok(path)
 }
 
 fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
@@ -235,6 +247,9 @@ impl<'a> From<&'a Args> for SearchFieldValues<'a> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if let Some(config_dir) = &args.config_dir {
+        config::set_config_dir_override(config_dir);
+    }
     let config = AppConfig::try_from(&args)?;
     setup_logging(config.log_level)?;
 
@@ -301,6 +316,7 @@ mod tests {
             case_insensitive: false,
             files_to_include: None,
             files_to_exclude: None,
+            config_dir: None,
         }
     }
 
@@ -549,7 +565,7 @@ mod tests {
         let temp_dir = setup_test_dir();
         let dir_path = temp_dir.path().to_str().unwrap();
 
-        let result = parse_directory(dir_path);
+        let result = parse_search_dir(dir_path);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), PathBuf::from(dir_path));
     }
@@ -557,7 +573,7 @@ mod tests {
     #[test]
     fn test_validate_directory_does_not_exist() {
         let nonexistent_path = "/path/that/definitely/does/not/exist/12345";
-        let result = parse_directory(nonexistent_path);
+        let result = parse_search_dir(nonexistent_path);
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -572,7 +588,7 @@ mod tests {
         std::fs::create_dir_all(&nested_dir).expect("Failed to create nested directories");
 
         let dir_path = nested_dir.to_str().unwrap();
-        let result = parse_directory(dir_path);
+        let result = parse_search_dir(dir_path);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), nested_dir);
@@ -586,9 +602,40 @@ mod tests {
             .expect("Failed to create directory with special characters");
 
         let dir_path = special_dir.to_str().unwrap();
-        let result = parse_directory(dir_path);
+        let result = parse_search_dir(dir_path);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), special_dir);
+    }
+
+    #[test]
+    fn test_parse_config_dir_valid_directory() {
+        let temp_dir = setup_test_dir();
+        let dir_path = temp_dir.path().to_str().unwrap();
+
+        let result = parse_config_dir(dir_path);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), temp_dir.path());
+    }
+
+    #[test]
+    fn test_parse_config_dir_nonexistent_path() {
+        // Non-existent paths are allowed
+        let result = parse_config_dir("/path/that/does/not/exist/config");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_config_dir_file_not_directory() {
+        let temp_dir = setup_test_dir();
+        let file_path = temp_dir.path().join("test_file.txt");
+        std::fs::write(&file_path, "test").expect("Failed to create test file");
+
+        let file_path_str = file_path.to_str().unwrap();
+        let result = parse_config_dir(file_path_str);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not a directory"));
     }
 }

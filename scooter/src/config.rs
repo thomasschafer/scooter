@@ -1,7 +1,11 @@
 use anyhow::anyhow;
 use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
 use serde::{de, Deserialize, Deserializer};
-use std::{fs, path::PathBuf, sync::OnceLock};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 use syntect::highlighting::{Theme, ThemeSet};
 
 pub const APP_NAME: &str = "scooter";
@@ -18,7 +22,18 @@ fn get_theme_set() -> &'static ThemeSet {
     })
 }
 
+static CONFIG_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_config_dir_override(dir: &Path) {
+    CONFIG_DIR_OVERRIDE
+        .set(dir.to_path_buf())
+        .expect("Config dir override should only be set once");
+}
+
 fn config_dir() -> PathBuf {
+    if let Some(dir) = CONFIG_DIR_OVERRIDE.get() {
+        return dir.clone();
+    }
     let strategy = choose_base_strategy().expect("Unable to find config directory!");
     strategy.config_dir().join(APP_NAME)
 }
@@ -114,8 +129,10 @@ pub struct PreviewConfig {
     /// The default is `"base16-eighties.dark"`. Other built-in options are
     /// `"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
     ///
-    /// You can use other themes by adding `.tmTheme` files to `~/.config/scooter/themes/` on Linux or macOS, or `%AppData%\scooter\themes\` on Windows,
-    /// and then specifying their name here. For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
+    /// You can use other themes by adding `.tmTheme` files to `<scooter-config-dir>/themes` and then specifying their name here.
+    /// By default, `<scooter-config-dir>` is `~/.config/scooter/` on Linux or macOS, or `%AppData%\scooter\` on Windows, and can be overridden with the `--config-dir` flag.
+    ///
+    /// For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
     /// ```sh
     /// wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
     /// ```
