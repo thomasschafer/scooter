@@ -101,7 +101,7 @@ struct Args {
     files_to_exclude: Option<String>,
 
     /// Override the config directory (default: ~/.config/scooter on Linux/macOS, %AppData%\scooter on Windows)
-    #[arg(long, value_parser = parse_config_dir)]
+    #[arg(short = 'c', long, value_parser = parse_config_dir)]
     config_dir: Option<PathBuf>,
 }
 
