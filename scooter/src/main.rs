@@ -70,6 +70,10 @@ struct Args {
     #[arg(short = 'N', long)]
     no_tui: bool,
 
+    /// Override the config directory (default: ~/.config/scooter on Linux/macOS, %AppData%\scooter on Windows)
+    #[arg(short = 'c', long, value_parser = parse_config_dir)]
+    config_dir: Option<PathBuf>,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -99,10 +103,6 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
-
-    /// Override the config directory (default: ~/.config/scooter on Linux/macOS, %AppData%\scooter on Windows)
-    #[arg(short = 'c', long, value_parser = parse_config_dir)]
-    config_dir: Option<PathBuf>,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_parse_config_dir_nonexistent_path() {
-        // Non-existent paths are allowed (will be created later if needed)
+        // Non-existent paths are allowed
         let result = parse_config_dir("/path/that/does/not/exist/config");
         assert!(result.is_ok());
     }

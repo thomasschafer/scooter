@@ -267,7 +267,7 @@ The default is `"base16-eighties.dark"`. Other built-in options are
 `"base16-mocha.dark"`, `"base16-ocean.dark"`, `"base16-ocean.light"`, `"InspiredGitHub"`, `"Solarized (dark)"` and `"Solarized (light)"`.
 
 You can use other themes by adding `.tmTheme` files to `<scooter-config-dir>/themes` and then specifying their name here.
-By default, `<scooter-config-dir>` is `~/.config/scooter/` on Linux or macOS, or `%AppData%\scooter\` on Windows, and can be overriden with the `--config-dir` flag.
+By default, `<scooter-config-dir>` is `~/.config/scooter/` on Linux or macOS, or `%AppData%\scooter\` on Windows, and can be overridden with the `--config-dir` flag.
 
 For instance, to use Catppuccin Macchiato (from [here](https://github.com/catppuccin/bat)), on Linux or macOS run:
 ```sh
