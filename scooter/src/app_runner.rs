@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
@@ -125,7 +126,7 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
-        let user_config = load_config().expect("Failed to read config file");
+        let user_config = load_config().context("Failed to read config file")?;
         Self::new(
             app_config,
             user_config,
