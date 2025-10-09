@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
@@ -121,11 +122,18 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(app_config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
-        Self::new(config, backend, event_stream, snapshot_provider)
+        let user_config = load_config().context("Failed to read config file")?;
+        Self::new(
+            app_config,
+            user_config,
+            backend,
+            event_stream,
+            snapshot_provider,
+        )
     }
 }
 
@@ -133,25 +141,32 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     // Used in integration tests
     #[allow(dead_code)]
     pub fn new_test_with_snapshot(
-        config: AppConfig<'_>,
+        app_config: AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
         snapshot_sender: UnboundedSender<String>,
     ) -> anyhow::Result<Self> {
         let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
-        Self::new(config, backend, event_stream, snapshot_provider)
+        // Tests should use default config, not load from user's config directory
+        let test_config = Config::default();
+        Self::new(
+            app_config,
+            test_config,
+            backend,
+            event_stream,
+            snapshot_provider,
+        )
     }
 }
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
     pub fn new(
         app_config: AppConfig<'_>,
+        config: Config,
         backend: B,
         event_stream: E,
         snapshot_provider: S,
     ) -> anyhow::Result<Self> {
-        let config = load_config().expect("Failed to read config file");
-
         let input_source = if let Some(stdin_content) = app_config.stdin_content {
             InputSource::Stdin(Arc::new(stdin_content))
         } else {
