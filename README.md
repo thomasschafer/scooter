@@ -334,28 +334,96 @@ You can pipe content from Helix to scooter, and it will write the updated conten
 
 ### Neovim
 
-Install ToggleTerm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim#installation), and then add the following Lua configuration, which adds the following keymaps:
+You can integrate scooter with Neovim using either [ToggleTerm](https://github.com/akinsho/toggleterm.nvim) or [snacks.nvim](https://github.com/folke/snacks.nvim). Both configurations provide the following keymaps:
 * `<leader>s` to open scooter, resuming an existing session if one exists.
 * `<leader>r` to open scooter and search for the currently selected text in visual mode. (Note that the search text field will be disabled by default in scooter, but you can tweak this behaviour as explained [here](#pre-populating-search-fields)).
+* `e` to open files from scooter in Neovim, hiding the scooter window (which can be re-opened with `<leader>s`).
+
+First, add the following to your [scooter config file](#configuration-options):
+
+```toml
+[editor_open]
+command = "nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter(\"%file\", %line)<CR>'"
+```
+
+Then, add this to your Neovim config:
 
 ```lua
-local Terminal = require("toggleterm.terminal").Terminal
+
+-- REPLACE THIS: Integration-specific code here
+
+vim.keymap.set('n', '<leader>s', open_scooter, { desc = 'Open scooter' })
+vim.keymap.set('v', '<leader>r',
+    function()
+        local selection = vim.fn.getreg('"')
+        vim.cmd('normal! "ay')
+        open_scooter_with_text(vim.fn.getreg('a'))
+        vim.fn.setreg('"', selection)
+    end,
+    { desc = 'Search selected text in scooter' })
+```
+
+Finally, replace the `-- REPLACE THIS: ...` line with one of the integration-specific code blocks below:
+
+#### Option 1: Using snacks.nvim
+
+Install snacks.nvim as per the instructions [here](https://github.com/folke/snacks.nvim#-installation).
+
+```lua
 local scooter_term = nil
 
--- Open existing scooter terminal if one is available, otherwise create a new one
+-- Called by scooter to open the selected file at the correct line from the scooter search list
+_G.EditLineFromScooter = function(file_path, line)
+    if scooter_term and scooter_term:buf_valid() then
+        scooter_term:hide()
+    end
+
+    local current_path = vim.fn.expand("%:p")
+    local target_path = vim.fn.fnamemodify(file_path, ":p")
+
+    if current_path ~= target_path then
+        vim.cmd.edit(vim.fn.fnameescape(file_path))
+    end
+
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
+end
+
+local function is_terminal_running(term)
+    if not term or not term:buf_valid() then
+        return false
+    end
+    local channel = vim.fn.getbufvar(term.buf, 'terminal_job_id')
+    return channel and vim.fn.jobwait({channel}, 0)[1] == -1
+end
+
 local function open_scooter()
-    if not scooter_term then
-        scooter_term = Terminal:new({
-            cmd = "scooter",
-            direction = "float",
-            close_on_exit = true,
-            on_exit = function()
-                scooter_term = nil
-            end
+    if is_terminal_running(scooter_term) then
+        scooter_term:toggle()
+    else
+        scooter_term = require("snacks").terminal.open("scooter", {
+            win = { position = "float" },
         })
     end
-    scooter_term:open()
 end
+
+local function open_scooter_with_text(search_text)
+    if scooter_term and scooter_term:buf_valid() then
+        scooter_term:close()
+    end
+
+    local escaped_text = vim.fn.shellescape(search_text:gsub("\r?\n", " "))
+    scooter_term = require("snacks").terminal.open("scooter --fixed-strings --search-text " .. escaped_text, {
+        win = { position = "float" },
+    })
+end
+```
+
+#### Option 2: Using ToggleTerm
+
+Install ToggleTerm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim#installation), then add to your Neovim config:
+
+```lua
+local scooter_term = nil
 
 -- Called by scooter to open the selected file at the correct line from the scooter search list
 _G.EditLineFromScooter = function(file_path, line)
@@ -373,15 +441,28 @@ _G.EditLineFromScooter = function(file_path, line)
     vim.api.nvim_win_set_cursor(0, { line, 0 })
 end
 
--- Opens scooter with the search text populated by the `search_text` arg
-_G.OpenScooterSearchText = function(search_text)
+local function open_scooter()
+    if not scooter_term then
+        scooter_term = require("toggleterm.terminal").Terminal:new({
+            cmd = "scooter",
+            direction = "float",
+            close_on_exit = true,
+            on_exit = function()
+                scooter_term = nil
+            end
+        })
+    end
+    scooter_term:open()
+end
+
+local function open_scooter_with_text(search_text)
     if scooter_term and scooter_term:is_open() then
         scooter_term:close()
     end
 
     local escaped_text = vim.fn.shellescape(search_text:gsub("\r?\n", " "))
-    scooter_term = Terminal:new({
-        cmd = "scooter --search-text " .. escaped_text,
+    scooter_term = require("toggleterm.terminal").Terminal:new({
+        cmd = "scooter --fixed-strings --search-text " .. escaped_text,
         direction = "float",
         close_on_exit = true,
         on_exit = function()
@@ -390,19 +471,6 @@ _G.OpenScooterSearchText = function(search_text)
     })
     scooter_term:open()
 end
-
-vim.keymap.set('n', '<leader>s', open_scooter, { desc = 'Open scooter' })
-
-vim.keymap.set('v', '<leader>r',
-    '"ay<ESC><cmd>lua OpenScooterSearchText(vim.fn.getreg("a"))<CR>',
-    { desc = 'Search selected text in scooter' })
-```
-
-You can then add the following to your [scooter config file](#configuration-options) to open up files with `e`, which hides the ToggleTerm window. You can then resume with `<leader>s` again.
-
-```toml
-[editor_open]
-command = "nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter(\"%file\", %line)<CR>'"
 ```
 
 ## Contributing
