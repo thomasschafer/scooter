@@ -142,6 +142,9 @@ pub struct PreviewConfig {
         default = "default_syntax_highlighting_theme"
     )]
     pub syntax_highlighting_theme: Theme,
+    // Wrap text onto the next line if it is wider than the preview window. Defaults to `false`.
+    #[serde(default)]
+    pub wrap_text: bool,
 }
 
 fn default_syntax_highlighting() -> bool {
@@ -157,6 +160,7 @@ impl Default for PreviewConfig {
         Self {
             syntax_highlighting: default_syntax_highlighting(),
             syntax_highlighting_theme: default_syntax_highlighting_theme(),
+            wrap_text: false,
         }
     }
 }
@@ -312,6 +316,7 @@ exit = true
 [preview]
 syntax_highlighting = false
 syntax_highlighting_theme = "Solarized (light)"
+wrap_text = true
 
 [style]
 true_color = false
@@ -341,6 +346,7 @@ disable_prepopulated_fields = false
                 preview: PreviewConfig {
                     syntax_highlighting: false,
                     syntax_highlighting_theme: load_theme("Solarized (light)").unwrap(),
+                    wrap_text: true,
                 },
                 style: StyleConfig { true_color: false },
                 search: SearchConfig {
@@ -381,6 +387,7 @@ command = "vim %file +%line"
             preview: PreviewConfig {
                 syntax_highlighting: false,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
+                wrap_text: false,
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
@@ -395,6 +402,7 @@ command = "vim %file +%line"
             preview: PreviewConfig {
                 syntax_highlighting: true,
                 syntax_highlighting_theme: load_theme("base16-ocean.dark").unwrap(),
+                wrap_text: false,
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
