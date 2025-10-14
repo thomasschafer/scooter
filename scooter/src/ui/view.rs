@@ -450,7 +450,10 @@ fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -
 
 fn to_line_plain(line: &str) -> StyledLine {
     let prefix = "  ";
-    vec![(Cow::Owned(format!("{prefix}{}", strip_control_chars(line))), None)]
+    vec![(
+        Cow::Owned(format!("{prefix}{}", strip_control_chars(line))),
+        None,
+    )]
 }
 
 type HighlightedLinesCache = Mutex<LruCache<PathBuf, Vec<(usize, HighlightedLine)>>>;
@@ -614,17 +617,26 @@ fn line_list(
     after: impl IntoIterator<Item = StyledLine>,
     wrap: WrapText,
 ) -> List<'static> {
-    match wrap {
+    let lines: Box<dyn Iterator<Item = StyledLine>> = match wrap {
         WrapText::Width(_width) => {
-            let wrapped_diff_and_after = diff.into_iter().chain(after);
-            let wrapped_before = before.into_iter();
-            todo!()
+            // TODO: implement this
+            let mut wrapped_diff_and_after: Vec<StyledLine> = vec![];
+            for line in diff.into_iter().chain(after) {
+                for (seg, style) in line {
+                    wrapped_diff_and_after.push(vec![(seg, style)]);
+                }
+            }
+            let mut wrapped_before: Vec<StyledLine> = vec![];
+            for line in before {
+                for (seg, style) in line {
+                    wrapped_before.push(vec![(seg, style)]);
+                }
+            }
+            Box::new(wrapped_before.into_iter().chain(wrapped_diff_and_after))
         }
-        WrapText::None => {
-            let all_lines: Vec<StyledLine> = before.into_iter().chain(diff).chain(after).collect();
-            List::new(all_lines.into_iter().map(styled_line_to_ratatui_line))
-        }
-    }
+        WrapText::None => Box::new(before.into_iter().chain(diff).chain(after)),
+    };
+    List::new(lines.map(styled_line_to_ratatui_line))
 }
 
 fn build_preview_from_file<'a>(
