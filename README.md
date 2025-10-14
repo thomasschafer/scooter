@@ -303,7 +303,7 @@ As explained [here](https://github.com/helix-editor/helix/wiki/Recipes#project-w
 [keys.select.ret]
 s = [
     ":write-all",
-    ":insert-output scooter >/dev/tty",
+    ":insert-output scooter --no-stdin >/dev/tty",
     ":redraw",
     ":reload-all"
 ]

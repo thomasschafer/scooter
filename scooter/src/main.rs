@@ -74,6 +74,10 @@ struct Args {
     #[arg(short = 'c', long, value_parser = parse_config_dir)]
     config_dir: Option<PathBuf>,
 
+    /// Override stdin detection, forcing scooter to process files rather reading from stdin
+    #[arg(long)]
+    no_stdin: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -158,8 +162,8 @@ fn validate_search_text_required(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn detect_and_read_stdin() -> anyhow::Result<Option<String>> {
-    if io::stdin().is_terminal() {
+fn detect_and_read_stdin(args: &Args) -> anyhow::Result<Option<String>> {
+    if args.no_stdin || io::stdin().is_terminal() {
         return Ok(None);
     }
 
@@ -189,7 +193,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
     type Error = anyhow::Error;
 
     fn try_from(args: &'a Args) -> anyhow::Result<Self> {
-        let stdin_content = detect_and_read_stdin()?;
+        let stdin_content = detect_and_read_stdin(args)?;
 
         validate_flag_combinations(args)?;
         validate_search_text_required(args)?;
@@ -309,6 +313,7 @@ mod tests {
             print_results: false,
             immediate: false,
             no_tui: false,
+            no_stdin: false,
             search_text: None,
             replace_text: None,
             fixed_strings: false,
