@@ -35,6 +35,7 @@ use syntect::{
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
 
@@ -302,17 +303,20 @@ fn render_search_results(
             .iter()
             .find(|s| s.is_primary_selected)
             .expect("Selected item should be in view");
-        let lines_to_show = preview_area.height as usize;
+        let lines_to_show = preview_area.height;
 
         match build_preview_list(
             input_source,
-            lines_to_show,
+            lines_to_show as usize,
             selected,
             theme,
             true_colour,
             event_sender,
             if wrap {
-                WrapText::Width(preview_area.width)
+                WrapText::Width {
+                    width: preview_area.width,
+                    num_lines: lines_to_show,
+                }
             } else {
                 WrapText::None
             },
@@ -539,7 +543,7 @@ fn read_lines_range_highlighted_with_cache(
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WrapText {
     None,
-    Width(u16),
+    Width { width: u16, num_lines: u16 },
 }
 
 fn build_preview_list<'a>(
@@ -588,12 +592,12 @@ fn build_preview_from_str<'a>(
         "Expected line didn't match actual",
     );
 
-    let before: Vec<_> = before.iter().map(|(_, l)| to_line_plain(l)).collect();
+    let before = before.iter().map(|(_, l)| to_line_plain(l));
     let diff = [
         selected.old_line_diff.clone(),
         selected.new_line_diff.clone(),
     ];
-    let after: Vec<_> = after.iter().map(|(_, l)| to_line_plain(l)).collect();
+    let after = after.iter().map(|(_, l)| to_line_plain(l));
     Ok(line_list(before, diff, after, wrap))
 }
 
@@ -611,6 +615,7 @@ fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
     ListItem::new(Line::from(spans))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn line_list(
     before: impl IntoIterator<Item = StyledLine>,
     diff: impl IntoIterator<Item = StyledLine>,
@@ -618,21 +623,51 @@ fn line_list(
     wrap: WrapText,
 ) -> List<'static> {
     let lines: Box<dyn Iterator<Item = StyledLine>> = match wrap {
-        WrapText::Width(_width) => {
-            // TODO: implement this
-            let mut wrapped_diff_and_after: Vec<StyledLine> = vec![];
-            for line in diff.into_iter().chain(after) {
-                for (seg, style) in line {
-                    wrapped_diff_and_after.push(vec![(seg, style)]);
+        WrapText::Width { width, num_lines } => {
+            let mut wrapped_diff: Vec<StyledLine> = vec![];
+            let mut diff = diff.into_iter();
+
+            let mut next_line_stack: StyledLine = vec![]; // Reversed full line, so that we can pop elements
+            loop {
+                if wrapped_diff.len() > num_lines as usize {
+                    break;
                 }
+                if next_line_stack.is_empty() {
+                    match diff.next() {
+                        Some(mut n) => {
+                            n.reverse();
+                            next_line_stack = n;
+                        }
+                        None => break,
+                    }
+                }
+                let mut cur_line_wrapped = vec![];
+                let mut cur_line_wrapped_len: usize = 0;
+
+                while cur_line_wrapped_len < width as usize {
+                    let Some(next_seg) = next_line_stack.pop() else {
+                        break;
+                    };
+                    cur_line_wrapped_len += UnicodeWidthStr::width(next_seg.0.as_ref());
+                    // TODO: if can fit on entire line, stick on next. If not, break up
+                    cur_line_wrapped.push(next_seg);
+                }
+
+                wrapped_diff.push(cur_line_wrapped);
             }
+
+            let mut wrapped_after: Vec<StyledLine> = vec![];
+            // TODO: similar to the above
+
             let mut wrapped_before: Vec<StyledLine> = vec![];
-            for line in before {
-                for (seg, style) in line {
-                    wrapped_before.push(vec![(seg, style)]);
-                }
-            }
-            Box::new(wrapped_before.into_iter().chain(wrapped_diff_and_after))
+            // TODO: similar to the above
+
+            Box::new(
+                wrapped_before
+                    .into_iter()
+                    .chain(wrapped_diff)
+                    .chain(wrapped_after),
+            )
         }
         WrapText::None => Box::new(before.into_iter().chain(diff).chain(after)),
     };
@@ -671,18 +706,12 @@ fn build_preview_from_file<'a>(
             bail!("File has changed since search (lines don't match)");
         }
 
-        let before: Vec<_> = before
-            .iter()
-            .map(|(_, l)| regions_to_line(l, true_colour))
-            .collect();
+        let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
         let diff = [
             selected.old_line_diff.clone(),
             selected.new_line_diff.clone(),
         ];
-        let after: Vec<_> = after
-            .iter()
-            .map(|(_, l)| regions_to_line(l, true_colour))
-            .collect();
+        let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
         let list = line_list(before, diff, after, wrap);
         if let Some(bg) = theme
             .settings
@@ -705,12 +734,12 @@ fn build_preview_from_file<'a>(
             bail!("File has changed since search (lines don't match)");
         }
 
-        let before: Vec<_> = before.iter().map(|(_, l)| to_line_plain(l)).collect();
+        let before = before.iter().map(|(_, l)| to_line_plain(l));
         let diff = [
             selected.old_line_diff.clone(),
             selected.new_line_diff.clone(),
         ];
-        let after: Vec<_> = after.iter().map(|(_, l)| to_line_plain(l)).collect();
+        let after = after.iter().map(|(_, l)| to_line_plain(l));
         Ok(line_list(before, diff, after, wrap))
     }
 }
