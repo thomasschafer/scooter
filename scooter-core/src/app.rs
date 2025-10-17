@@ -1167,10 +1167,6 @@ impl<'a> App {
         key_code: KeyCode,
         key_modifiers: KeyModifiers,
     ) -> EventHandlingResult {
-        // if key.kind == KeyEventKind::Release {
-        //     return EventHandlingResult::Rerender;
-        // }
-
         if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
             self.reset();
             return EventHandlingResult::Exit(None);
