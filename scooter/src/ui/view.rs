@@ -1036,7 +1036,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,
-                    config.preview.wrap_text, // TODO: make this also configurable with a keyboard shortcut
+                    app.wrap_preview_text,
                 );
             }
         }

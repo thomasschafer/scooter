@@ -178,6 +178,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
             &app_config.search_field_values,
             &app_config.app_run_config,
             config.search.disable_prepopulated_fields,
+            config.preview.wrap_text,
         );
 
         let terminal = Terminal::new(backend)?;
