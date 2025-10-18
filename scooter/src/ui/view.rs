@@ -437,10 +437,11 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: b
 
 type StyledLine = Vec<(Cow<'static, str>, Option<Style>)>;
 
-fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> StyledLine {
-    let prefix = "  ";
+static PREVIEW_LINE_PREFIX: &str = "  ";
+static WRAPPED_LINE_PREFIX: &str = "  ↪ ";
 
-    iter::once((Cow::Borrowed(prefix), None))
+fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> StyledLine {
+    iter::once((Cow::Borrowed(PREVIEW_LINE_PREFIX), None))
         .chain(line.iter().map(|(style, s)| {
             (
                 Cow::Owned(strip_control_chars(s)),
@@ -453,9 +454,11 @@ fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -
 }
 
 fn to_line_plain(line: &str) -> StyledLine {
-    let prefix = "  ";
     vec![(
-        Cow::Owned(format!("{prefix}{}", strip_control_chars(line))),
+        Cow::Owned(format!(
+            "{PREVIEW_LINE_PREFIX}{}",
+            strip_control_chars(line)
+        )),
         None,
     )]
 }
@@ -619,7 +622,7 @@ fn wrap_lines(
     diff: impl IntoIterator<Item = StyledLine>,
     width: u16,
     num_lines: Option<u16>,
-) -> Vec<Vec<(Cow<'static, str>, Option<Style>)>> {
+) -> Vec<StyledLine> {
     let mut diff = diff.into_iter();
 
     let mut wrapped_diff: Vec<StyledLine> = vec![];
@@ -629,18 +632,25 @@ fn wrap_lines(
         if num_lines.is_some_and(|n| wrapped_diff.len() > n as usize) {
             break;
         }
-        if next_line_stack.is_empty() {
+        let include_prefix = if next_line_stack.is_empty() {
             match diff.next() {
                 Some(mut n) => {
                     n.reverse();
                     next_line_stack = n;
+                    false
                 }
                 None => break,
             }
-        }
+        } else {
+            true
+        };
 
-        let mut cur_line_wrapped = vec![];
+        let mut cur_line_wrapped: StyledLine = vec![];
         let mut cur_line_wrapped_len: usize = 0;
+        if include_prefix {
+            cur_line_wrapped.push((WRAPPED_LINE_PREFIX.into(), Some(Style::default().dim())));
+            cur_line_wrapped_len += UnicodeWidthStr::width(WRAPPED_LINE_PREFIX);
+        }
 
         while cur_line_wrapped_len < width as usize {
             let Some(next_seg) = next_line_stack.pop() else {
