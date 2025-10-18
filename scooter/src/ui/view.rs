@@ -307,7 +307,7 @@ fn render_search_results(
 
         match build_preview_list(
             input_source,
-            lines_to_show as usize,
+            lines_to_show,
             selected,
             theme,
             true_colour,
@@ -548,7 +548,7 @@ enum WrapText {
 
 fn build_preview_list<'a>(
     input_source: &InputSource,
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
     true_colour: bool,
@@ -572,14 +572,14 @@ fn build_preview_list<'a>(
 
 fn build_preview_from_str<'a>(
     stdin: &Arc<String>,
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
-    let start = line_idx.saturating_sub(num_lines_to_show);
-    let end = line_idx + num_lines_to_show;
+    let start = line_idx.saturating_sub(num_lines_to_show as usize);
+    let end = line_idx + num_lines_to_show as usize;
 
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
@@ -598,7 +598,7 @@ fn build_preview_from_str<'a>(
         selected.new_line_diff.clone(),
     ];
     let after = after.iter().map(|(_, l)| to_line_plain(l));
-    Ok(line_list(before, diff, after, wrap))
+    Ok(line_list(before, diff, after, num_lines_to_show, wrap))
 }
 
 fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
@@ -615,52 +615,70 @@ fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
     ListItem::new(Line::from(spans))
 }
 
+fn wrap_lines(
+    diff: impl IntoIterator<Item = StyledLine>,
+    width: u16,
+    num_lines: Option<u16>,
+) -> Vec<Vec<(Cow<'static, str>, Option<Style>)>> {
+    let mut diff = diff.into_iter();
+
+    let mut wrapped_diff: Vec<StyledLine> = vec![];
+    let mut next_line_stack: StyledLine = vec![];
+    // Reversed full line, so that we can pop elements
+    loop {
+        if num_lines.is_some_and(|n| wrapped_diff.len() > n as usize) {
+            break;
+        }
+        if next_line_stack.is_empty() {
+            match diff.next() {
+                Some(mut n) => {
+                    n.reverse();
+                    next_line_stack = n;
+                }
+                None => break,
+            }
+        }
+
+        let mut cur_line_wrapped = vec![];
+        let mut cur_line_wrapped_len: usize = 0;
+
+        while cur_line_wrapped_len < width as usize {
+            let Some(next_seg) = next_line_stack.pop() else {
+                break;
+            };
+            cur_line_wrapped_len += UnicodeWidthStr::width(next_seg.0.as_ref());
+            // TODO: if can fit on entire line, stick on next. If not, break up
+            cur_line_wrapped.push(next_seg);
+        }
+
+        wrapped_diff.push(cur_line_wrapped);
+    }
+    wrapped_diff
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn line_list(
     before: impl IntoIterator<Item = StyledLine>,
     diff: impl IntoIterator<Item = StyledLine>,
     after: impl IntoIterator<Item = StyledLine>,
+    num_lines_to_show: u16,
     wrap: WrapText,
 ) -> List<'static> {
     let lines: Box<dyn Iterator<Item = StyledLine>> = match wrap {
         WrapText::Width { width, num_lines } => {
-            let mut wrapped_diff: Vec<StyledLine> = vec![];
-            let mut diff = diff.into_iter();
+            let wrapped_diff = wrap_lines(diff, width, Some(num_lines));
 
-            let mut next_line_stack: StyledLine = vec![]; // Reversed full line, so that we can pop elements
-            loop {
-                if wrapped_diff.len() > num_lines as usize {
-                    break;
-                }
-                if next_line_stack.is_empty() {
-                    match diff.next() {
-                        Some(mut n) => {
-                            n.reverse();
-                            next_line_stack = n;
-                        }
-                        None => break,
-                    }
-                }
-                let mut cur_line_wrapped = vec![];
-                let mut cur_line_wrapped_len: usize = 0;
+            let remaining_lines = num_lines_to_show
+                .saturating_sub(u16::try_from(wrapped_diff.len()).unwrap_or(u16::MAX));
 
-                while cur_line_wrapped_len < width as usize {
-                    let Some(next_seg) = next_line_stack.pop() else {
-                        break;
-                    };
-                    cur_line_wrapped_len += UnicodeWidthStr::width(next_seg.0.as_ref());
-                    // TODO: if can fit on entire line, stick on next. If not, break up
-                    cur_line_wrapped.push(next_seg);
-                }
-
-                wrapped_diff.push(cur_line_wrapped);
-            }
-
-            let mut wrapped_after: Vec<StyledLine> = vec![];
-            // TODO: similar to the above
-
-            let mut wrapped_before: Vec<StyledLine> = vec![];
-            // TODO: similar to the above
+            let wrapped_after = wrap_lines(after, width, Some(remaining_lines.div_ceil(2)));
+            // TODO: ideally we'd process from the back to avoid the need for the `last_n` call, but this
+            // adds a lot of complexity. Can revisit if needed
+            let wrapped_before = utils::last_n(
+                &wrap_lines(before, width, None),
+                remaining_lines as usize / 2,
+            )
+            .to_vec();
 
             Box::new(
                 wrapped_before
@@ -675,7 +693,7 @@ fn line_list(
 }
 
 fn build_preview_from_file<'a>(
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>,
     true_colour: bool,
@@ -691,8 +709,8 @@ fn build_preview_from_file<'a>(
 
     // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
-    let start = line_idx.saturating_sub(num_lines_to_show);
-    let end = line_idx + num_lines_to_show;
+    let start = line_idx.saturating_sub(num_lines_to_show as usize);
+    let end = line_idx + num_lines_to_show as usize;
 
     if let Some(theme) = syntax_highlighting_theme {
         let lines = read_lines_range_highlighted_with_cache(path, start, end, theme, event_sender)?;
@@ -712,7 +730,7 @@ fn build_preview_from_file<'a>(
             selected.new_line_diff.clone(),
         ];
         let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
-        let list = line_list(before, diff, after, wrap);
+        let list = line_list(before, diff, after, num_lines_to_show, wrap);
         if let Some(bg) = theme
             .settings
             .background
@@ -740,7 +758,7 @@ fn build_preview_from_file<'a>(
             selected.new_line_diff.clone(),
         ];
         let after = after.iter().map(|(_, l)| to_line_plain(l));
-        Ok(line_list(before, diff, after, wrap))
+        Ok(line_list(before, diff, after, num_lines_to_show, wrap))
     }
 }
 
