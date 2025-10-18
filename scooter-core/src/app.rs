@@ -572,6 +572,7 @@ impl<'a> App {
         input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
+        // TODO: don't pass two bools like this
         disable_prepopulated_fields: bool,
         wrap_preview_text: bool,
     ) -> (Self, UnboundedReceiver<Event>) {
