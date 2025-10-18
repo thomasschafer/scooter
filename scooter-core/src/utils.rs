@@ -162,7 +162,7 @@ pub fn largest_range_centered_on(
 pub fn split_indexed_lines<T>(
     indexed_lines: Vec<(usize, T)>,
     line_idx: usize,
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
 ) -> anyhow::Result<(Vec<(usize, T)>, (usize, T), Vec<(usize, T)>)> {
     let file_start = indexed_lines.first().context("No lines found")?.0;
     let file_end = indexed_lines.last().context("No lines found")?.0;
@@ -170,7 +170,7 @@ pub fn split_indexed_lines<T>(
         line_idx,
         file_start,
         file_end,
-        NonZeroUsize::new(num_lines_to_show).context("preview will have height 0")?,
+        NonZeroUsize::new(num_lines_to_show as usize).context("preview will have height 0")?,
     )?;
 
     let mut filtered_lines = indexed_lines
@@ -350,7 +350,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn last_n<T>(vec: &[T], n: usize) -> &[T] {
     &vec[vec.len().saturating_sub(n)..]
 }

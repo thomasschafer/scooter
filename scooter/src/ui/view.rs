@@ -20,6 +20,7 @@ use scooter_core::{
     },
 };
 use std::{
+    borrow::Cow,
     cmp::min,
     fs,
     io::Cursor,
@@ -34,6 +35,7 @@ use syntect::{
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
 
@@ -184,13 +186,13 @@ fn diff_col_to_ratatui(colour: &DiffColour) -> Color {
     }
 }
 
-fn diff_to_line(diff: Vec<&Diff>) -> Line<'static> {
+fn diff_to_line(diff: Vec<&Diff>) -> StyledLine {
     let diff_iter = diff.into_iter().map(|d| {
         let mut style = Style::new().fg(diff_col_to_ratatui(&d.fg_colour));
         if let Some(bg) = &d.bg_colour {
             style = style.bg(diff_col_to_ratatui(bg));
         }
-        Span::styled(strip_control_chars(&d.text), style)
+        (Cow::Owned(strip_control_chars(&d.text)), Some(style))
     });
     diff_iter.collect()
 }
@@ -201,7 +203,11 @@ fn display_duration(duration: Duration) -> String {
     format!("{seconds}.{milliseconds:03}s")
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::fn_params_excessive_bools
+)]
 fn render_search_results(
     frame: &mut Frame<'_>,
     input_source: &InputSource,
@@ -214,6 +220,7 @@ fn render_search_results(
     event_sender: UnboundedSender<Event>,
     area_is_focussed: bool,
     preview_update_status: Option<(usize, usize)>,
+    wrap: bool,
 ) {
     let small_screen = area.width <= 110;
 
@@ -296,7 +303,7 @@ fn render_search_results(
             .iter()
             .find(|s| s.is_primary_selected)
             .expect("Selected item should be in view");
-        let lines_to_show = preview_area.height as usize;
+        let lines_to_show = preview_area.height;
 
         match build_preview_list(
             input_source,
@@ -305,6 +312,14 @@ fn render_search_results(
             theme,
             true_colour,
             event_sender,
+            if wrap {
+                WrapText::Width {
+                    width: preview_area.width,
+                    num_lines: lines_to_show,
+                }
+            } else {
+                WrapText::None
+            },
         ) {
             Ok(preview) => {
                 frame.render_widget(preview, preview_area);
@@ -420,26 +435,32 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: b
     ratatui_style
 }
 
-fn regions_to_line<'a>(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> ListItem<'a> {
-    let prefix = "  ";
-    ListItem::new(
-        iter::once(Span::raw(prefix))
-            .chain(line.iter().map(|(style, s)| {
-                Span::styled(
-                    strip_control_chars(s),
-                    match style {
-                        Some(style) => convert_syntect_to_ratatui_style(style, true_colour),
-                        None => Style::default(),
-                    },
-                )
-            }))
-            .collect::<Line<'_>>(),
-    )
+type StyledLine = Vec<(Cow<'static, str>, Option<Style>)>;
+
+static PREVIEW_LINE_PREFIX: &str = "  ";
+static WRAPPED_LINE_PREFIX: &str = "  ↪ ";
+
+fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -> StyledLine {
+    iter::once((Cow::Borrowed(PREVIEW_LINE_PREFIX), None))
+        .chain(line.iter().map(|(style, s)| {
+            (
+                Cow::Owned(strip_control_chars(s)),
+                style
+                    .as_ref()
+                    .map(|style| convert_syntect_to_ratatui_style(style, true_colour)),
+            )
+        }))
+        .collect()
 }
 
-fn to_line_plain<'a>(line: &str) -> ListItem<'a> {
-    let prefix = "  ";
-    ListItem::new(format!("{prefix}{}", strip_control_chars(line)))
+fn to_line_plain(line: &str) -> StyledLine {
+    vec![(
+        Cow::Owned(format!(
+            "{PREVIEW_LINE_PREFIX}{}",
+            strip_control_chars(line)
+        )),
+        None,
+    )]
 }
 
 type HighlightedLinesCache = Mutex<LruCache<PathBuf, Vec<(usize, HighlightedLine)>>>;
@@ -522,13 +543,20 @@ fn read_lines_range_highlighted_with_cache(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WrapText {
+    None,
+    Width { width: u16, num_lines: u16 },
+}
+
 fn build_preview_list<'a>(
     input_source: &InputSource,
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
+    wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     match input_source {
         InputSource::Directory(_) => build_preview_from_file(
@@ -537,20 +565,24 @@ fn build_preview_list<'a>(
             syntax_highlighting_theme,
             true_colour,
             event_sender,
+            wrap,
         ),
-        InputSource::Stdin(stdin) => build_preview_from_str(stdin, num_lines_to_show, selected),
+        InputSource::Stdin(stdin) => {
+            build_preview_from_str(stdin, num_lines_to_show, selected, wrap)
+        }
     }
 }
 
 fn build_preview_from_str<'a>(
     stdin: &Arc<String>,
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
+    wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
-    let start = line_idx.saturating_sub(num_lines_to_show);
-    let end = line_idx + num_lines_to_show;
+    let start = line_idx.saturating_sub(num_lines_to_show as usize);
+    let end = line_idx + num_lines_to_show as usize;
 
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
@@ -562,24 +594,121 @@ fn build_preview_from_str<'a>(
         *cur.1 == selected.result.search_result.line,
         "Expected line didn't match actual",
     );
-    Ok(List::new(
-        before
-            .iter()
-            .map(|(_, l)| to_line_plain(l))
-            .chain([
-                ListItem::new(selected.old_line_diff.clone()),
-                ListItem::new(selected.new_line_diff.clone()),
-            ])
-            .chain(after.iter().map(|(_, l)| to_line_plain(l))),
-    ))
+
+    let before = before.iter().map(|(_, l)| to_line_plain(l));
+    let diff = [
+        selected.old_line_diff.clone(),
+        selected.new_line_diff.clone(),
+    ];
+    let after = after.iter().map(|(_, l)| to_line_plain(l));
+    Ok(line_list(before, diff, after, num_lines_to_show, wrap))
+}
+
+fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
+    let spans: Vec<Span<'static>> = line
+        .into_iter()
+        .map(|(text, style)| {
+            let span = Span::raw(text);
+            match style {
+                Some(s) => span.style(s),
+                None => span,
+            }
+        })
+        .collect();
+    ListItem::new(Line::from(spans))
+}
+
+fn wrap_lines(
+    diff: impl IntoIterator<Item = StyledLine>,
+    width: u16,
+    num_lines: Option<u16>,
+) -> Vec<StyledLine> {
+    let mut diff = diff.into_iter();
+
+    let mut wrapped_diff: Vec<StyledLine> = vec![];
+    let mut next_line_stack: StyledLine = vec![];
+    // Reversed full line, so that we can pop elements
+    loop {
+        if num_lines.is_some_and(|n| wrapped_diff.len() > n as usize) {
+            break;
+        }
+        let include_prefix = if next_line_stack.is_empty() {
+            match diff.next() {
+                Some(mut n) => {
+                    n.reverse();
+                    next_line_stack = n;
+                    false
+                }
+                None => break,
+            }
+        } else {
+            true
+        };
+
+        let mut cur_line_wrapped: StyledLine = vec![];
+        let mut cur_line_wrapped_len: usize = 0;
+        if include_prefix {
+            cur_line_wrapped.push((WRAPPED_LINE_PREFIX.into(), Some(Style::default().dim())));
+            cur_line_wrapped_len += UnicodeWidthStr::width(WRAPPED_LINE_PREFIX);
+        }
+
+        while cur_line_wrapped_len < width as usize {
+            let Some(next_seg) = next_line_stack.pop() else {
+                break;
+            };
+            cur_line_wrapped_len += UnicodeWidthStr::width(next_seg.0.as_ref());
+            // TODO: if can fit on entire line, stick on next. If not, break up
+            cur_line_wrapped.push(next_seg);
+        }
+
+        wrapped_diff.push(cur_line_wrapped);
+    }
+    wrapped_diff
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn line_list(
+    before: impl IntoIterator<Item = StyledLine>,
+    diff: impl IntoIterator<Item = StyledLine>,
+    after: impl IntoIterator<Item = StyledLine>,
+    num_lines_to_show: u16,
+    wrap: WrapText,
+) -> List<'static> {
+    let lines: Box<dyn Iterator<Item = StyledLine>> = match wrap {
+        WrapText::Width { width, num_lines } => {
+            let wrapped_diff = wrap_lines(diff, width, Some(num_lines));
+
+            let remaining_lines = num_lines_to_show
+                .saturating_sub(u16::try_from(wrapped_diff.len()).unwrap_or(u16::MAX));
+
+            let wrapped_after = wrap_lines(after, width, Some(remaining_lines.div_ceil(2)));
+            // TODO: ideally we'd process from the back to avoid the need for the `last_n` call, but this
+            // adds a lot of complexity. Can revisit if needed
+            let wrapped_before = utils::last_n(
+                &wrap_lines(before, width, None),
+                remaining_lines as usize / 2,
+            )
+            .to_vec();
+
+            Box::new(
+                wrapped_before
+                    .into_iter()
+                    .chain(wrapped_diff)
+                    .chain(wrapped_after),
+            )
+        }
+        WrapText::None => Box::new(before.into_iter().chain(diff).chain(after)),
+    };
+    List::new(lines.map(styled_line_to_ratatui_line))
 }
 
 fn build_preview_from_file<'a>(
-    num_lines_to_show: usize,
+    num_lines_to_show: u16,
     selected: &SearchResultLines<'_>,
     syntax_highlighting_theme: Option<&Theme>,
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
+    wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     let path = selected
         .result
@@ -590,8 +719,8 @@ fn build_preview_from_file<'a>(
 
     // Line numbers are 1-indexed
     let line_idx = selected.result.search_result.line_number - 1;
-    let start = line_idx.saturating_sub(num_lines_to_show);
-    let end = line_idx + num_lines_to_show;
+    let start = line_idx.saturating_sub(num_lines_to_show as usize);
+    let end = line_idx + num_lines_to_show as usize;
 
     if let Some(theme) = syntax_highlighting_theme {
         let lines = read_lines_range_highlighted_with_cache(path, start, end, theme, event_sender)?;
@@ -605,16 +734,13 @@ fn build_preview_from_file<'a>(
             bail!("File has changed since search (lines don't match)");
         }
 
-        let list = List::new(
-            before
-                .iter()
-                .map(|(_, l)| regions_to_line(l, true_colour))
-                .chain([
-                    ListItem::new(selected.old_line_diff.clone()),
-                    ListItem::new(selected.new_line_diff.clone()),
-                ])
-                .chain(after.iter().map(|(_, l)| regions_to_line(l, true_colour))),
-        );
+        let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
+        let diff = [
+            selected.old_line_diff.clone(),
+            selected.new_line_diff.clone(),
+        ];
+        let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
+        let list = line_list(before, diff, after, num_lines_to_show, wrap);
         if let Some(bg) = theme
             .settings
             .background
@@ -636,23 +762,20 @@ fn build_preview_from_file<'a>(
             bail!("File has changed since search (lines don't match)");
         }
 
-        Ok(List::new(
-            before
-                .iter()
-                .map(|(_, l)| to_line_plain(l))
-                .chain([
-                    ListItem::new(selected.old_line_diff.clone()),
-                    ListItem::new(selected.new_line_diff.clone()),
-                ])
-                .chain(after.iter().map(|(_, l)| to_line_plain(l))),
-        ))
+        let before = before.iter().map(|(_, l)| to_line_plain(l));
+        let diff = [
+            selected.old_line_diff.clone(),
+            selected.new_line_diff.clone(),
+        ];
+        let after = after.iter().map(|(_, l)| to_line_plain(l));
+        Ok(line_list(before, diff, after, num_lines_to_show, wrap))
     }
 }
 
 struct SearchResultLines<'a> {
     file_path: Line<'a>,
-    old_line_diff: Line<'static>,
-    new_line_diff: Line<'static>,
+    old_line_diff: StyledLine,
+    new_line_diff: StyledLine,
     is_primary_selected: bool,
     result: &'a SearchResultWithReplacement,
 }
@@ -970,6 +1093,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,
+                    app.wrap_preview_text,
                 );
             }
         }
