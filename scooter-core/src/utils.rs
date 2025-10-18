@@ -15,20 +15,30 @@ use syntect::{
 
 use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
 
-fn replace_start(s: &str, from: &str, to: &str) -> String {
-    if let Some(stripped) = s.strip_prefix(from) {
-        format!("{to}{stripped}")
-    } else {
-        s.to_string()
+pub fn relative_path(base: &Path, target: &Path) -> String {
+    match target.strip_prefix(base) {
+        Ok(relative) => {
+            // Successfully stripped - base is an ancestor
+            if relative.as_os_str().is_empty() {
+                if target.is_file() {
+                    target
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(".")
+                        .to_string()
+                } else {
+                    ".".to_string()
+                }
+            } else {
+                relative.to_string_lossy().to_string()
+            }
+        }
+        Err(_) => {
+            // Base is not an ancestor - return full target path
+            target.to_string_lossy().to_string()
+        }
     }
 }
-
-pub fn relative_path_from(root_dir: &Path, path: &Path) -> String {
-    let root_dir = root_dir.to_string_lossy();
-    let path = path.to_string_lossy();
-    replace_start(&path, &root_dir, ".")
-}
-
 pub fn group_by<I, T, F>(iter: I, predicate: F) -> Vec<Vec<T>>
 where
     I: IntoIterator<Item = T>,
@@ -373,36 +383,107 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_start_matching_prefix() {
-        assert_eq!(replace_start("abac", "a", "z"), "zbac");
-    }
-
-    #[test]
-    fn test_replace_start_no_match() {
-        assert_eq!(replace_start("bac", "a", "z"), "bac");
-    }
-
-    #[test]
-    fn test_replace_start_empty_string() {
-        assert_eq!(replace_start("", "a", "z"), "");
-    }
-
-    #[test]
-    fn test_replace_start_longer_prefix() {
+    fn test_relative_path_file_in_dir() {
+        // Directory to file in that directory
         assert_eq!(
-            replace_start("hello world hello there", "hello", "hi"),
-            "hi world hello there"
+            relative_path(Path::new("/foo/bar/"), Path::new("/foo/bar/baz.rs")),
+            "baz.rs"
+        );
+        assert_eq!(
+            relative_path(Path::new("/foo/bar"), Path::new("/foo/bar/baz.rs")),
+            "baz.rs"
         );
     }
 
     #[test]
-    fn test_replace_start_whole_string() {
-        assert_eq!(replace_start("abc", "abc", "xyz"), "xyz");
+    fn test_relative_path_same_file() {
+        // Same file to itself returns filename
+        // We need to create the file so that `relative_path` can determine that it is indeed a file
+        let test_file = create_test_file("");
+        assert_eq!(
+            relative_path(test_file.path(), test_file.path()),
+            test_file.path().file_name().unwrap().to_string_lossy()
+        );
     }
 
     #[test]
-    fn test_replace_start_empty_from() {
-        assert_eq!(replace_start("abc", "", "xyz"), "xyzabc");
+    fn test_relative_path_same_dir() {
+        // Same directory to itself returns "."
+        assert_eq!(
+            relative_path(Path::new("/foo/bar/"), Path::new("/foo/bar/")),
+            "."
+        );
+    }
+
+    #[test]
+    fn test_relative_path_nested() {
+        // Directory to nested file/directory
+        assert_eq!(
+            relative_path(Path::new("/foo"), Path::new("/foo/bar/baz.rs")),
+            "bar/baz.rs"
+        );
+        assert_eq!(
+            relative_path(Path::new("/foo/"), Path::new("/foo/bar/baz/")),
+            "bar/baz"
+        );
+    }
+
+    #[test]
+    fn test_relative_path_not_ancestor() {
+        // Base is not ancestor - return full target path
+        assert_eq!(
+            relative_path(
+                Path::new("/foo/bar"),
+                Path::new("/completely/different/file.rs")
+            ),
+            "/completely/different/file.rs"
+        );
+        assert_eq!(
+            relative_path(Path::new("/foo/bar/"), Path::new("/foo/other.rs")),
+            "/foo/other.rs"
+        );
+    }
+
+    #[test]
+    fn test_relative_path_parent_to_child() {
+        // Going from parent to deeper descendant
+        assert_eq!(
+            relative_path(Path::new("/foo"), Path::new("/foo/bar/baz/qux.rs")),
+            "bar/baz/qux.rs"
+        );
+    }
+
+    #[test]
+    fn test_relative_path_root_cases() {
+        // From root
+        assert_eq!(
+            relative_path(Path::new("/"), Path::new("/foo/bar.rs")),
+            "foo/bar.rs"
+        );
+        // Root to root
+        assert_eq!(relative_path(Path::new("/"), Path::new("/")), ".");
+    }
+
+    #[test]
+    fn test_relative_path_no_trailing_slash() {
+        // Test ambiguous cases without trailing slash
+        assert_eq!(
+            relative_path(Path::new("/foo/bar"), Path::new("/foo/bar/baz")),
+            "baz"
+        );
+    }
+
+    #[test]
+    fn test_relative_path_relative_paths() {
+        // Both paths are relative (no leading slash)
+        assert_eq!(
+            relative_path(Path::new("foo/bar"), Path::new("foo/bar/baz.rs")),
+            "baz.rs"
+        );
+        assert_eq!(
+            relative_path(Path::new("foo"), Path::new("bar/baz.rs")),
+            "bar/baz.rs" // Not an ancestor, return full path
+        );
     }
 
     #[test]
