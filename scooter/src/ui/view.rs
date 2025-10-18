@@ -15,7 +15,7 @@ use scooter_core::{
     fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
     replace::{PerformingReplacementState, ReplaceState},
     utils::{
-        self, last_n_chars, read_lines_range_highlighted, relative_path_from, strip_control_chars,
+        self, last_n_chars, read_lines_range_highlighted, relative_path, strip_control_chars,
         HighlightedLine,
     },
 };
@@ -728,7 +728,7 @@ fn file_path_line<'a>(
     );
     let left_content_len = left_content.chars().count();
     let mut path = match &result.search_result.path {
-        Some(path) => relative_path_from(base_path, path),
+        Some(path) => relative_path(base_path, path),
         None => "stdin".to_string(),
     };
     let line_num = format!(":{}", result.search_result.line_number);
