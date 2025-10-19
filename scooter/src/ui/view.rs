@@ -35,7 +35,7 @@ use syntect::{
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::Config;
 
@@ -652,18 +652,75 @@ fn wrap_lines(
             cur_line_wrapped_len += UnicodeWidthStr::width(WRAPPED_LINE_PREFIX);
         }
 
+        #[allow(clippy::needless_continue)]
         while cur_line_wrapped_len < width as usize {
-            let Some(next_seg) = next_line_stack.pop() else {
+            let Some((next_seg_chars, next_seg_style)) = next_line_stack.pop() else {
                 break;
             };
-            cur_line_wrapped_len += UnicodeWidthStr::width(next_seg.0.as_ref());
-            // TODO: if can fit on entire line, stick on next. If not, break up
-            cur_line_wrapped.push(next_seg);
+            if next_seg_chars.is_empty() {
+                break;
+            }
+
+            // Grab chunk from next_seg, add rest back for processing later
+            let (next_seg_chars, rest) = split_first_chunk(&next_seg_chars);
+            if !rest.is_empty() {
+                next_line_stack.push((Cow::Owned(rest.to_string()), next_seg_style));
+            }
+            assert!(!next_seg_chars.is_empty());
+
+            let next_seg_len = UnicodeWidthStr::width(next_seg_chars);
+            if cur_line_wrapped_len + next_seg_len <= width as usize {
+                // Fits on the current line
+                cur_line_wrapped_len += next_seg_len;
+                cur_line_wrapped.push((Cow::Owned(next_seg_chars.to_string()), next_seg_style));
+            } else if next_seg_len <= width as usize {
+                // Fits on next line
+                next_line_stack.push((Cow::Owned(next_seg_chars.to_string()), next_seg_style));
+                break;
+            } else {
+                // Wider than an entire line, so break it up over this line and the next
+                let (first_part, rest) = extract_first_n_width(
+                    next_seg_chars,
+                    (width as usize).saturating_sub(cur_line_wrapped_len),
+                );
+                next_line_stack.push((Cow::Owned(rest.to_string()), next_seg_style));
+                next_line_stack.push((Cow::Owned(first_part.to_string()), next_seg_style));
+                continue;
+            }
         }
 
         wrapped_diff.push(cur_line_wrapped);
     }
     wrapped_diff
+}
+
+fn split_first_chunk(s: &str) -> (&str, &str) {
+    let mut chars = s.chars();
+    let Some(c) = chars.next() else {
+        return ("", "");
+    };
+    let first_char_is_alpha = c.is_alphabetic();
+    if let Some(mut split_idx) = chars.position(|c| c.is_alphabetic() != first_char_is_alpha) {
+        split_idx += 1; // We've already grabbed out the first char
+        (&s[..split_idx], &s[split_idx..])
+    } else {
+        (s, "")
+    }
+}
+
+fn extract_first_n_width(chars: &str, max_width: usize) -> (&str, &str) {
+    let mut cur_sum: usize = 0;
+    for (idx, width) in chars
+        .chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .enumerate()
+    {
+        if cur_sum + width > max_width {
+            return (&chars[..idx], &chars[idx..]);
+        }
+        cur_sum += width;
+    }
+    (chars, "")
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1347,5 +1404,29 @@ mod tests {
 
         let _ = utils::split_indexed_lines(lines, 10, 3).unwrap();
         // Should panic because line 10 is not in the data
+    }
+
+    #[test]
+    fn test_split_first_chunk_words() {
+        assert_eq!(split_first_chunk("foo bar"), ("foo", " bar"));
+        assert_eq!(split_first_chunk(" bar"), (" ", "bar"));
+        assert_eq!(split_first_chunk("bar"), ("bar", ""));
+    }
+
+    #[test]
+    fn test_split_first_chunk_with_punctuation() {
+        assert_eq!(
+            split_first_chunk("?! some-thing..."),
+            ("?! ", "some-thing...")
+        );
+        assert_eq!(split_first_chunk("some-thing...?"), ("some", "-thing...?"));
+        assert_eq!(split_first_chunk("-thing...?"), ("-", "thing...?"));
+        assert_eq!(split_first_chunk("thing...?"), ("thing", "...?"));
+        assert_eq!(split_first_chunk("...?"), ("...?", ""));
+    }
+
+    #[test]
+    fn test_split_first_chunk_empty() {
+        assert_eq!(split_first_chunk(""), ("", ""));
     }
 }
