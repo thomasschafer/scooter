@@ -36,7 +36,8 @@ use syntect::{
     parsing::SyntaxSet,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
 
@@ -699,31 +700,51 @@ fn wrap_lines(
     wrapped_diff
 }
 
+/// Split a string at the boundary between alphabetic and non-alphabetic grapheme clusters.
+/// This respects grapheme cluster boundaries to avoid splitting emojis with modifiers.
 fn split_first_chunk(s: &str) -> (&str, &str) {
-    let mut char_indices = s.char_indices();
-    let Some((_, first_char)) = char_indices.next() else {
+    let mut graphemes = s.graphemes(true);
+    let Some(first_grapheme) = graphemes.next() else {
         return ("", "");
     };
-    let first_char_is_alpha = first_char.is_alphabetic();
-    if let Some((byte_idx, _)) =
-        char_indices.find(|(_, c)| c.is_alphabetic() != first_char_is_alpha)
-    {
-        (&s[..byte_idx], &s[byte_idx..])
-    } else {
-        (s, "")
+
+    // Check if the first character of the grapheme is alphabetic
+    let first_is_alpha = first_grapheme
+        .chars()
+        .next()
+        .is_some_and(char::is_alphabetic);
+
+    let mut byte_pos = first_grapheme.len();
+
+    for grapheme in graphemes {
+        let grapheme_is_alpha = grapheme.chars().next().is_some_and(char::is_alphabetic);
+
+        if grapheme_is_alpha != first_is_alpha {
+            return (&s[..byte_pos], &s[byte_pos..]);
+        }
+        byte_pos += grapheme.len();
     }
+
+    (s, "")
 }
 
-fn extract_first_n_width(chars: &str, max_width: usize) -> (&str, &str) {
+/// Extract the first N display-width worth of grapheme clusters from a string.
+/// This won't break up emojis with skin tones, family emojis, or other multi-codepoint graphemes.
+///
+/// Returns a tuple of (`first_part`, `remainder`).
+fn extract_first_n_width(text: &str, max_width: usize) -> (&str, &str) {
     let mut cur_sum: usize = 0;
-    for (byte_idx, c) in chars.char_indices() {
-        let width = UnicodeWidthChar::width(c).unwrap_or(0);
+    let mut last_valid_byte_idx = 0;
+
+    for grapheme in text.graphemes(true) {
+        let width = UnicodeWidthStr::width(grapheme);
         if cur_sum + width > max_width {
-            return (&chars[..byte_idx], &chars[byte_idx..]);
+            return (&text[..last_valid_byte_idx], &text[last_valid_byte_idx..]);
         }
         cur_sum += width;
+        last_valid_byte_idx += grapheme.len();
     }
-    (chars, "")
+    (text, "")
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1470,5 +1491,189 @@ mod tests {
         assert_eq!(split_first_chunk("⚠️  warning"), ("⚠️  ", "warning"));
         assert_eq!(split_first_chunk("❌ failed test"), ("❌ ", "failed test"));
         assert_eq!(split_first_chunk("test ⚡️ fast"), ("test", " ⚡️ fast"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_emoji_with_skin_tone() {
+        // Critical: Emoji with skin tone modifier should NOT be split
+        // The old char-based implementation would have split between 👍 and 🏻
+        assert_eq!(split_first_chunk("👍🏻test"), ("👍🏻", "test"));
+        assert_eq!(split_first_chunk("👍🏻 code"), ("👍🏻 ", "code"));
+
+        // Multiple emojis with modifiers
+        assert_eq!(split_first_chunk("👋🏽👍🏻word"), ("👋🏽👍🏻", "word"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_family_emoji() {
+        // Family emoji is composed of multiple codepoints with zero-width joiners
+        // Must be kept together as a single unit
+        assert_eq!(split_first_chunk("👨‍👩‍👧‍👦family"), ("👨‍👩‍👧‍👦", "family"));
+        assert_eq!(split_first_chunk("👨‍👩‍👧‍👦 test"), ("👨‍👩‍👧‍👦 ", "test"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_combining_diacritics() {
+        // Combining diacritics should stay with their base character
+        // e + combining acute = é (single grapheme)
+        let e_acute = "e\u{0301}"; // é as e + combining acute
+                                   // The grapheme 'é' is alphabetic, space is not, so it splits after 'é'
+        let text1 = format!("{e_acute} test");
+        assert_eq!(split_first_chunk(&text1), (e_acute, " test"));
+
+        // Multiple combining marks - ensure they all stay together
+        let e_with_marks = "e\u{0301}\u{0308}"; // e + acute + diaeresis
+        let text2 = format!("{e_with_marks} word");
+        assert_eq!(split_first_chunk(&text2), (e_with_marks, " word"));
+
+        // Test that combining marks don't get split from base char even in longer strings
+        let text = format!("te{e_acute}st");
+        let result = split_first_chunk(&text);
+        // The entire word is alphabetic, so it stays together
+        assert_eq!(result, (text.as_str(), ""));
+        // Important: verify the grapheme is intact (not split between e and combining mark)
+        assert!(result.0.contains("\u{0301}"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_flag_emoji() {
+        // Flag emojis are composed of two regional indicator symbols
+        // 🇺🇸 = U+1F1FA (regional indicator U) + U+1F1F8 (regional indicator S)
+        assert_eq!(split_first_chunk("🇺🇸America"), ("🇺🇸", "America"));
+        assert_eq!(split_first_chunk("🇺🇸 test"), ("🇺🇸 ", "test"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_emoji_zwj_sequences() {
+        // Zero-width joiner (ZWJ) sequences should not be split
+        // Woman technologist: 👩 + ZWJ + 💻
+        assert_eq!(split_first_chunk("👩‍💻code"), ("👩‍💻", "code"));
+
+        // Rainbow flag: 🏳 + ZWJ + 🌈
+        assert_eq!(split_first_chunk("🏳️‍🌈pride"), ("🏳️‍🌈", "pride"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_keycap_sequences() {
+        // Keycap sequences: digit/symbol + variation selector + combining enclosing keycap
+        // Example: 1️⃣ = '1' + U+FE0F (variation selector) + U+20E3 (combining enclosing keycap)
+        assert_eq!(split_first_chunk("1️⃣test"), ("1️⃣", "test"));
+        assert_eq!(split_first_chunk("*️⃣word"), ("*️⃣", "word"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_multiple_grapheme_edge_cases() {
+        // Mix of different complex graphemes in sequence
+        assert_eq!(split_first_chunk("👍🏻👨‍👩‍👧‍👦🇺🇸test"), ("👍🏻👨‍👩‍👧‍👦🇺🇸", "test"));
+
+        // Text with accented characters
+        let text = "café"; // é is a precomposed character
+        assert_eq!(split_first_chunk(text), (text, ""));
+
+        // Combining marks in the middle of a word
+        let text_combining = "cafe\u{0301}"; // café with combining acute
+        assert_eq!(split_first_chunk(text_combining), (text_combining, ""));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_basic() {
+        // Basic ASCII text
+        assert_eq!(extract_first_n_width("hello world", 5), ("hello", " world"));
+        assert_eq!(extract_first_n_width("hello", 5), ("hello", ""));
+        assert_eq!(extract_first_n_width("hello", 10), ("hello", ""));
+        assert_eq!(extract_first_n_width("hello world", 0), ("", "hello world"));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_exact_fit() {
+        // Text that fits exactly
+        assert_eq!(extract_first_n_width("test", 4), ("test", ""));
+        assert_eq!(extract_first_n_width("12345", 5), ("12345", ""));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_emojis() {
+        // Most emojis have width 2
+        assert_eq!(extract_first_n_width("👍test", 2), ("👍", "test"));
+        assert_eq!(extract_first_n_width("👍test", 3), ("👍t", "est"));
+        assert_eq!(extract_first_n_width("👍test", 6), ("👍test", ""));
+
+        // Multiple emojis
+        assert_eq!(extract_first_n_width("👍👎🎉", 2), ("👍", "👎🎉"));
+        assert_eq!(extract_first_n_width("👍👎🎉", 4), ("👍👎", "🎉"));
+        assert_eq!(extract_first_n_width("👍👎🎉", 6), ("👍👎🎉", ""));
+
+        // Emoji with text
+        assert_eq!(extract_first_n_width("✅ PASSED", 2), ("✅", " PASSED"));
+        assert_eq!(extract_first_n_width("✅ PASSED", 3), ("✅ ", "PASSED"));
+        assert_eq!(extract_first_n_width("PASSED ✅", 6), ("PASSED", " ✅"));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_wide_characters() {
+        // Chinese/Japanese characters typically have width 2
+        assert_eq!(extract_first_n_width("日本語", 2), ("日", "本語"));
+        assert_eq!(extract_first_n_width("日本語", 4), ("日本", "語"));
+        assert_eq!(extract_first_n_width("日本語", 6), ("日本語", ""));
+
+        // Mixed ASCII and wide characters
+        assert_eq!(extract_first_n_width("test日本", 4), ("test", "日本"));
+        assert_eq!(extract_first_n_width("test日本", 6), ("test日", "本"));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_empty() {
+        // Empty string
+        assert_eq!(extract_first_n_width("", 0), ("", ""));
+        assert_eq!(extract_first_n_width("", 10), ("", ""));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_zero_width_chars() {
+        // Some combining characters have width 0
+        // The combining diaeresis (¨) has width 0 when combined
+        let text = "e\u{0308}"; // ë (e + combining diaeresis)
+        assert_eq!(extract_first_n_width(text, 1), (text, ""));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_complex_emojis() {
+        // Some emojis are composed of multiple code points, e.g. the family emoji (👨‍👩‍👧‍👦) is composed using zero-width joiners.
+        // (Note that this emoji will often not render properly in some terminals etc.)
+        // With grapheme clusters, these are kept together as a single unit.
+        assert_eq!(extract_first_n_width("👨‍👩‍👧‍👦test", 2), ("👨‍👩‍👧‍👦", "test"));
+        assert_eq!(extract_first_n_width("👨‍👩‍👧‍👦test", 4), ("👨‍👩‍👧‍👦te", "st"));
+
+        // Skin tone modifiers - kept as a single grapheme
+        assert_eq!(extract_first_n_width("👍🏻test", 2), ("👍🏻", "test"));
+        assert_eq!(extract_first_n_width("👍🏻test", 4), ("👍🏻te", "st"));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_boundary_conditions() {
+        // Test splitting exactly at character boundary
+        assert_eq!(extract_first_n_width("abc", 2), ("ab", "c"));
+        assert_eq!(extract_first_n_width("abc", 1), ("a", "bc"));
+
+        // Test with max_width larger than string
+        assert_eq!(extract_first_n_width("short", 100), ("short", ""));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_mixed_content() {
+        // Mix of ASCII, wide chars, and emojis
+        assert_eq!(extract_first_n_width("test🎉日本", 4), ("test", "🎉日本"));
+        assert_eq!(extract_first_n_width("test🎉日本", 6), ("test🎉", "日本"));
+        assert_eq!(extract_first_n_width("test🎉日本", 8), ("test🎉日", "本"));
+    }
+
+    #[test]
+    fn test_extract_first_n_width_whitespace() {
+        // Spaces have width 1
+        assert_eq!(extract_first_n_width("   test", 2), ("  ", " test"));
+        assert_eq!(extract_first_n_width("   test", 3), ("   ", "test"));
+
+        // Tabs have varying width, but typically treated as 0 or 1 by unicode_width
+        assert_eq!(extract_first_n_width("\ttest", 0), ("", "\ttest"));
     }
 }
