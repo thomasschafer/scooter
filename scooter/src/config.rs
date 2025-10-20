@@ -142,7 +142,7 @@ pub struct PreviewConfig {
         default = "default_syntax_highlighting_theme"
     )]
     pub syntax_highlighting_theme: Theme,
-    // Wrap text onto the next line if it is wider than the preview window. Defaults to `false`.
+    /// Wrap text onto the next line if it is wider than the preview window. Defaults to `false`.
     #[serde(default)]
     pub wrap_text: bool,
 }

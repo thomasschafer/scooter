@@ -275,6 +275,10 @@ wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/them
 ```
 and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
 
+#### `wrap_text`
+
+Wrap text onto the next line if it is wider than the preview window. Defaults to `false`.
+
 ### `[style]` section
 
 #### `true_color`
