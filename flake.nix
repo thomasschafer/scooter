@@ -78,18 +78,10 @@
 
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = shellDeps;
-
-          shellHook = ''
-            export RUST_BACKTRACE=1
-          '';
         };
 
         devShells.benchmark = pkgs.mkShell {
           nativeBuildInputs = shellDeps ++ benchmarkDeps;
-
-          shellHook = ''
-            export RUST_BACKTRACE=1
-          '';
         };
       }
     );
