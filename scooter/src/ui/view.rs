@@ -26,6 +26,7 @@ use std::{
     io::Cursor,
     iter,
     num::NonZeroUsize,
+    ops::Div,
     path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc, Mutex, OnceLock},
     time::Duration,
@@ -747,8 +748,8 @@ fn line_list(
 
             let wrapped_after = wrap_lines(after, width, Some(remaining_lines));
 
-            // Get a window centered around the second line of the diff
-            let line_idx = wrapped_before.len() + wrapped_diff.len() / 2;
+            // Get a window centered around the diff
+            let line_idx = wrapped_before.len() + wrapped_diff.len().div(2).saturating_sub(1);
             let (before, cur, after) = utils::split_indexed_lines(
                 wrapped_before
                     .into_iter()

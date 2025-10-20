@@ -10,10 +10,10 @@ expression: snapshot.as_ref()
    │REPLACED                                                              │    
    └──────────────────────────────────────────────────────────────────────┘    
                                                                                
-   Results: 1 [Search complete]                       [Time taken: TIME]     
+   Results: 2 [Search complete]                       [Time taken: TIME]     
                                                                                
    [x] file1.txt:2                                                      (1)    
-                                                                               
+   [x] file1.txt:17                                                     (2)    
                                                                                
                                                                                
                                                                                

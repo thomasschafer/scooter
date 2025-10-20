@@ -1,6 +1,6 @@
 ---
 source: scooter/tests/app_runner.rs
-expression: snapshot
+expression: snapshot.as_ref()
 ---
                                      scooter                                    
    ┌Search text───────────────────────────────────────────────────────────┐    
@@ -10,10 +10,10 @@ expression: snapshot
    │REPLACED                                                              │    
    └──────────────────────────────────────────────────────────────────────┘    
                                                                                
-   Results: 1 [Search complete]                       [Time taken: TIME]     
+   Results: 2 [Search complete]                       [Time taken: TIME]     
                                                                                
    [x] file1.txt:2                                                      (1)    
-                                                                               
+   [x] file1.txt:17                                                     (2)    
                                                                                
                                                                                
                                                                                
@@ -23,6 +23,6 @@ expression: snapshot
    + some very long lines of text. Lots of text which won't fit on one line    
      Some more lines here which aren't                                         
      quite as long.                                                            
-                                                                               
+     Some                                                                      
                                                                                
 space> toggle / <C-o> back to search fields / <enter> replace selected / <C-h>

@@ -2956,6 +2956,20 @@ test_with_both_regex_modes!(
                 "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but users can toggle text wrapping so that it all shows up on the screen.",
                 "Some more lines here which aren't",
                 "quite as long.",
+                "Some",
+                "more lines further",
+                "on",
+                "blah",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9 users 10",
+                ".",
             ),
         );
 
@@ -2980,7 +2994,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
         let snapshot =
             wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
-        assert_snapshot_with_filters("Text wrapping disabled", snapshot);
+        assert_snapshot_with_filters("text_wrapping_disabled__result_1", snapshot);
 
         send_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL, &event_sender);
         let snapshot = wait_for_match(
@@ -2989,7 +3003,11 @@ test_with_both_regex_modes!(
             1000,
         )
         .await?;
-        assert_snapshot_with_filters("Text wrapping enabled", snapshot);
+        assert_snapshot_with_filters("text_wrapping_enabled__result_1", snapshot);
+        send_key(KeyCode::Down, &event_sender);
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("9 users 10"), 1000).await?;
+        assert_snapshot_with_filters("text_wrapping_enabled__result_2", snapshot);
 
         send_key(KeyCode::Enter, &event_sender);
         wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
@@ -3001,6 +3019,20 @@ test_with_both_regex_modes!(
                 "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but REPLACED can toggle text wrapping so that it all shows up on the screen.",
                 "Some more lines here which aren't",
                 "quite as long.",
+                "Some",
+                "more lines further",
+                "on",
+                "blah",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9 REPLACED 10",
+                ".",
             ),
         );
 
