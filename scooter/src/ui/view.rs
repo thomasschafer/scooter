@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
@@ -326,7 +326,7 @@ fn render_search_results(
             }
             Err(e) => {
                 frame.render_widget(
-                    Span::raw(format!("Error generating preview: \n{e}")).fg(Color::Red),
+                    Paragraph::new(format!("Error generating preview: {e}")).fg(Color::Red),
                     preview_area,
                 );
             }
@@ -601,7 +601,8 @@ fn build_preview_from_str<'a>(
         selected.new_line_diff.clone(),
     ];
     let after = after.iter().map(|(_, l)| to_line_plain(l));
-    Ok(line_list(before, diff, after, num_lines_to_show, wrap))
+    line_list(before, diff, after, num_lines_to_show, wrap)
+        .map_err(|e| anyhow!("failed to combine lines: {e}"))
 }
 
 fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
@@ -731,7 +732,7 @@ fn line_list(
     after: impl IntoIterator<Item = StyledLine>,
     num_lines_to_show: u16,
     wrap: WrapText,
-) -> List<'static> {
+) -> anyhow::Result<List<'static>> {
     let lines: Box<dyn Iterator<Item = StyledLine>> = match wrap {
         WrapText::Width { width, num_lines } => {
             let wrapped_diff = wrap_lines(diff, width, Some(num_lines));
@@ -739,25 +740,37 @@ fn line_list(
             let remaining_lines = num_lines_to_show
                 .saturating_sub(u16::try_from(wrapped_diff.len()).unwrap_or(u16::MAX));
 
-            let wrapped_after = wrap_lines(after, width, Some(remaining_lines.div_ceil(2)));
             // TODO: ideally we'd process from the back to avoid the need for the `last_n` call, but this
             // adds a lot of complexity. Can revisit if needed
-            let wrapped_before = utils::last_n(
-                &wrap_lines(before, width, None),
-                remaining_lines as usize / 2,
-            )
-            .to_vec();
+            let wrapped_before =
+                utils::last_n(&wrap_lines(before, width, None), remaining_lines as usize).to_vec();
 
-            Box::new(
+            let wrapped_after = wrap_lines(after, width, Some(remaining_lines));
+
+            // Get a window centered around the second line of the diff
+            let line_idx = wrapped_before.len() + wrapped_diff.len() / 2;
+            let (before, cur, after) = utils::split_indexed_lines(
                 wrapped_before
                     .into_iter()
                     .chain(wrapped_diff)
-                    .chain(wrapped_after),
+                    .chain(wrapped_after)
+                    .enumerate()
+                    .collect(),
+                line_idx,
+                num_lines_to_show,
+            )?;
+
+            Box::new(
+                before
+                    .into_iter()
+                    .chain(vec![cur])
+                    .chain(after)
+                    .map(|(_, x)| x),
             )
         }
         WrapText::None => Box::new(before.into_iter().chain(diff).chain(after)),
     };
-    List::new(lines.map(styled_line_to_ratatui_line))
+    Ok(List::new(lines.map(styled_line_to_ratatui_line)))
 }
 
 fn build_preview_from_file<'a>(
@@ -798,7 +811,8 @@ fn build_preview_from_file<'a>(
             selected.new_line_diff.clone(),
         ];
         let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
-        let list = line_list(before, diff, after, num_lines_to_show, wrap);
+        let list = line_list(before, diff, after, num_lines_to_show, wrap)
+            .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
         if let Some(bg) = theme
             .settings
             .background
@@ -826,7 +840,8 @@ fn build_preview_from_file<'a>(
             selected.new_line_diff.clone(),
         ];
         let after = after.iter().map(|(_, l)| to_line_plain(l));
-        Ok(line_list(before, diff, after, num_lines_to_show, wrap))
+        line_list(before, diff, after, num_lines_to_show, wrap)
+            .map_err(|e| anyhow!("failed to combine lines: {e}"))
     }
 }
 
