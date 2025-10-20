@@ -88,6 +88,14 @@ impl Pattern {
     }
 }
 
+fn assert_snapshot_with_filters(name: &str, snapshot: impl AsRef<str>) {
+    insta::with_settings!({filters => vec![
+        (r"\[Time taken: [^\]]+\]", "[Time taken: TIME]"),
+    ]}, {
+        assert_snapshot!(name, snapshot.as_ref());
+    });
+}
+
 async fn wait_for_match(
     snapshot_rx: &mut UnboundedReceiver<String>,
     pattern: Pattern,
@@ -2933,6 +2941,67 @@ test_with_both_regex_modes!(
             final_bar_count,
             initial_foo_count + initial_bar_count,
             "Final bar count should equal initial foo + bar counts"
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_wrapping_in_preview,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "This is a file with",
+                "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but users can toggle text wrapping so that it all shows up on the screen.",
+                "Some more lines here which aren't",
+                "quite as long.",
+            ),
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                include_hidden: true,
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars(r"users", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("Text wrapping disabled", snapshot);
+
+        send_key_with_modifiers(KeyCode::Char('l'), KeyModifiers::CONTROL, &event_sender);
+        let snapshot = wait_for_match(
+            &mut snapshot_rx,
+            Pattern::string("it all shows up on the screen."),
+            1000,
+        )
+        .await?;
+        assert_snapshot_with_filters("Text wrapping enabled", snapshot);
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "This is a file with",
+                "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but REPLACED can toggle text wrapping so that it all shows up on the screen.",
+                "Some more lines here which aren't",
+                "quite as long.",
+            ),
         );
 
         shutdown(event_sender, run_handle).await
