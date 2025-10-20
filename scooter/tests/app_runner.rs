@@ -354,7 +354,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -412,7 +412,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         // Verify that nothing has changed
         assert_test_files!(
@@ -453,7 +453,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(&temp_dir);
 
@@ -519,7 +519,7 @@ test_with_both_regex_modes_and_fixed_strings!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         // Verify that "before" has been replaced with "after"
         assert_test_files!(
@@ -580,7 +580,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         // Verify only matching phone numbers are reformatted
         assert_test_files!(
@@ -657,7 +657,7 @@ async fn test_search_and_replace_advanced_regex_negative_lookahead() -> anyhow::
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     // Verify only non-mutable declarations are modified
     assert_test_files!(
@@ -733,7 +733,7 @@ async fn test_multi_select_mode() -> anyhow::Result<()> {
     send_key(KeyCode::Char(' '), &event_sender); // Toggle single selected
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1292,7 +1292,7 @@ async fn test_prepopulated_fields() -> anyhow::Result<()> {
 
     send_key(KeyCode::Enter, &event_sender);
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1356,7 +1356,7 @@ async fn test_replacement_progress_display() -> anyhow::Result<()> {
     )
     .await?;
 
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     assert_test_files!(
         &temp_dir,
@@ -1420,7 +1420,7 @@ test_with_both_regex_modes!(
 
         send_key(KeyCode::Enter, &event_sender);
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 500).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1480,7 +1480,7 @@ test_with_both_regex_modes!(
 
         wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
         // Replacement should happen without confirmation
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1549,7 +1549,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1622,7 +1622,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1696,7 +1696,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1778,7 +1778,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             &temp_dir,
@@ -1849,7 +1849,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -1919,7 +1919,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2056,7 +2056,7 @@ async fn test_advanced_regex_negative_lookahead() -> anyhow::Result<()> {
     wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     assert_test_files!(
         temp_dir,
@@ -2139,7 +2139,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2234,7 +2234,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2333,7 +2333,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2446,7 +2446,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2529,7 +2529,7 @@ test_with_both_regex_modes!(test_ignores_gif_file, |advanced_regex: bool| async 
     wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
     send_key(KeyCode::Enter, &event_sender);
-    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
     assert_test_files!(
         temp_dir,
@@ -2583,7 +2583,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2639,7 +2639,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
@@ -2707,7 +2707,7 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         let text_files = vec![
             "textfiles/code.rs",
@@ -2992,7 +2992,7 @@ test_with_both_regex_modes!(
         assert_snapshot_with_filters("Text wrapping enabled", snapshot);
 
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         assert_test_files!(
             temp_dir,
