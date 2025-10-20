@@ -625,13 +625,16 @@ fn wrap_lines(
     width: u16,
     num_lines: Option<u16>,
 ) -> Vec<StyledLine> {
+    if width == 0 || num_lines.is_some_and(|n| n == 0) {
+        return vec![];
+    }
     let mut diff = diff.into_iter();
 
     let mut wrapped_diff: Vec<StyledLine> = vec![];
     let mut next_line_stack: StyledLine = vec![];
     // Reversed full line, so that we can pop elements
     loop {
-        if num_lines.is_some_and(|n| wrapped_diff.len() > n as usize) {
+        if num_lines.is_some_and(|n| wrapped_diff.len() >= n as usize) {
             break;
         }
         let include_prefix = if next_line_stack.is_empty() {
@@ -713,13 +716,10 @@ fn split_first_chunk(s: &str) -> (&str, &str) {
 
 fn extract_first_n_width(chars: &str, max_width: usize) -> (&str, &str) {
     let mut cur_sum: usize = 0;
-    for (idx, width) in chars
-        .chars()
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
-        .enumerate()
-    {
+    for (byte_idx, c) in chars.char_indices() {
+        let width = UnicodeWidthChar::width(c).unwrap_or(0);
         if cur_sum + width > max_width {
-            return (&chars[..idx], &chars[idx..]);
+            return (&chars[..byte_idx], &chars[byte_idx..]);
         }
         cur_sum += width;
     }
