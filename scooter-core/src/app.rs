@@ -1155,10 +1155,6 @@ impl<'a> App {
                 }
                 Some(EventHandlingResult::Rerender)
             }
-            (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
-                self.wrap_preview_text = !self.wrap_preview_text;
-                Some(EventHandlingResult::Rerender)
-            }
             _ => None,
         }
     }
@@ -1201,6 +1197,14 @@ impl<'a> App {
 
         match &mut self.current_screen {
             Screen::SearchFields(search_fields_state) => {
+                #[allow(clippy::single_match)]
+                match (key_code, key_modifiers) {
+                    (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+                        self.wrap_preview_text = !self.wrap_preview_text;
+                        return EventHandlingResult::Rerender;
+                    }
+                    _ => {}
+                }
                 match search_fields_state.focussed_section {
                     FocussedSection::SearchFields => {
                         self.handle_key_searching(key_code, key_modifiers)
@@ -1397,28 +1401,27 @@ impl<'a> App {
 
         let current_screen_keys = match &self.current_screen {
             Screen::SearchFields(search_fields_state) => {
+                let mut keys = vec![];
                 match search_fields_state.focussed_section {
                     FocussedSection::SearchFields => {
-                        let mut keys = vec![
+                        keys.extend([
                             ("<enter>", "jump to results", Show::Both),
                             ("<tab>", "focus next", Show::Both),
                             ("<S-tab>", "focus previous", Show::FullOnly),
                             ("<space>", "toggle checkbox", Show::FullOnly),
-                        ];
+                        ]);
                         if self.disable_prepopulated_fields {
                             keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
                         }
-                        keys
                     }
                     FocussedSection::SearchResults => {
-                        let mut keys = vec![
+                        keys.extend([
                             ("<space>", "toggle", Show::Both),
                             ("a", "toggle all", Show::FullOnly),
                             ("v", "toggle multi-select mode", Show::FullOnly),
                             ("<A-;>", "flip multi-select direction", Show::FullOnly),
                             ("e", "open in editor", Show::FullOnly),
                             ("<C-o>", "back to search fields", Show::Both),
-                            ("<C-w>", "toggle text wrapping in preview", Show::FullOnly),
                             ("j", "up", Show::FullOnly),
                             ("k", "down", Show::FullOnly),
                             ("<C-u>", "up half a page", Show::FullOnly),
@@ -1427,13 +1430,14 @@ impl<'a> App {
                             ("<C-f>", "down a full page", Show::FullOnly),
                             ("g", "jump to top", Show::FullOnly),
                             ("G", "jump to bottom", Show::FullOnly),
-                        ];
+                        ]);
                         if self.search_has_completed() {
                             keys.push(("<enter>", "replace selected", Show::Both));
                         }
-                        keys
                     }
                 }
+                keys.push(("<C-l>", "toggle text wrapping in preview", Show::FullOnly));
+                keys
             }
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(ref replace_state) => {

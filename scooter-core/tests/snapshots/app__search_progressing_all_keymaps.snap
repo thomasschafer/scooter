@@ -1,5 +1,5 @@
 ---
-source: scooter/tests/app.rs
+source: scooter-core/tests/app.rs
 expression: app.keymaps_all()
 ---
 [
@@ -58,6 +58,10 @@ expression: app.keymaps_all()
     (
         "G",
         "jump to bottom",
+    ),
+    (
+        "<C-l>",
+        "toggle text wrapping in preview",
     ),
     (
         "<C-r>",
