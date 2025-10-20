@@ -695,14 +695,15 @@ fn wrap_lines(
 }
 
 fn split_first_chunk(s: &str) -> (&str, &str) {
-    let mut chars = s.chars();
-    let Some(c) = chars.next() else {
+    let mut char_indices = s.char_indices();
+    let Some((_, first_char)) = char_indices.next() else {
         return ("", "");
     };
-    let first_char_is_alpha = c.is_alphabetic();
-    if let Some(mut split_idx) = chars.position(|c| c.is_alphabetic() != first_char_is_alpha) {
-        split_idx += 1; // We've already grabbed out the first char
-        (&s[..split_idx], &s[split_idx..])
+    let first_char_is_alpha = first_char.is_alphabetic();
+    if let Some((byte_idx, _)) =
+        char_indices.find(|(_, c)| c.is_alphabetic() != first_char_is_alpha)
+    {
+        (&s[..byte_idx], &s[byte_idx..])
     } else {
         (s, "")
     }
@@ -1428,5 +1429,30 @@ mod tests {
     #[test]
     fn test_split_first_chunk_empty() {
         assert_eq!(split_first_chunk(""), ("", ""));
+    }
+
+    #[test]
+    fn test_split_first_chunk_with_emojis() {
+        // Emojis and spaces are both non-alphabetic, so they group together
+        assert_eq!(split_first_chunk("✅ PASSED"), ("✅ ", "PASSED"));
+        assert_eq!(split_first_chunk("PASSED ✅"), ("PASSED", " ✅"));
+        assert_eq!(split_first_chunk("✅✨🎉"), ("✅✨🎉", ""));
+        assert_eq!(split_first_chunk("✅ test"), ("✅ ", "test"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_with_unicode() {
+        assert_eq!(split_first_chunk("日本語 test"), ("日本語", " test"));
+        assert_eq!(split_first_chunk("test 日本語"), ("test", " 日本語"));
+        assert_eq!(split_first_chunk("café"), ("café", ""));
+        assert_eq!(split_first_chunk("🔥code"), ("🔥", "code"));
+    }
+
+    #[test]
+    fn test_split_first_chunk_mixed() {
+        // Non-alphabetic characters (including emojis and spaces) group together
+        assert_eq!(split_first_chunk("⚠️  warning"), ("⚠️  ", "warning"));
+        assert_eq!(split_first_chunk("❌ failed test"), ("❌ ", "failed test"));
+        assert_eq!(split_first_chunk("test ⚡️ fast"), ("test", " ⚡️ fast"));
     }
 }
