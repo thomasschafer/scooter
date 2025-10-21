@@ -954,7 +954,10 @@ fn file_path_line<'a>(
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);
     if path.len() > path_space {
-        let truncated = last_n_chars(&path, path_space - TRUNCATION_PREFIX.chars().count());
+        let truncated = last_n_chars(
+            &path,
+            path_space.saturating_sub(TRUNCATION_PREFIX.chars().count()),
+        );
         path = format!("{TRUNCATION_PREFIX}{truncated}").to_string();
     }
     let path_len = path.chars().count();
