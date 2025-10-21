@@ -626,14 +626,16 @@ fn wrap_lines(
     width: u16,
     num_lines: Option<u16>,
 ) -> Vec<StyledLine> {
-    if width == 0 || num_lines.is_some_and(|n| n == 0) {
+    let wrapped_line_prefix_len = UnicodeWidthStr::width(WRAPPED_LINE_PREFIX);
+    if width as usize <= wrapped_line_prefix_len || num_lines.is_some_and(|n| n == 0) {
         return vec![];
     }
     let mut diff = diff.into_iter();
 
     let mut wrapped_diff: Vec<StyledLine> = vec![];
-    let mut next_line_stack: StyledLine = vec![];
     // Reversed full line, so that we can pop elements
+    let mut next_line_stack: StyledLine = vec![];
+
     loop {
         if num_lines.is_some_and(|n| wrapped_diff.len() >= n as usize) {
             break;
@@ -664,7 +666,7 @@ fn wrap_lines(
                 break;
             };
             if next_seg_chars.is_empty() {
-                break;
+                continue;
             }
 
             // Grab chunk from next_seg, add rest back for processing later
@@ -679,7 +681,7 @@ fn wrap_lines(
                 // Fits on the current line
                 cur_line_wrapped_len += next_seg_len;
                 cur_line_wrapped.push((Cow::Owned(next_seg_chars.to_string()), next_seg_style));
-            } else if next_seg_len <= width as usize {
+            } else if next_seg_len + wrapped_line_prefix_len <= width as usize {
                 // Fits on next line
                 next_line_stack.push((Cow::Owned(next_seg_chars.to_string()), next_seg_style));
                 break;
@@ -689,8 +691,20 @@ fn wrap_lines(
                     next_seg_chars,
                     (width as usize).saturating_sub(cur_line_wrapped_len),
                 );
-                next_line_stack.push((Cow::Owned(rest.to_string()), next_seg_style));
-                next_line_stack.push((Cow::Owned(first_part.to_string()), next_seg_style));
+                // If we wouldn't make progress, grab out the first grapheme (even if it won't fit fully)
+                // to ensure we don't get stuck in a loop
+                let (first_part, rest) = if first_part.is_empty() {
+                    let mut graphemes = next_seg_chars.graphemes(true);
+                    let Some(first_part) = graphemes.next() else {
+                        continue;
+                    };
+                    (first_part.to_string(), graphemes.collect())
+                } else {
+                    (first_part.to_string(), rest.to_string())
+                };
+                for part in [rest, first_part] {
+                    next_line_stack.push((Cow::Owned(part), next_seg_style));
+                }
                 continue;
             }
         }
@@ -1678,5 +1692,263 @@ mod tests {
 
         // Tabs have varying width, but typically treated as 0 or 1 by unicode_width
         assert_eq!(extract_first_n_width("\ttest", 0), ("", "\ttest"));
+    }
+
+    mod wrap_lines_tests {
+        use super::*;
+
+        // Helper function to create a simple unstyled line
+        fn line(text: &str) -> StyledLine {
+            vec![(Cow::Owned(text.to_string()), None)]
+        }
+
+        // Helper function to create a styled line
+        fn styled_line(segments: Vec<(&str, Option<Style>)>) -> StyledLine {
+            segments
+                .into_iter()
+                .map(|(text, style)| (Cow::Owned(text.to_string()), style))
+                .collect()
+        }
+
+        // Helper to convert result to vec of strings (ignoring styles) for easier assertions
+        fn to_strings(lines: Vec<StyledLine>) -> Vec<String> {
+            lines
+                .into_iter()
+                .map(|line| {
+                    line.into_iter()
+                        .map(|(text, _)| text.to_string())
+                        .collect::<String>()
+                })
+                .collect()
+        }
+
+        #[test]
+        fn test_no_wrapping_needed() {
+            let input = vec![line("foo"), line("bar")];
+            let result = wrap_lines(input, 10, None);
+
+            assert_eq!(to_strings(result), vec!["foo", "bar"]);
+        }
+
+        #[test]
+        fn test_basic_wrapping() {
+            let input = vec![line("foo bar baz")];
+            let result = wrap_lines(input, 8, None);
+
+            assert_eq!(to_strings(result), vec!["foo bar ", "  ↪ baz"]);
+        }
+
+        #[test]
+        fn test_multiple_lines_wrapping() {
+            // Two input lines that both need wrapping
+            let input = vec![line("foo bar baz"), line("qux quux corge")];
+            let result = wrap_lines(input, 8, None);
+
+            assert_eq!(
+                to_strings(result),
+                vec!["foo bar ", "  ↪ baz", "qux quux", "  ↪  cor", "  ↪ ge"]
+            );
+        }
+
+        #[test]
+        fn test_wrap_lines_width_zero() {
+            let input = vec![line("foo")];
+            let result = wrap_lines(input, 0, None);
+
+            assert_eq!(result.len(), 0);
+        }
+
+        #[test]
+        fn test_wrap_lines_width_one() {
+            let input = vec![line("foo")];
+            let result = wrap_lines(input, 1, None);
+
+            // Should return empty since we can't fit meaningful content with continuation prefix
+            assert_eq!(result.len(), 0);
+        }
+
+        #[test]
+        fn test_wrap_lines_width_equals_prefix() {
+            // Width equal to WRAPPED_LINE_PREFIX length (4)
+            // Should return nothing as we can't fit continuation prefix
+            let input = vec![line("foo bar")];
+            let result = wrap_lines(input, 4, None);
+            assert_eq!(result.len(), 0);
+        }
+
+        #[test]
+        fn test_wrap_lines_width_one_more_than_prefix() {
+            // Width of 5 (one more than WRAPPED_LINE_PREFIX length)
+            // Should be able to wrap with 1 char per continuation line
+            let input = vec![line("hello world")];
+            let result = wrap_lines(input, 5, None);
+
+            assert_eq!(
+                to_strings(result),
+                vec!["hello", "  ↪  ", "  ↪ w", "  ↪ o", "  ↪ r", "  ↪ l", "  ↪ d"]
+            );
+        }
+
+        #[test]
+        fn test_wrap_lines_num_lines_limit() {
+            // Should stop after num_lines
+            let input = vec![line("foo bar baz qux")];
+            let result = wrap_lines(input, 8, Some(2));
+
+            assert_eq!(to_strings(result), vec!["foo bar ", "  ↪ baz "]);
+        }
+
+        #[test]
+        fn test_wrap_lines_num_lines_zero() {
+            // num_lines of 0 should return empty
+            let input = vec![line("foo")];
+            let result = wrap_lines(input, 10, Some(0));
+
+            assert_eq!(result.len(), 0);
+        }
+
+        #[test]
+        fn test_wrap_lines_empty_input() {
+            let input: Vec<StyledLine> = vec![];
+            let result = wrap_lines(input, 10, None);
+
+            assert_eq!(result.len(), 0);
+        }
+
+        #[test]
+        fn test_wrap_lines_single_space() {
+            let input = vec![line(" ")];
+            let result = wrap_lines(input, 10, None);
+
+            assert_eq!(result, vec![line(" ")]);
+        }
+
+        #[test]
+        fn test_very_long_word() {
+            // A single word longer than width should be broken up
+            let input = vec![line("verylongword")];
+            let result = wrap_lines(input, 8, None);
+
+            assert_eq!(to_strings(result), vec!["verylong", "  ↪ word"]);
+        }
+
+        #[test]
+        fn test_exact_width_fit() {
+            // Text that exactly fits the width
+            let input = vec![line("12345678")];
+            let result = wrap_lines(input, 8, None);
+
+            assert_eq!(to_strings(result), vec!["12345678"]);
+        }
+
+        #[test]
+        fn test_one_char_over_width() {
+            let input = vec![line("123456789")];
+            let result = wrap_lines(input, 8, None);
+
+            assert_eq!(to_strings(result), vec!["12345678", "  ↪ 9"]);
+        }
+
+        #[test]
+        fn test_styled_segments_preserved() {
+            // Styles should be preserved through wrapping
+            let bold_style = Some(Style::default().bold());
+            let input = vec![styled_line(vec![
+                ("foo ", None),
+                ("bar baz", bold_style),
+                (" qux", None),
+            ])];
+
+            let result = wrap_lines(input, 6, None);
+
+            let dim_style = Some(Style::default().dim());
+
+            assert_eq!(
+                result,
+                vec![
+                    styled_line(vec![("foo", None), (" ", None), ("ba", bold_style)]),
+                    styled_line(vec![
+                        ("  ↪ ", dim_style),
+                        ("r", bold_style),
+                        (" ", bold_style)
+                    ]),
+                    styled_line(vec![("  ↪ ", dim_style), ("ba", bold_style)]),
+                    styled_line(vec![("  ↪ ", dim_style), ("z", bold_style), (" ", None)]),
+                    styled_line(vec![("  ↪ ", dim_style), ("qu", None)]),
+                    styled_line(vec![("  ↪ ", dim_style), ("x", None)]),
+                ]
+            );
+        }
+
+        #[test]
+        fn test_unicode_emoji() {
+            // Emojis should not be split
+            // "Hello 👨‍👩‍👧‍👦 World" - family emoji is width 2
+            let input = vec![line("Hello 👨‍👩‍👧‍👦 World")];
+            let result = wrap_lines(input, 12, None);
+
+            // "Hello 👨‍👩‍👧‍👦 " = 5 + 1 + 2 + 1 = 9 cols, "World" = 5 cols
+            // Should wrap: "Hello 👨‍👩‍👧‍👦 " + "  ↪ World"
+            let strings = to_strings(result);
+            assert_eq!(strings, vec!["Hello 👨‍👩‍👧‍👦 ", "  ↪ World"]);
+        }
+
+        #[test]
+        fn test_wide_characters_wrapping() {
+            // CJK characters that need wrapping
+            // "你好世界朋友" = 6 chars = 12 columns, width = 10
+            let input = vec![line("你好世界朋友")];
+            let result = wrap_lines(input, 10, None);
+
+            assert_eq!(to_strings(result), vec!["你好世界朋", "  ↪ 友"]);
+        }
+
+        #[test]
+        fn test_mixed_narrow_wide_characters() {
+            // "Hello 世界" = 5 ASCII + 1 space + 2 CJK (4 cols) = 10 cols
+            let input = vec![line("Hello 世界")];
+            let result = wrap_lines(input, 10, None);
+
+            // Should fit exactly
+            assert_eq!(to_strings(result), vec!["Hello 世界"]);
+        }
+
+        #[test]
+        fn test_wrap_lines_multiple_input_lines_with_limit() {
+            // Multiple input lines with num_lines limit
+            let input = vec![line("foo bar"), line("baz qux")];
+            let result = wrap_lines(input, 6, Some(3));
+
+            assert_eq!(to_strings(result), vec!["foo ba", "  ↪ r", "baz qu"]);
+        }
+
+        #[test]
+        fn test_wrap_lines_multiple_spaces() {
+            let input = vec![line("     ")];
+            let result = wrap_lines(input, 10, None);
+
+            assert_eq!(to_strings(result), vec!["     "]);
+        }
+
+        #[test]
+        fn test_wrap_lines_multiple_wraps_same_line() {
+            // A line that needs to wrap multiple times
+            let input = vec![line("one two three four five six")];
+            let result = wrap_lines(input, 8, None);
+
+            // Due to chunking, wrapping happens differently than word boundaries
+            assert_eq!(
+                to_strings(result),
+                vec![
+                    "one two ",
+                    "  ↪ thre",
+                    "  ↪ e ",
+                    "  ↪ four",
+                    "  ↪  ",
+                    "  ↪ five",
+                    "  ↪  six"
+                ]
+            );
+        }
     }
 }
