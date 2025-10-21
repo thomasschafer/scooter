@@ -2976,7 +2976,6 @@ test_with_both_regex_modes!(
         let config = AppConfig {
             directory: temp_dir.path().to_path_buf(),
             app_run_config: AppRunConfig {
-                include_hidden: true,
                 advanced_regex,
                 ..AppRunConfig::default()
             },

@@ -188,15 +188,15 @@ fn diff_col_to_ratatui(colour: &DiffColour) -> Color {
     }
 }
 
-fn diff_to_line(diff: Vec<&Diff>) -> StyledLine {
-    let diff_iter = diff.into_iter().map(|d| {
+fn diff_to_line<'a>(diff: impl Iterator<Item = &'a Diff>) -> StyledLine {
+    diff.map(|d| {
         let mut style = Style::new().fg(diff_col_to_ratatui(&d.fg_colour));
         if let Some(bg) = &d.bg_colour {
             style = style.bg(diff_col_to_ratatui(bg));
         }
         (Cow::Owned(strip_control_chars(&d.text)), Some(style))
-    });
-    diff_iter.collect()
+    })
+    .collect()
 }
 
 fn display_duration(duration: Duration) -> String {
@@ -608,7 +608,7 @@ fn build_preview_from_str<'a>(
 }
 
 fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
-    let spans: Vec<Span<'static>> = line
+    let spans: Vec<Span<'_>> = line
         .into_iter()
         .map(|(text, style)| {
             let span = Span::raw(text);
@@ -622,7 +622,7 @@ fn styled_line_to_ratatui_line(line: StyledLine) -> ListItem<'static> {
 }
 
 fn wrap_lines(
-    diff: impl IntoIterator<Item = StyledLine>,
+    line: impl IntoIterator<Item = StyledLine>,
     width: u16,
     num_lines: Option<u16>,
 ) -> Vec<StyledLine> {
@@ -630,18 +630,18 @@ fn wrap_lines(
     if width as usize <= wrapped_line_prefix_len || num_lines.is_some_and(|n| n == 0) {
         return vec![];
     }
-    let mut diff = diff.into_iter();
+    let mut line = line.into_iter();
 
-    let mut wrapped_diff: Vec<StyledLine> = vec![];
+    let mut wrapped_line: Vec<StyledLine> = vec![];
     // Reversed full line, so that we can pop elements
     let mut next_line_stack: StyledLine = vec![];
 
     loop {
-        if num_lines.is_some_and(|n| wrapped_diff.len() >= n as usize) {
+        if num_lines.is_some_and(|n| wrapped_line.len() >= n as usize) {
             break;
         }
         let include_prefix = if next_line_stack.is_empty() {
-            match diff.next() {
+            match line.next() {
                 Some(mut n) => {
                     n.reverse();
                     next_line_stack = n;
@@ -709,13 +709,13 @@ fn wrap_lines(
             }
         }
 
-        wrapped_diff.push(cur_line_wrapped);
+        wrapped_line.push(cur_line_wrapped);
     }
-    wrapped_diff
+    wrapped_line
 }
 
 /// Split a string at the boundary between alphabetic and non-alphabetic grapheme clusters.
-/// This respects grapheme cluster boundaries to avoid splitting emojis with modifiers.
+/// This respects grapheme cluster boundaries to avoid splitting e.g. emojis with modifiers.
 fn split_first_chunk(s: &str) -> (&str, &str) {
     let mut graphemes = s.graphemes(true);
     let Some(first_grapheme) = graphemes.next() else {
@@ -742,8 +742,8 @@ fn split_first_chunk(s: &str) -> (&str, &str) {
     (s, "")
 }
 
-/// Extract the first N display-width worth of grapheme clusters from a string.
-/// This won't break up emojis with skin tones, family emojis, or other multi-codepoint graphemes.
+/// Extract the first `max_width` display-width worth of grapheme clusters from a string.
+/// This won't break up multi-codepoint graphemes e.g. emojis with skin tones.
 ///
 /// Returns a tuple of (`first_part`, `remainder`).
 fn extract_first_n_width(text: &str, max_width: usize) -> (&str, &str) {
@@ -899,14 +899,8 @@ fn search_result<'a>(
     area_is_focussed: bool,
 ) -> SearchResultLines<'a> {
     let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
-    let old_line = old_line
-        .iter()
-        .take(list_area_width as usize)
-        .collect::<Vec<_>>();
-    let new_line = new_line
-        .iter()
-        .take(list_area_width as usize)
-        .collect::<Vec<_>>();
+    let old_line = old_line.iter().take(list_area_width as usize);
+    let new_line = new_line.iter().take(list_area_width as usize);
 
     SearchResultLines {
         file_path: file_path_line(
@@ -967,14 +961,14 @@ fn file_path_line<'a>(
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);
-    if path.len() > path_space {
+    if UnicodeWidthStr::width(path.as_str()) > path_space {
         let truncated = last_n_chars(
             &path,
             path_space.saturating_sub(TRUNCATION_PREFIX.chars().count()),
         );
         path = format!("{TRUNCATION_PREFIX}{truncated}").to_string();
     }
-    let path_len = path.chars().count();
+    let path_len = UnicodeWidthStr::width(path.as_str());
     let spacers = " ".repeat(
         (list_area_width as usize)
             .saturating_sub(left_content_len + path_len + line_num_len + right_content_len),
