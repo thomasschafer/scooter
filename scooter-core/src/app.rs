@@ -165,55 +165,6 @@ impl SearchState {
         }
     }
 
-    pub fn handle_key(
-        &mut self,
-        key_code: KeyCode,
-        key_modifiers: KeyModifiers,
-    ) -> EventHandlingResult {
-        match (key_code, key_modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-                self.move_selected_down();
-            }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                self.move_selected_up();
-            }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                self.move_selected_down_half_page();
-            }
-            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                self.move_selected_down_full_page();
-            }
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
-                self.move_selected_up_half_page();
-            }
-            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                self.move_selected_up_full_page();
-            }
-            (KeyCode::Char('g'), _) => {
-                self.move_selected_top();
-            }
-            (KeyCode::Char('G'), _) => {
-                self.move_selected_bottom();
-            }
-            (KeyCode::Char(' '), _) => {
-                self.toggle_selected_inclusion();
-            }
-            (KeyCode::Char('a'), _) => {
-                self.toggle_all_selected();
-            }
-            (KeyCode::Char('v'), _) => {
-                self.toggle_multiselect_mode();
-            }
-            (KeyCode::Char(';'), KeyModifiers::ALT) => {
-                self.flip_multiselect_direction();
-            }
-            _ => return EventHandlingResult::None,
-        }
-
-        EventHandlingResult::Rerender
-    }
-
     fn move_selected_up_by(&mut self, n: usize) {
         let primary_selected_pos = self.primary_selected_pos();
         if primary_selected_pos == 0 {
@@ -529,6 +480,75 @@ enum SearchStrategy {
         haystack: Arc<String>,
         config: ParsedSearchConfig,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEvent {
+    General(KeyEventGeneral),
+    SearchFields(KeyEventSearchFields),
+    PerformingReplacement(KeyEventPerformingReplacement),
+    Results(KeyEventResults),
+}
+
+// Events applicable to all screens
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEventGeneral {
+    Quit,         // (KeyCode::Char('c'), KeyModifiers::CONTROL)
+    Reset,        // (KeyCode::Char('r'), KeyModifiers::CONTROL)
+    ShowHelpMenu, // (KeyCode::Char('h'), KeyModifiers::CONTROL)
+}
+
+// Events applicable only to `SearchFields` screen
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEventSearchFields {
+    TogglePreviewWrapping, // (KeyCode::Char('l'), KeyModifiers::CONTROL)
+    SearchFocusFields(KeyEventSearchFocusFields),
+    SearchFocusResults(KeyEventSearchFocusResults),
+}
+
+// Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEventSearchFocusFields {
+    UnlockPrepopulatedFields, // (KeyCode::Char('u'), KeyModifiers::ALT)
+    TriggerSearch,            // (KeyCode::Enter, _)
+    FocusNextField,           // (KeyCode::Tab, _)
+    FocusPreviousField,       // (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT)
+    EnterChars(KeyCode, KeyModifiers),
+}
+
+// Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEventSearchFocusResults {
+    TriggerReplacement, // (KeyCode::Enter, _)
+    BackToFields,       // (KeyCode::Char('o'), KeyModifiers::CONTROL)
+    OpenInEditor,       // (KeyCode::Char('e'), KeyModifiers::NONE)
+
+    MoveSelectedDown, // (KeyCode::Char('j') | KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL)
+    MoveSelectedUp, // (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
+    MoveSelectedDownHalfPage, // (KeyCode::Char('d'), KeyModifiers::CONTROL)
+    MoveSelectedDownFullPage, // (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL)
+    MoveSelectedUpHalfPage,   // (KeyCode::Char('u'), KeyModifiers::CONTROL)
+    MoveSelectedUpFullPage,   // (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL)
+    MoveSelectedTop,          // (KeyCode::Char('g'), _)
+    MoveSelectedBottom,       // (KeyCode::Char('G'), _)
+
+    ToggleSelectedInclusion, // (KeyCode::Char(' '), _)
+    ToggleAllSelected,       // (KeyCode::Char('a'), _)
+    ToggleMultiselectMode,   // (KeyCode::Char('v'), _)
+
+    FlipMultiselectDirection, // (KeyCode::Char(';'), KeyModifiers::ALT)
+}
+
+// Events applicable only to `PerformingReplacement` screen
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KeyEventPerformingReplacement {}
+
+// Events applicable only to `Results` screen
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum KeyEventResults {
+    ScrollErrorsDown, // (KeyCode::Char('j') | KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL)
+    ScrollErrorsUp, // (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
+    Quit,           // (KeyCode::Enter | KeyCode::Char('q'), _)
 }
 
 impl<'a> App {
@@ -975,17 +995,17 @@ impl<'a> App {
     }
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
-    #[allow(clippy::too_many_lines)]
-    fn handle_key_searching(
+    #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+    fn handle_key_search_fields(
         &mut self,
-        key_code: KeyCode,
-        key_modifiers: KeyModifiers,
+        event: KeyEventSearchFocusFields,
     ) -> EventHandlingResult {
-        match (key_code, key_modifiers) {
-            (KeyCode::Char('u'), KeyModifiers::ALT) => {
+        match event {
+            KeyEventSearchFocusFields::UnlockPrepopulatedFields => {
                 self.unlock_prepopulated_fields();
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Enter, _) => {
+            KeyEventSearchFocusFields::TriggerSearch => {
                 if !self.errors().is_empty() {
                     self.set_popup(Popup::Error);
                 } else if self.search_fields.search().text().is_empty() {
@@ -1014,22 +1034,22 @@ impl<'a> App {
                         self.perform_search_if_valid();
                     }
                 }
+                EventHandlingResult::Rerender
             }
-            (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
+            KeyEventSearchFocusFields::FocusPreviousField => {
                 self.search_fields
                     .focus_prev(self.config.search.disable_prepopulated_fields);
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Tab, _) => {
+            KeyEventSearchFocusFields::FocusNextField => {
                 self.search_fields
                     .focus_next(self.config.search.disable_prepopulated_fields);
+                EventHandlingResult::Rerender
             }
-            (code, modifiers) => {
-                if let Some(value) = self.enter_chars_into_field(code, modifiers) {
-                    return value;
-                }
-            }
+            KeyEventSearchFocusFields::EnterChars(key_code, key_modifiers) => self
+                .enter_chars_into_field(key_code, key_modifiers)
+                .unwrap_or(EventHandlingResult::None),
         }
-        EventHandlingResult::Rerender
     }
 
     fn enter_chars_into_field(
@@ -1106,40 +1126,41 @@ impl<'a> App {
         None
     }
 
+    fn get_search_state_unwrap(&mut self) -> &mut SearchState {
+        self.current_screen
+            .unwrap_search_fields_state_mut()
+            .search_state
+            .as_mut()
+            .expect("Focussed on search results but search_state is None")
+    }
+
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
+    #[allow(clippy::needless_pass_by_value)]
     fn try_handle_key_search_results(
         &mut self,
-        key_code: KeyCode,
-        key_modifiers: KeyModifiers,
-    ) -> Option<EventHandlingResult> {
+        event: KeyEventSearchFocusResults,
+    ) -> EventHandlingResult {
         assert!(
             matches!(self.current_screen, Screen::SearchFields(_)),
             "Expected current_screen to be SearchFields, found {}",
             self.current_screen.name()
         );
 
-        match (key_code, key_modifiers) {
-            (KeyCode::Enter, _) => {
+        match event {
+            KeyEventSearchFocusResults::TriggerReplacement => {
                 self.trigger_replacement();
-                Some(EventHandlingResult::Rerender)
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
+            KeyEventSearchFocusResults::BackToFields => {
                 self.cancel_search();
                 let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
                 search_fields_state.focussed_section = FocussedSection::SearchFields;
                 self.event_sender
                     .send(Event::App(AppEvent::Rerender))
                     .unwrap();
-                Some(EventHandlingResult::Rerender)
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Char('o'), KeyModifiers::NONE) => {
-                self.set_popup(Popup::Text{
-                    title: "Command deprecated".to_string(),
-                    body: "Pressing `o` to open the selected file in your editor is deprecated.\n\nPlease use `e` instead.".to_string(),
-                });
-                Some(EventHandlingResult::Rerender)
-            }
-            (KeyCode::Char('e'), KeyModifiers::NONE) => {
+            KeyEventSearchFocusResults::OpenInEditor => {
                 let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
                 if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
                     let selected = search_in_progress_state
@@ -1154,85 +1175,147 @@ impl<'a> App {
                             .expect("Failed to send event");
                     }
                 }
-                Some(EventHandlingResult::Rerender)
+                EventHandlingResult::Rerender
             }
-            _ => None,
+            KeyEventSearchFocusResults::MoveSelectedDown => {
+                self.get_search_state_unwrap().move_selected_down();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedUp => {
+                self.get_search_state_unwrap().move_selected_up();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedDownHalfPage => {
+                self.get_search_state_unwrap()
+                    .move_selected_down_half_page();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedDownFullPage => {
+                self.get_search_state_unwrap()
+                    .move_selected_down_full_page();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedUpHalfPage => {
+                self.get_search_state_unwrap().move_selected_up_half_page();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedUpFullPage => {
+                self.get_search_state_unwrap().move_selected_up_full_page();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedTop => {
+                self.get_search_state_unwrap().move_selected_top();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::MoveSelectedBottom => {
+                self.get_search_state_unwrap().move_selected_bottom();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::ToggleSelectedInclusion => {
+                self.get_search_state_unwrap().toggle_selected_inclusion();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::ToggleAllSelected => {
+                self.get_search_state_unwrap().toggle_all_selected();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::ToggleMultiselectMode => {
+                self.get_search_state_unwrap().toggle_multiselect_mode();
+                EventHandlingResult::Rerender
+            }
+            KeyEventSearchFocusResults::FlipMultiselectDirection => {
+                self.get_search_state_unwrap().flip_multiselect_direction();
+                EventHandlingResult::Rerender
+            }
         }
     }
 
     pub fn handle_key_event(
         &mut self,
-        key_code: KeyCode,
-        key_modifiers: KeyModifiers,
+        code: KeyCode,
+        modifiers: KeyModifiers,
     ) -> EventHandlingResult {
-        if (key_code, key_modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
-            self.reset();
-            return EventHandlingResult::Exit(None);
-        }
-
-        if self.popup.is_some() {
-            self.clear_popup();
-            return EventHandlingResult::Rerender;
-        }
-
-        match (key_code, key_modifiers) {
-            (KeyCode::Esc, _) => {
+        let Some(event) = to_key_event(&self.current_screen, code, modifiers) else {
+            // TODO(key-remap): test this
+            if self.popup.is_some() {
+                self.clear_popup();
+                return EventHandlingResult::Rerender;
+            }
+            // TODO(key-remap): test this
+            if code == KeyCode::Esc {
                 if self.multiselect_enabled() {
                     self.toggle_multiselect_mode();
                     return EventHandlingResult::Rerender;
-                } else {
+                }
+                // TODO(key-remap): add help popup showing that ctrl+c is now the default, but can be remapped
+                // TODO(key-remap): test this
+            }
+            return EventHandlingResult::None;
+        };
+
+        if let KeyEvent::General(event) = event {
+            match event {
+                KeyEventGeneral::Quit => {
                     self.reset();
                     return EventHandlingResult::Exit(None);
                 }
+                KeyEventGeneral::Reset => {
+                    self.reset();
+                    return EventHandlingResult::Rerender;
+                }
+                KeyEventGeneral::ShowHelpMenu => {
+                    self.set_popup(Popup::Help);
+                    return EventHandlingResult::Rerender;
+                }
             }
-            (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
-                self.reset();
-                return EventHandlingResult::Rerender;
-            }
-            (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
-                self.set_popup(Popup::Help);
-                return EventHandlingResult::Rerender;
-            }
-            (_, _) => {}
         }
 
-        match &mut self.current_screen {
+        match &mut (self.current_screen) {
             Screen::SearchFields(search_fields_state) => {
                 #[allow(clippy::single_match)]
-                match (key_code, key_modifiers) {
-                    (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+                let KeyEvent::SearchFields(event) = event
+                else {
+                    panic!("Expected SearchFields event, found {event:?}");
+                };
+
+                match event {
+                    KeyEventSearchFields::TogglePreviewWrapping => {
                         self.config.preview.wrap_text = !self.config.preview.wrap_text;
-                        return EventHandlingResult::Rerender;
+                        EventHandlingResult::Rerender
                     }
-                    _ => {}
-                }
-                match search_fields_state.focussed_section {
-                    FocussedSection::SearchFields => {
-                        self.handle_key_searching(key_code, key_modifiers)
-                    }
-                    FocussedSection::SearchResults => {
-                        if let Some(res) =
-                            self.try_handle_key_search_results(key_code, key_modifiers)
-                        {
-                            res
-                        } else {
-                            match self
-                                .current_screen
-                                .unwrap_search_fields_state_mut()
-                                .search_state
-                            {
-                                Some(ref mut state) => state.handle_key(key_code, key_modifiers),
-                                None => {
-                                    panic!("Focussed on search results but search_state is None")
-                                }
-                            }
+                    KeyEventSearchFields::SearchFocusFields(event) => {
+                        if !matches!(
+                            search_fields_state.focussed_section,
+                            FocussedSection::SearchFields
+                        ) {
+                            panic!(
+                                "Expected FocussedSection::SearchFields, found {:?}",
+                                search_fields_state.focussed_section
+                            );
                         }
+                        self.handle_key_search_fields(event)
+                    }
+                    KeyEventSearchFields::SearchFocusResults(event) => {
+                        if !matches!(
+                            search_fields_state.focussed_section,
+                            FocussedSection::SearchResults
+                        ) {
+                            panic!(
+                                "Expected FocussedSection::SearchResults, found {:?}",
+                                search_fields_state.focussed_section
+                            );
+                        }
+                        // TODO(key-remap): currently this always returns Some
+                        self.try_handle_key_search_results(event)
                     }
                 }
             }
-            Screen::PerformingReplacement(_) => EventHandlingResult::Rerender,
+            Screen::PerformingReplacement(_) => EventHandlingResult::None,
             Screen::Results(replace_state) => {
-                replace_state.handle_key_results(key_code, key_modifiers)
+                let KeyEvent::Results(event) = event else {
+                    panic!("Expected SearchFields event, found {event:?}");
+                };
+                replace_state.handle_key_results(event)
             }
         }
     }
@@ -1572,6 +1655,16 @@ impl<'a> App {
             false
         }
     }
+}
+
+fn to_key_event(
+    current_screen: &Screen,
+    key_code: KeyCode,
+    key_modifiers: KeyModifiers,
+) -> Option<KeyEvent> {
+    // TODO(key-remap): look up config, map to `KeyEvent`
+    // TODO(key-remap): should only give events relevant to applicable screen, or general. If screen, should check `search_fields_state.focussed_section`
+    todo!()
 }
 
 fn read_line(
