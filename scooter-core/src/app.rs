@@ -1247,8 +1247,12 @@ impl<'a> App {
                     self.toggle_multiselect_mode();
                     return EventHandlingResult::Rerender;
                 }
-                // TODO(key-remap): add help popup showing that ctrl+c is now the default, but can be remapped
-                // TODO(key-remap): test this
+                // TODO(key-remap): test this, both with and without override
+                self.set_popup(Popup::Text{
+                    title: "Key mapping deprecated".to_string(),
+                    body: "Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead.\n\nYou can remap this in your scooter config.".to_string(),
+                });
+                return EventHandlingResult::Rerender;
             }
             return EventHandlingResult::None;
         };
