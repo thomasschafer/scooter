@@ -62,7 +62,7 @@ pub struct Config {
 impl Config {
     /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
     /// is the user's selected theme or otherwise the default
-    pub(crate) fn get_theme(&self) -> Option<&Theme> {
+    pub fn get_theme(&self) -> Option<&Theme> {
         if self.preview.syntax_highlighting {
             Some(&self.preview.syntax_highlighting_theme)
         } else {

@@ -39,10 +39,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::Config;
-
 use frep_core::search::SearchResultWithReplacement;
-use scooter_core::utils::read_lines_range;
+use scooter_core::{config::Config, utils::read_lines_range};
 
 use super::colour::to_ratatui_colour;
 
@@ -1133,7 +1131,7 @@ fn error_result(result: &SearchResultWithReplacement) -> [ratatui::widgets::List
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))
 }
 
-pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
+pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1173,7 +1171,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
             render_search_fields(
                 frame,
                 &app.search_fields,
-                config,
+                &app.config,
                 show_popup,
                 num_search_fields_to_render,
                 search_fields_state.focussed_section == FocussedSection::SearchFields,
@@ -1194,12 +1192,12 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
                     state,
                     elapsed,
                     results,
-                    config.get_theme(),
-                    config.style.true_color,
+                    app.config.get_theme(),
+                    app.config.style.true_color,
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,
-                    app.wrap_preview_text,
+                    app.config.preview.wrap_text,
                 );
             }
         }
