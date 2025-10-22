@@ -1,8 +1,7 @@
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
-use log::{LevelFilter, info};
+use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
+use log::{info, LevelFilter};
+use scooter_core::config::APP_NAME;
 use std::path::{Path, PathBuf};
-
-use crate::config::APP_NAME;
 
 pub const DEFAULT_LOG_LEVEL: &str = "error";
 

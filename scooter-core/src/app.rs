@@ -28,6 +28,7 @@ use tokio::{
 };
 
 use crate::{
+    config::Config,
     errors::AppError,
     fields::{FieldName, KeyCode, KeyModifiers, SearchFieldValues, SearchFields},
     replace::{self, PerformingReplacementState, ReplaceState},
@@ -506,11 +507,11 @@ impl Default for AppRunConfig {
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct App {
+    pub config: Config,
     pub current_screen: Screen,
     pub search_fields: SearchFields,
     pub searcher: Option<Searcher>,
     pub input_source: InputSource,
-    disable_prepopulated_fields: bool,
     pub event_sender: UnboundedSender<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
@@ -519,7 +520,6 @@ pub struct App {
     pub print_on_exit: bool,
     popup: Option<Popup>,
     advanced_regex: bool,
-    pub wrap_preview_text: bool,
 }
 
 #[derive(Debug)]
@@ -537,11 +537,12 @@ impl<'a> App {
         search_field_values: &SearchFieldValues<'a>,
         event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
-        disable_prepopulated_fields: bool,
-        wrap_preview_text: bool,
+        config: Config,
     ) -> Self {
-        let search_fields =
-            SearchFields::with_values(search_field_values, disable_prepopulated_fields);
+        let search_fields = SearchFields::with_values(
+            search_field_values,
+            config.search.disable_prepopulated_fields,
+        );
 
         let mut search_fields_state = SearchFieldsState::default();
         if app_run_config.immediate_search {
@@ -549,12 +550,12 @@ impl<'a> App {
         }
 
         let mut app = Self {
+            config,
             current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
             searcher: None,
             input_source,
             include_hidden: app_run_config.include_hidden,
-            disable_prepopulated_fields,
             errors: vec![],
             popup: None,
             event_sender,
@@ -562,7 +563,6 @@ impl<'a> App {
             print_results: app_run_config.print_results,
             print_on_exit: app_run_config.print_on_exit,
             advanced_regex: app_run_config.advanced_regex,
-            wrap_preview_text,
         };
 
         if app_run_config.immediate_search || !search_field_values.search.value.is_empty() {
@@ -576,9 +576,7 @@ impl<'a> App {
         input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
         app_run_config: &AppRunConfig,
-        // TODO: don't pass two bools like this
-        disable_prepopulated_fields: bool,
-        wrap_preview_text: bool,
+        config: Config,
     ) -> (Self, UnboundedReceiver<Event>) {
         let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
         let app = Self::new(
@@ -586,8 +584,7 @@ impl<'a> App {
             search_field_values,
             event_sender,
             app_run_config,
-            disable_prepopulated_fields,
-            wrap_preview_text,
+            config,
         );
         (app, app_event_receiver)
     }
@@ -618,9 +615,9 @@ impl<'a> App {
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
         *self = Self::new(
-            self.input_source.clone(),
+            self.input_source.clone(), // TODO: avoid cloning
             &SearchFieldValues::default(),
-            self.event_sender.clone(),
+            self.event_sender.clone(), // TODO: avoid cloning
             &AppRunConfig {
                 include_hidden: self.include_hidden,
                 advanced_regex: self.advanced_regex,
@@ -629,8 +626,7 @@ impl<'a> App {
                 print_results: self.print_results,
                 print_on_exit: self.print_on_exit,
             },
-            self.disable_prepopulated_fields,
-            self.wrap_preview_text,
+            std::mem::take(&mut self.config),
         );
     }
 
@@ -1021,11 +1017,11 @@ impl<'a> App {
             }
             (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT) => {
                 self.search_fields
-                    .focus_prev(self.disable_prepopulated_fields);
+                    .focus_prev(self.config.search.disable_prepopulated_fields);
             }
             (KeyCode::Tab, _) => {
                 self.search_fields
-                    .focus_next(self.disable_prepopulated_fields);
+                    .focus_next(self.config.search.disable_prepopulated_fields);
             }
             (code, modifiers) => {
                 if let Some(value) = self.enter_chars_into_field(code, modifiers) {
@@ -1054,7 +1050,7 @@ impl<'a> App {
         self.search_fields.highlighted_field_mut().handle_keys(
             key_code,
             key_modifiers,
-            self.disable_prepopulated_fields,
+            self.config.search.disable_prepopulated_fields,
         );
         if let Some(search_config) = self.validate_fields().unwrap() {
             self.searcher = Some(search_config);
@@ -1205,7 +1201,7 @@ impl<'a> App {
                 #[allow(clippy::single_match)]
                 match (key_code, key_modifiers) {
                     (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                        self.wrap_preview_text = !self.wrap_preview_text;
+                        self.config.preview.wrap_text = !self.config.preview.wrap_text;
                         return EventHandlingResult::Rerender;
                     }
                     _ => {}
@@ -1415,7 +1411,7 @@ impl<'a> App {
                             ("<S-tab>", "focus previous", Show::FullOnly),
                             ("<space>", "toggle checkbox", Show::FullOnly),
                         ]);
-                        if self.disable_prepopulated_fields {
+                        if self.config.search.disable_prepopulated_fields {
                             keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
                         }
                     }

@@ -15,6 +15,7 @@ use scooter_core::{
     app::{
         App, AppRunConfig, Event, EventHandlingResult, ExitAndReplaceState, ExitState, InputSource,
     },
+    config::{self, Config},
     errors::AppError,
     fields::SearchFieldValues,
     replace::ReplaceState,
@@ -69,7 +70,6 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
-    config: Config,
     event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
@@ -126,7 +126,7 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
-        let user_config = load_config().context("Failed to read config file")?;
+        let user_config = config::load_config().context("Failed to read config file")?;
         Self::new(
             app_config,
             user_config,
@@ -177,8 +177,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
             input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
-            config.search.disable_prepopulated_fields,
-            config.preview.wrap_text,
+            config,
         );
 
         let terminal = Terminal::new(backend)?;
@@ -186,7 +185,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
         Ok(Self {
             app,
-            config,
             event_receiver,
             tui,
             event_stream,
@@ -202,7 +200,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     pub fn draw(&mut self) -> anyhow::Result<()> {
-        self.tui.draw(&mut self.app, &self.config)?;
+        self.tui.draw(&mut self.app)?;
         self.snapshot_provider.send_snapshot(&self.tui);
         Ok(())
     }
@@ -230,7 +228,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.tui.show_cursor()?;
                             match self.open_editor(file_path, line) {
                                 Ok(()) => {
-                                    if self.config.editor_open.exit {
+                                    if self.app.config.editor_open.exit {
                                         res = EventHandlingResult::Exit(None);
                                     }
                                 }
@@ -281,7 +279,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
     }
 
     fn open_editor(&self, file_path: PathBuf, line: usize) -> anyhow::Result<()> {
-        match &self.config.editor_open.command {
+        match &self.app.config.editor_open.command {
             Some(command) => {
                 Self::open_editor_from_command(command, &file_path, line)?;
             }
