@@ -57,6 +57,8 @@ pub struct Config {
     pub style: StyleConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub keys: KeysConfig,
 }
 
 impl Config {
@@ -244,6 +246,51 @@ impl Default for SearchConfig {
 
 fn default_disable_prepopulated_fields() -> bool {
     true
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+pub struct KeysConfig {
+    #[serde(default)]
+    pub general: KeysGeneral,
+    pub search_fields: KeysSearchFields,
+    pub performing_replacement: KeysPerformingReplacement,
+    pub results: KeysResults,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct KeysGeneral {}
+
+impl Default for KeysGeneral {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct KeysSearchFields {}
+
+impl Default for KeysSearchFields {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct KeysPerformingReplacement {}
+
+impl Default for KeysPerformingReplacement {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct KeysResults {}
+
+impl Default for KeysResults {
+    fn default() -> Self {
+        Self {}
+    }
 }
 
 #[cfg(test)]
