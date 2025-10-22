@@ -22,7 +22,7 @@ expression: snapshot
     │*, {   │ error parsing glob '{': unclosed alternate group; missing '}' (maybe es │      │     
     └───────│                                                                         │──────┘     
     ┌Files t│ Files to exclude                                                        │──────┐     
-    │{{     │ error parsing glob '!{{': nested alternate groups are not allowed       │      │     
+    │{{     │ error parsing glob '!{{': unclosed alternate group; missing '}' (maybe  │      │     
     └───────└─────────────────────────────────────────────────────────────────────────┘──────┘     
                                                                                                    
                                                                                                    
