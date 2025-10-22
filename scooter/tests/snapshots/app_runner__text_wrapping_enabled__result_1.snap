@@ -1,0 +1,28 @@
+---
+source: scooter/tests/app_runner.rs
+expression: snapshot.as_ref()
+---
+                                     scooter                                    
+   ┌Search text───────────────────────────────────────────────────────────┐    
+   │users                                                                 │    
+   └──────────────────────────────────────────────────────────────────────┘    
+   ┌Replace text──────────────────────────────────────────────────────────┐    
+   │REPLACED                                                              │    
+   └──────────────────────────────────────────────────────────────────────┘    
+                                                                               
+   Results: 2 [Search complete]                       [Time taken: TIME]     
+                                                                               
+   [x] file1.txt:2                                                      (1)    
+   [x] file1.txt:17                                                     (2)    
+                                                                               
+                                                                               
+                                                                               
+                                                                               
+   - some very long lines of text. Lots of text which won't fit on one line    
+     ↪  so it will initially be truncated, but users can toggle text           
+     ↪ wrapping so that it all shows up on the screen.                         
+   + some very long lines of text. Lots of text which won't fit on one line    
+     ↪  so it will initially be truncated, but REPLACED can toggle text        
+     ↪ wrapping so that it all shows up on the screen.                         
+                                                                               
+space> toggle / <C-o> back to search fields / <enter> replace selected / <C-h>
