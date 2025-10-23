@@ -211,11 +211,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                 Some(Ok(event)) = self.event_stream.next() => {
                     match event {
                         CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                            if let Some((code, modifiers)) = conversions::convert_key_event(&key) {
-                                self.app.handle_key_event(code, modifiers)
-                            } else {
-                                EventHandlingResult::None
-                            }
+                            self.app.handle_key_event(key.code.into(), key.modifiers.into())
                         },
                         CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
                         _ => EventHandlingResult::None,

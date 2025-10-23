@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use scooter_core::{
     app::{App, AppRunConfig, FocussedSection, Popup, Screen, SearchFieldsState, SearchState},
     config::Config,
-    fields::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
+    keyboard::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
 };
 
 #[tokio::test]

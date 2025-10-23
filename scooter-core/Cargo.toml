@@ -20,10 +20,12 @@ workspace = true
 [features]
 default = []
 steel = ["dep:steel-core", "dep:steel-derive"]
+term = ["crossterm"]
 
 [dependencies]
 anyhow = "1.0.100"
 bitflags = "2.10.0"
+crossterm = { version = "0.28.1", optional = true }
 etcetera = "0.10.0"
 frep-core = "0.1.7"
 log = "0.4.28"

@@ -19,7 +19,6 @@ use headless::{run_headless, run_headless_with_stdin};
 use logging::{DEFAULT_LOG_LEVEL, setup_logging};
 
 mod app_runner;
-mod conversions;
 mod headless;
 mod logging;
 mod tui;
