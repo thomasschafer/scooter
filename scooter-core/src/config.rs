@@ -92,12 +92,8 @@ impl Default for Config {
     }
 }
 
-fn default_exit() -> bool {
-    false
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct EditorOpenConfig {
     /// The command used when pressing `e` on the search results page. Two variables are available: `%file`, which will be replaced
     /// with the file path of the search result, and `%line`, which will be replaced with the line number of the result. For example:
@@ -106,10 +102,8 @@ pub struct EditorOpenConfig {
     /// command = "vi %file +%line"
     /// ```
     /// If not set explicitly, scooter will attempt to use the editor set by the `$EDITOR` environment variable.
-    #[serde(default)]
     pub command: Option<String>,
     /// Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.
-    #[serde(default = "default_exit")]
     pub exit: bool,
 }
 
@@ -117,16 +111,15 @@ impl Default for EditorOpenConfig {
     fn default() -> Self {
         Self {
             command: None,
-            exit: default_exit(),
+            exit: false,
         }
     }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct PreviewConfig {
     /// Whether to apply syntax highlighting to the preview. Defaults to `true`.
-    #[serde(default = "default_syntax_highlighting")]
     pub syntax_highlighting: bool,
     /// The theme to use when syntax highlighting is enabled.
     ///
@@ -141,29 +134,17 @@ pub struct PreviewConfig {
     /// wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
     /// ```
     /// and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
-    #[serde(
-        deserialize_with = "deserialize_syntax_highlighting_theme",
-        default = "default_syntax_highlighting_theme"
-    )]
+    #[serde(deserialize_with = "deserialize_syntax_highlighting_theme")]
     pub syntax_highlighting_theme: Theme,
     /// Wrap text onto the next line if it is wider than the preview window. Defaults to `false`. (Can be toggled in the UI using `ctrl+l`.)
-    #[serde(default)]
     pub wrap_text: bool,
-}
-
-fn default_syntax_highlighting() -> bool {
-    true
-}
-
-fn default_syntax_highlighting_theme() -> Theme {
-    load_theme("base16-eighties.dark").unwrap()
 }
 
 impl Default for PreviewConfig {
     fn default() -> Self {
         Self {
-            syntax_highlighting: default_syntax_highlighting(),
-            syntax_highlighting_theme: default_syntax_highlighting_theme(),
+            syntax_highlighting: true,
+            syntax_highlighting_theme: load_theme("base16-eighties.dark").unwrap(),
             wrap_text: false,
         }
     }
@@ -189,11 +170,10 @@ where
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct StyleConfig {
     /// Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
     /// If omitted, scooter will attempt to determine whether the terminal being used supports true color.
-    #[serde(default = "detect_true_colour")]
     pub true_color: bool,
 }
 
@@ -231,23 +211,18 @@ fn detect_true_colour() -> bool {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct SearchConfig {
     /// Whether to disable fields set by CLI flags. Set to `false` to allow editing of these pre-populated fields. Defaults to `true`.
-    #[serde(default = "default_disable_prepopulated_fields")]
     pub disable_prepopulated_fields: bool,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            disable_prepopulated_fields: default_disable_prepopulated_fields(),
+            disable_prepopulated_fields: true,
         }
     }
-}
-
-fn default_disable_prepopulated_fields() -> bool {
-    true
 }
 
 impl<'de> Deserialize<'de> for KeyEvent {
@@ -291,6 +266,7 @@ impl Default for KeysGeneral {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct KeysSearchFields {}
 
 impl Default for KeysSearchFields {
@@ -300,6 +276,7 @@ impl Default for KeysSearchFields {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct KeysPerformingReplacement {}
 
 impl Default for KeysPerformingReplacement {
@@ -309,6 +286,7 @@ impl Default for KeysPerformingReplacement {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct KeysResults {}
 
 impl Default for KeysResults {
@@ -366,7 +344,7 @@ syntax_highlighting = false
         assert!(!config.preview.syntax_highlighting);
         assert_eq!(
             config.preview.syntax_highlighting_theme.name,
-            default_syntax_highlighting_theme().name
+            PreviewConfig::default().syntax_highlighting_theme.name
         );
 
         let default_editor_open = EditorOpenConfig::default();
@@ -448,7 +426,7 @@ command = "vim %file +%line"
         let config = Config::default();
         assert_eq!(
             config.get_theme(),
-            Some(&default_syntax_highlighting_theme())
+            Some(&PreviewConfig::default().syntax_highlighting_theme)
         );
     }
 
