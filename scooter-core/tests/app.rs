@@ -8,6 +8,7 @@ use scooter_core::{
     app::{EventHandlingResult, InputSource},
     errors::AppError,
     fields::{FieldValue, SearchFieldValues, SearchFields},
+    keyboard::KeyEvent,
     replace::{PerformingReplacementState, ReplaceState},
 };
 use std::{
@@ -107,7 +108,10 @@ async fn test_back_from_results() {
         true,
     );
 
-    let res = app.handle_key_event(ScooterKeyCode::Char('o'), ScooterKeyModifiers::CONTROL);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('o'),
+        ScooterKeyModifiers::CONTROL,
+    ));
     assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert_eq!(app.search_fields.search().text(), "foo");
     assert_eq!(app.search_fields.replace().text(), "bar");
@@ -131,15 +135,24 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup
-    app.handle_key_event(ScooterKeyCode::Enter, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Enter,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Esc,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Esc,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(matches!(res, EventHandlingResult::Exit(None)));
 }
 
@@ -195,12 +208,18 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
     assert!(app.popup().is_none());
     assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_open = app.handle_key_event(ScooterKeyCode::Char('h'), ScooterKeyModifiers::CONTROL);
+    let res_open = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('h'),
+        ScooterKeyModifiers::CONTROL,
+    ));
     assert!(matches!(res_open, EventHandlingResult::Rerender));
     assert!(matches!(app.popup(), Some(Popup::Help)));
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_close = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res_close = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Esc,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(matches!(res_close, EventHandlingResult::Rerender));
     assert!(app.popup().is_none());
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
@@ -425,7 +444,10 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
         vec![true, false, false, false, false, true, false]
     );
 
-    let result = app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('u'),
+        ScooterKeyModifiers::ALT,
+    ));
     assert!(matches!(result, EventHandlingResult::Rerender));
 
     for field in &app.search_fields.fields {
@@ -454,16 +476,28 @@ async fn test_keybinding_integration_with_disabled_fields() {
 
     assert_eq!(app.search_fields.highlighted, 2);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 3);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 4);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 6);
 
-    app.handle_key_event(ScooterKeyCode::BackTab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::BackTab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 4);
 }
 
@@ -490,15 +524,24 @@ async fn test_alt_u_unlocks_all_fields() {
         assert!(field.set_by_cli);
     }
 
-    app.handle_key_event(ScooterKeyCode::Char('x'), ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('x'),
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.search().text(), "search"); // Shouldn't have changed - all fields locked
 
-    app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('u'),
+        ScooterKeyModifiers::ALT,
+    ));
 
     for field in &app.search_fields.fields {
         assert!(!field.set_by_cli);
     }
 
-    app.handle_key_event(ScooterKeyCode::Char('x'), ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('x'),
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.search().text(), "searchx");
 }

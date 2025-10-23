@@ -8,7 +8,7 @@ use std::{
 };
 use syntect::highlighting::{Theme, ThemeSet};
 
-use crate::keyboard::KeyEvent;
+use crate::keyboard::{KeyCode, KeyEvent, KeyModifiers};
 
 pub const APP_NAME: &str = "scooter";
 
@@ -250,15 +250,6 @@ fn default_disable_prepopulated_fields() -> bool {
     true
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
-pub struct KeysConfig {
-    #[serde(default)]
-    pub general: KeysGeneral,
-    pub search_fields: KeysSearchFields,
-    pub performing_replacement: KeysPerformingReplacement,
-    pub results: KeysResults,
-}
-
 impl<'de> Deserialize<'de> for KeyEvent {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -269,15 +260,32 @@ impl<'de> Deserialize<'de> for KeyEvent {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+pub struct KeysConfig {
+    #[serde(default)]
+    pub general: KeysGeneral,
+    #[serde(default)]
+    pub search_fields: KeysSearchFields,
+    #[serde(default)]
+    pub performing_replacement: KeysPerformingReplacement,
+    #[serde(default)]
+    pub results: KeysResults,
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct KeysGeneral {
     pub quit: KeyEvent,
+    pub reset: KeyEvent,
+    pub show_help_menu: KeyEvent,
 }
 
 impl Default for KeysGeneral {
     fn default() -> Self {
         Self {
-            quit: "C-c".parse().unwrap(),
+            quit: KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            reset: KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            show_help_menu: KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
         }
     }
 }

@@ -1228,19 +1228,15 @@ impl<'a> App {
         }
     }
 
-    pub fn handle_key_event(
-        &mut self,
-        code: KeyCode,
-        modifiers: KeyModifiers,
-    ) -> EventHandlingResult {
-        let Some(event) = to_key_event(&self.current_screen, code, modifiers) else {
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> EventHandlingResult {
+        let Some(event) = to_key_event(&self.current_screen, key_event, &self.config.keys) else {
             // TODO(key-remap): test this
             if self.popup.is_some() {
                 self.clear_popup();
                 return EventHandlingResult::Rerender;
             }
             // TODO(key-remap): test this
-            if code == KeyCode::Esc {
+            if key_event.code == KeyCode::Esc {
                 if self.multiselect_enabled() {
                     self.toggle_multiselect_mode();
                     return EventHandlingResult::Rerender;
@@ -1664,9 +1660,17 @@ fn to_key_event(
     key_event: KeyEvent,
     keys_config: &KeysConfig,
 ) -> Option<Command> {
-    // TODO(key-remap): look up config, map to `Command`
     // TODO(key-remap): should only give events relevant to applicable screen, or general. If screen, should check `search_fields_state.focussed_section`
-    todo!()
+    // TODO(key-remap): implement rest of events, make lookup very quick etc.
+    if keys_config.general.quit == key_event {
+        Some(Command::General(CommandGeneral::Quit))
+    } else if keys_config.general.reset == key_event {
+        Some(Command::General(CommandGeneral::Reset))
+    } else if keys_config.general.show_help_menu == key_event {
+        Some(Command::General(CommandGeneral::ShowHelpMenu))
+    } else {
+        None
+    }
 }
 
 fn read_line(

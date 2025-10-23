@@ -427,6 +427,12 @@ pub struct KeyEvent {
     // TODO: crossterm now supports kind & state if terminal supports kitty's extended protocol
 }
 
+impl KeyEvent {
+    pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+        Self { code, modifiers }
+    }
+}
+
 impl std::str::FromStr for KeyEvent {
     type Err = anyhow::Error;
 
