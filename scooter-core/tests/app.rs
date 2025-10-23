@@ -63,7 +63,8 @@ async fn test_app_reset() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -83,7 +84,8 @@ async fn test_back_from_results() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
     let (sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
@@ -127,7 +129,8 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         search_fields,
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     // Simulate search being triggered in background
     let res = app.perform_search_if_valid();
@@ -201,7 +204,8 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
     let screen_variant = std::mem::discriminant(&initial_screen);
     app.current_screen = initial_screen;
 
@@ -274,7 +278,8 @@ async fn test_keymaps_search_fields() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
 
@@ -289,7 +294,8 @@ async fn test_keymaps_search_complete() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -313,7 +319,8 @@ async fn test_keymaps_search_progressing() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -336,7 +343,8 @@ async fn test_keymaps_performing_replacement() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -361,7 +369,8 @@ async fn test_keymaps_results() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     let replace_state_with_errors = ReplaceState {
         num_successes: 5,
@@ -406,7 +415,8 @@ async fn test_keymaps_popup() {
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
     app.add_error(AppError {
         name: "Test".to_string(),
         long: "Test error".to_string(),
@@ -433,7 +443,8 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
         &search_field_values,
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         app.search_fields
@@ -472,7 +483,8 @@ async fn test_keybinding_integration_with_disabled_fields() {
         &search_field_values,
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(app.search_fields.highlighted, 2);
 
@@ -518,7 +530,8 @@ async fn test_alt_u_unlocks_all_fields() {
         &search_field_values,
         &AppRunConfig::default(),
         Config::default(),
-    );
+    )
+    .unwrap();
 
     for field in &app.search_fields.fields {
         assert!(field.set_by_cli);

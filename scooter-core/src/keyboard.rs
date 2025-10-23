@@ -340,7 +340,7 @@ impl From<crossterm::event::KeyCode> for KeyCode {
             CKeyCode::PageUp => KeyCode::PageUp,
             CKeyCode::PageDown => KeyCode::PageDown,
             CKeyCode::Tab => KeyCode::Tab,
-            CKeyCode::BackTab => unreachable!("BackTab should have been handled on KeyEvent level"),
+            CKeyCode::BackTab => KeyCode::BackTab,
             CKeyCode::Delete => KeyCode::Delete,
             CKeyCode::Insert => KeyCode::Insert,
             CKeyCode::F(f_number) => KeyCode::F(f_number),
@@ -374,6 +374,7 @@ pub(crate) mod keys {
     pub(crate) const PAGEUP: &str = "pageup";
     pub(crate) const PAGEDOWN: &str = "pagedown";
     pub(crate) const TAB: &str = "tab";
+    pub(crate) const BACKTAB: &str = "backtab";
     pub(crate) const DELETE: &str = "del";
     pub(crate) const INSERT: &str = "ins";
     pub(crate) const NULL: &str = "null";
@@ -433,6 +434,96 @@ impl KeyEvent {
     }
 }
 
+impl std::fmt::Display for KeyEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = String::new();
+
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            result.push_str("S-");
+        }
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            result.push_str("C-");
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            result.push_str("M-");
+        }
+
+        match self.code {
+            KeyCode::Backspace => result.push_str(keys::BACKSPACE),
+            KeyCode::Enter => result.push_str(keys::ENTER),
+            KeyCode::Left => result.push_str(keys::LEFT),
+            KeyCode::Right => result.push_str(keys::RIGHT),
+            KeyCode::Up => result.push_str(keys::UP),
+            KeyCode::Down => result.push_str(keys::DOWN),
+            KeyCode::Home => result.push_str(keys::HOME),
+            KeyCode::End => result.push_str(keys::END),
+            KeyCode::PageUp => result.push_str(keys::PAGEUP),
+            KeyCode::PageDown => result.push_str(keys::PAGEDOWN),
+            KeyCode::Tab => result.push_str(keys::TAB),
+            KeyCode::BackTab => result.push_str(keys::BACKTAB),
+            KeyCode::Delete => result.push_str(keys::DELETE),
+            KeyCode::Insert => result.push_str(keys::INSERT),
+            KeyCode::Null => result.push_str(keys::NULL),
+            KeyCode::Esc => result.push_str(keys::ESC),
+            KeyCode::CapsLock => result.push_str(keys::CAPS_LOCK),
+            KeyCode::ScrollLock => result.push_str(keys::SCROLL_LOCK),
+            KeyCode::NumLock => result.push_str(keys::NUM_LOCK),
+            KeyCode::PrintScreen => result.push_str(keys::PRINT_SCREEN),
+            KeyCode::Pause => result.push_str(keys::PAUSE),
+            KeyCode::Menu => result.push_str(keys::MENU),
+            KeyCode::KeypadBegin => result.push_str(keys::KEYPAD_BEGIN),
+            KeyCode::Media(media) => {
+                use crate::keyboard::MediaKeyCode;
+                match media {
+                    MediaKeyCode::Play => result.push_str(keys::PLAY),
+                    MediaKeyCode::Pause => result.push_str(keys::PAUSE_MEDIA),
+                    MediaKeyCode::PlayPause => result.push_str(keys::PLAY_PAUSE),
+                    MediaKeyCode::Reverse => result.push_str(keys::REVERSE),
+                    MediaKeyCode::Stop => result.push_str(keys::STOP),
+                    MediaKeyCode::FastForward => result.push_str(keys::FAST_FORWARD),
+                    MediaKeyCode::Rewind => result.push_str(keys::REWIND),
+                    MediaKeyCode::TrackNext => result.push_str(keys::TRACK_NEXT),
+                    MediaKeyCode::TrackPrevious => result.push_str(keys::TRACK_PREVIOUS),
+                    MediaKeyCode::Record => result.push_str(keys::RECORD),
+                    MediaKeyCode::LowerVolume => result.push_str(keys::LOWER_VOLUME),
+                    MediaKeyCode::RaiseVolume => result.push_str(keys::RAISE_VOLUME),
+                    MediaKeyCode::MuteVolume => result.push_str(keys::MUTE_VOLUME),
+                }
+            }
+            KeyCode::Modifier(modifier) => {
+                use crate::keyboard::ModifierKeyCode;
+                match modifier {
+                    ModifierKeyCode::LeftShift => result.push_str(keys::LEFT_SHIFT),
+                    ModifierKeyCode::LeftControl => result.push_str(keys::LEFT_CONTROL),
+                    ModifierKeyCode::LeftAlt => result.push_str(keys::LEFT_ALT),
+                    ModifierKeyCode::LeftSuper => result.push_str(keys::LEFT_SUPER),
+                    ModifierKeyCode::LeftHyper => result.push_str(keys::LEFT_HYPER),
+                    ModifierKeyCode::LeftMeta => result.push_str(keys::LEFT_META),
+                    ModifierKeyCode::RightShift => result.push_str(keys::RIGHT_SHIFT),
+                    ModifierKeyCode::RightControl => result.push_str(keys::RIGHT_CONTROL),
+                    ModifierKeyCode::RightAlt => result.push_str(keys::RIGHT_ALT),
+                    ModifierKeyCode::RightSuper => result.push_str(keys::RIGHT_SUPER),
+                    ModifierKeyCode::RightHyper => result.push_str(keys::RIGHT_HYPER),
+                    ModifierKeyCode::RightMeta => result.push_str(keys::RIGHT_META),
+                    ModifierKeyCode::IsoLevel3Shift => result.push_str(keys::ISO_LEVEL_3_SHIFT),
+                    ModifierKeyCode::IsoLevel5Shift => result.push_str(keys::ISO_LEVEL_5_SHIFT),
+                }
+            }
+            KeyCode::Char(' ') => result.push_str(keys::SPACE),
+            KeyCode::Char('<') => result.push_str(keys::LESS_THAN),
+            KeyCode::Char('>') => result.push_str(keys::GREATER_THAN),
+            KeyCode::Char('-') => result.push_str(keys::MINUS),
+            KeyCode::Char(c) => result.push(c),
+            KeyCode::F(n) => {
+                use std::fmt::Write;
+                write!(&mut result, "F{n}").unwrap();
+            }
+        }
+
+        write!(f, "{result}")
+    }
+}
+
 impl std::str::FromStr for KeyEvent {
     type Err = anyhow::Error;
 
@@ -451,6 +542,7 @@ impl std::str::FromStr for KeyEvent {
             keys::PAGEUP => KeyCode::PageUp,
             keys::PAGEDOWN => KeyCode::PageDown,
             keys::TAB => KeyCode::Tab,
+            keys::BACKTAB => KeyCode::BackTab,
             keys::DELETE => KeyCode::Delete,
             keys::INSERT => KeyCode::Insert,
             keys::NULL => KeyCode::Null,

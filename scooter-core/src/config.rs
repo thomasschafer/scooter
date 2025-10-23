@@ -48,7 +48,7 @@ fn themes_folder() -> PathBuf {
     config_dir().join("themes/")
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
@@ -86,14 +86,9 @@ pub fn load_config() -> anyhow::Result<Config> {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        toml::from_str("").expect("Empty config should deserialize with defaults")
-    }
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
+#[derive(Default)]
 pub struct EditorOpenConfig {
     /// The command used when pressing `e` on the search results page. Two variables are available: `%file`, which will be replaced
     /// with the file path of the search result, and `%line`, which will be replaced with the line number of the result. For example:
@@ -105,15 +100,6 @@ pub struct EditorOpenConfig {
     pub command: Option<String>,
     /// Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.
     pub exit: bool,
-}
-
-impl Default for EditorOpenConfig {
-    fn default() -> Self {
-        Self {
-            command: None,
-            exit: false,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -235,6 +221,24 @@ impl<'de> Deserialize<'de> for KeyEvent {
     }
 }
 
+/// Deserialize either a single `KeyEvent` or a Vec of `KeyEvents` into a Vec
+fn deserialize_key_or_keys<'de, D>(deserializer: D) -> Result<Vec<KeyEvent>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(KeyEvent),
+        Many(Vec<KeyEvent>),
+    }
+
+    match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::One(key) => Ok(vec![key]),
+        OneOrMany::Many(keys) => Ok(keys),
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 pub struct KeysConfig {
     #[serde(default)]
@@ -242,56 +246,200 @@ pub struct KeysConfig {
     #[serde(default)]
     pub search_fields: KeysSearchFields,
     #[serde(default)]
+    pub search_focus_fields: KeysSearchFocusFields, // TODO(key-remap): move into `search_fields`
+    #[serde(default)]
+    pub search_focus_results: KeysSearchFocusResults, // TODO(key-remap): move into `search_fields`
+    #[serde(default)]
     pub performing_replacement: KeysPerformingReplacement,
     #[serde(default)]
     pub results: KeysResults,
 }
 
+// TODO(key-remap): remove duplication of deserialize_key_or_keys
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct KeysGeneral {
-    pub quit: KeyEvent,
-    pub reset: KeyEvent,
-    pub show_help_menu: KeyEvent,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub quit: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub reset: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub show_help_menu: Vec<KeyEvent>,
 }
 
 impl Default for KeysGeneral {
     fn default() -> Self {
         Self {
-            quit: KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-            reset: KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-            show_help_menu: KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+            quit: vec![KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)],
+            reset: vec![KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)],
+            show_help_menu: vec![KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)],
         }
     }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(default)]
-pub struct KeysSearchFields {}
+pub struct KeysSearchFields {
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub toggle_preview_wrapping: Vec<KeyEvent>,
+}
 
 impl Default for KeysSearchFields {
     fn default() -> Self {
-        Self {}
+        Self {
+            toggle_preview_wrapping: vec![KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)],
+        }
     }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(default)]
+pub struct KeysSearchFocusFields {
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub unlock_prepopulated_fields: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub trigger_search: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub focus_next_field: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub focus_previous_field: Vec<KeyEvent>,
+}
+
+impl Default for KeysSearchFocusFields {
+    fn default() -> Self {
+        Self {
+            unlock_prepopulated_fields: vec![KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT)],
+            trigger_search: vec![KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
+            focus_next_field: vec![KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)],
+            focus_previous_field: vec![
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), // TODO(key-remap): why do we need this?
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct KeysSearchFocusResults {
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub trigger_replacement: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub back_to_fields: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub open_in_editor: Vec<KeyEvent>,
+
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_down: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_up: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_down_half_page: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_down_full_page: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_up_half_page: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_up_full_page: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_top: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub move_selected_bottom: Vec<KeyEvent>,
+
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub toggle_selected_inclusion: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub toggle_all_selected: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub toggle_multiselect_mode: Vec<KeyEvent>,
+
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub flip_multiselect_direction: Vec<KeyEvent>,
+}
+
+impl Default for KeysSearchFocusResults {
+    fn default() -> Self {
+        Self {
+            trigger_replacement: vec![KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
+            back_to_fields: vec![KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)],
+            open_in_editor: vec![KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)],
+
+            move_selected_down: vec![
+                KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+            ],
+            move_selected_up: vec![
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+            ],
+            move_selected_down_half_page: vec![KeyEvent::new(
+                KeyCode::Char('d'),
+                KeyModifiers::CONTROL,
+            )],
+            move_selected_down_full_page: vec![
+                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            ],
+            move_selected_up_half_page: vec![KeyEvent::new(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL,
+            )],
+            move_selected_up_full_page: vec![
+                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+            ],
+            move_selected_top: vec![KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)],
+            move_selected_bottom: vec![
+                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT), // TODO: why is this needed?
+            ],
+
+            toggle_selected_inclusion: vec![KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)],
+            toggle_all_selected: vec![KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)],
+            toggle_multiselect_mode: vec![KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)],
+
+            flip_multiselect_direction: vec![KeyEvent::new(KeyCode::Char(';'), KeyModifiers::ALT)],
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+#[derive(Default)]
 pub struct KeysPerformingReplacement {}
 
-impl Default for KeysPerformingReplacement {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(default)]
-pub struct KeysResults {}
+pub struct KeysResults {
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub scroll_errors_down: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub scroll_errors_up: Vec<KeyEvent>,
+    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    pub quit: Vec<KeyEvent>,
+}
 
 impl Default for KeysResults {
     fn default() -> Self {
-        Self {}
+        Self {
+            scroll_errors_down: vec![
+                KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+            ],
+            scroll_errors_up: vec![
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+            ],
+            quit: vec![
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            ],
+        }
     }
 }
 
