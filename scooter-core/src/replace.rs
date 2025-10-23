@@ -18,10 +18,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult, KeyEventResults},
-    fields::{KeyCode, KeyModifiers},
-};
+use crate::app::{AppEvent, BackgroundProcessingEvent, CommandResults, Event, EventHandlingResult};
 
 pub fn split_results(
     results: Vec<SearchResultWithReplacement>,
@@ -120,18 +117,18 @@ pub struct ReplaceState {
 
 impl ReplaceState {
     #[allow(clippy::needless_pass_by_value)]
-    pub(crate) fn handle_key_results(&mut self, event: KeyEventResults) -> EventHandlingResult {
+    pub(crate) fn handle_key_results(&mut self, event: CommandResults) -> EventHandlingResult {
         #[allow(clippy::match_same_arms)]
         match event {
-            KeyEventResults::ScrollErrorsDown => {
+            CommandResults::ScrollErrorsDown => {
                 self.scroll_replacement_errors_down();
                 EventHandlingResult::Rerender
             }
-            KeyEventResults::ScrollErrorsUp => {
+            CommandResults::ScrollErrorsUp => {
                 self.scroll_replacement_errors_up();
                 EventHandlingResult::Rerender
             }
-            KeyEventResults::Quit => EventHandlingResult::Exit(None),
+            CommandResults::Quit => EventHandlingResult::Exit(None),
         }
     }
 
@@ -240,8 +237,7 @@ mod tests {
     };
 
     use crate::{
-        app::{EventHandlingResult, KeyEventResults},
-        fields::{KeyCode, KeyModifiers},
+        app::{CommandResults, EventHandlingResult},
         replace::{self, ReplaceState},
     };
 
@@ -415,15 +411,15 @@ mod tests {
             replacement_errors_pos: 0,
         };
 
-        let result = state.handle_key_results(KeyEventResults::ScrollErrorsDown);
+        let result = state.handle_key_results(CommandResults::ScrollErrorsDown);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 1);
 
-        let result = state.handle_key_results(KeyEventResults::ScrollErrorsUp);
+        let result = state.handle_key_results(CommandResults::ScrollErrorsUp);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 0);
 
-        let result = state.handle_key_results(KeyEventResults::Quit);
+        let result = state.handle_key_results(CommandResults::Quit);
         assert!(matches!(result, EventHandlingResult::Exit(None)));
     }
 

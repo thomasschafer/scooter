@@ -1885,6 +1885,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "bitflags",
+ "crossterm 0.28.1",
  "etcetera",
  "frep-core",
  "ignore",

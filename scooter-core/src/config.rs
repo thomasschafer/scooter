@@ -8,6 +8,8 @@ use std::{
 };
 use syntect::highlighting::{Theme, ThemeSet};
 
+use crate::keyboard::KeyEvent;
+
 pub const APP_NAME: &str = "scooter";
 
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
@@ -257,12 +259,26 @@ pub struct KeysConfig {
     pub results: KeysResults,
 }
 
+impl<'de> Deserialize<'de> for KeyEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(de::Error::custom)
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-pub struct KeysGeneral {}
+pub struct KeysGeneral {
+    pub quit: KeyEvent,
+}
 
 impl Default for KeysGeneral {
     fn default() -> Self {
-        Self {}
+        Self {
+            quit: "C-c".parse().unwrap(),
+        }
     }
 }
 
@@ -399,6 +415,7 @@ disable_prepopulated_fields = false
                 search: SearchConfig {
                     disable_prepopulated_fields: false,
                 },
+                keys: KeysConfig::default(),
             }
         );
 
@@ -438,6 +455,7 @@ command = "vim %file +%line"
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
+            keys: KeysConfig::default(),
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -453,6 +471,7 @@ command = "vim %file +%line"
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
+            keys: KeysConfig::default(),
         };
         assert_eq!(
             config.get_theme(),
