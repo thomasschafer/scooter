@@ -179,7 +179,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
             &app_config.search_field_values,
             &app_config.app_run_config,
             config,
-        );
+        )?;
 
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
