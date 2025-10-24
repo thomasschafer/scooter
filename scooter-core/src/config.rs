@@ -246,10 +246,6 @@ pub struct KeysConfig {
     #[serde(default)]
     pub search_fields: KeysSearchFields,
     #[serde(default)]
-    pub search_focus_fields: KeysSearchFocusFields, // TODO(key-remap): move into `search_fields`
-    #[serde(default)]
-    pub search_focus_results: KeysSearchFocusResults, // TODO(key-remap): move into `search_fields`
-    #[serde(default)]
     pub performing_replacement: KeysPerformingReplacement,
     #[serde(default)]
     pub results: KeysResults,
@@ -283,12 +279,18 @@ impl Default for KeysGeneral {
 pub struct KeysSearchFields {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub toggle_preview_wrapping: Vec<KeyEvent>,
+    #[serde(default)]
+    pub fields: KeysSearchFocusFields,
+    #[serde(default)]
+    pub results: KeysSearchFocusResults,
 }
 
 impl Default for KeysSearchFields {
     fn default() -> Self {
         Self {
             toggle_preview_wrapping: vec![KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)],
+            fields: KeysSearchFocusFields::default(),
+            results: KeysSearchFocusResults::default(),
         }
     }
 }

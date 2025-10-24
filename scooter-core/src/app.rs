@@ -617,7 +617,7 @@ impl KeyMap {
         );
 
         let search_fields = build_map!(
-            &keys_config.search_focus_fields,
+            &keys_config.search_fields.fields,
             "search_focus_fields",
             &mut conflicts,
             [
@@ -635,7 +635,7 @@ impl KeyMap {
         );
 
         let search_results = build_map!(
-            &keys_config.search_focus_results,
+            &keys_config.search_fields.results,
             "search_focus_results",
             &mut conflicts,
             [
