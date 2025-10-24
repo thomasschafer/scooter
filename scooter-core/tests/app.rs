@@ -507,8 +507,8 @@ async fn test_keybinding_integration_with_disabled_fields() {
     assert_eq!(app.search_fields.highlighted, 6);
 
     app.handle_key_event(KeyEvent::new(
-        ScooterKeyCode::BackTab,
-        ScooterKeyModifiers::NONE,
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::SHIFT,
     ));
     assert_eq!(app.search_fields.highlighted, 4);
 }

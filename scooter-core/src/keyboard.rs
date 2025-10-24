@@ -248,8 +248,6 @@ pub enum KeyCode {
     PageDown,
     /// Tab key.
     Tab,
-    // Backtab key.
-    BackTab,
     /// Delete key.
     Delete,
     /// Insert key.
@@ -303,7 +301,6 @@ impl From<KeyCode> for crossterm::event::KeyCode {
             KeyCode::PageUp => CKeyCode::PageUp,
             KeyCode::PageDown => CKeyCode::PageDown,
             KeyCode::Tab => CKeyCode::Tab,
-            KeyCode::BackTab => CKeyCode::BackTab,
             KeyCode::Delete => CKeyCode::Delete,
             KeyCode::Insert => CKeyCode::Insert,
             KeyCode::F(f_number) => CKeyCode::F(f_number),
@@ -340,7 +337,7 @@ impl From<crossterm::event::KeyCode> for KeyCode {
             CKeyCode::PageUp => KeyCode::PageUp,
             CKeyCode::PageDown => KeyCode::PageDown,
             CKeyCode::Tab => KeyCode::Tab,
-            CKeyCode::BackTab => KeyCode::BackTab,
+            CKeyCode::BackTab => unreachable!("BackTab should have been handled on KeyEvent level"),
             CKeyCode::Delete => KeyCode::Delete,
             CKeyCode::Insert => KeyCode::Insert,
             CKeyCode::F(f_number) => KeyCode::F(f_number),
@@ -374,7 +371,6 @@ pub(crate) mod keys {
     pub(crate) const PAGEUP: &str = "pageup";
     pub(crate) const PAGEDOWN: &str = "pagedown";
     pub(crate) const TAB: &str = "tab";
-    pub(crate) const BACKTAB: &str = "backtab";
     pub(crate) const DELETE: &str = "del";
     pub(crate) const INSERT: &str = "ins";
     pub(crate) const NULL: &str = "null";
@@ -432,6 +428,16 @@ impl KeyEvent {
     pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
     }
+
+    /// Canonicalize the key event by removing the SHIFT modifier from character keys.
+    /// This is necessary because terminals send uppercase characters with the SHIFT modifier,
+    /// so e.g. a press of `G` arrives as `S-G` from crossterm. However, we just want `G`. This
+    /// matches the `FromStr for KeyEvent` implementation used when parsing config.
+    pub fn canonicalize(&mut self) {
+        if let KeyCode::Char(_) = self.code {
+            self.modifiers.remove(KeyModifiers::SHIFT);
+        }
+    }
 }
 
 impl std::fmt::Display for KeyEvent {
@@ -460,7 +466,6 @@ impl std::fmt::Display for KeyEvent {
             KeyCode::PageUp => result.push_str(keys::PAGEUP),
             KeyCode::PageDown => result.push_str(keys::PAGEDOWN),
             KeyCode::Tab => result.push_str(keys::TAB),
-            KeyCode::BackTab => result.push_str(keys::BACKTAB),
             KeyCode::Delete => result.push_str(keys::DELETE),
             KeyCode::Insert => result.push_str(keys::INSERT),
             KeyCode::Null => result.push_str(keys::NULL),
@@ -542,7 +547,6 @@ impl std::str::FromStr for KeyEvent {
             keys::PAGEUP => KeyCode::PageUp,
             keys::PAGEDOWN => KeyCode::PageDown,
             keys::TAB => KeyCode::Tab,
-            keys::BACKTAB => KeyCode::BackTab,
             keys::DELETE => KeyCode::Delete,
             keys::INSERT => KeyCode::Insert,
             keys::NULL => KeyCode::Null,
@@ -641,5 +645,53 @@ impl std::str::FromStr for KeyEvent {
         }
 
         Ok(KeyEvent { code, modifiers })
+    }
+}
+
+#[cfg(feature = "term")]
+impl From<crossterm::event::KeyEvent> for KeyEvent {
+    fn from(
+        crossterm::event::KeyEvent {
+            code, modifiers, ..
+        }: crossterm::event::KeyEvent,
+    ) -> Self {
+        if code == crossterm::event::KeyCode::BackTab {
+            // special case for BackTab -> Shift-Tab
+            let mut modifiers: KeyModifiers = modifiers.into();
+            modifiers.insert(KeyModifiers::SHIFT);
+            Self {
+                code: KeyCode::Tab,
+                modifiers,
+            }
+        } else {
+            Self {
+                code: code.into(),
+                modifiers: modifiers.into(),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "term")]
+impl From<KeyEvent> for crossterm::event::KeyEvent {
+    fn from(KeyEvent { code, modifiers }: KeyEvent) -> Self {
+        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+            // special case for Shift-Tab -> BackTab
+            let mut modifiers = modifiers;
+            modifiers.remove(KeyModifiers::SHIFT);
+            crossterm::event::KeyEvent {
+                code: crossterm::event::KeyCode::BackTab,
+                modifiers: modifiers.into(),
+                kind: crossterm::event::KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::NONE,
+            }
+        } else {
+            crossterm::event::KeyEvent {
+                code: code.into(),
+                modifiers: modifiers.into(),
+                kind: crossterm::event::KeyEventKind::Press,
+                state: crossterm::event::KeyEventState::NONE,
+            }
+        }
     }
 }
