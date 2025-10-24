@@ -2932,9 +2932,6 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         let (final_foo_count, final_bar_count) = count_occurrences(temp_dir.path())?;
-        eprintln!(
-            "[debug] initial_foo_count = {initial_foo_count} + initial_bar_count = {initial_bar_count}, final_foo_count={final_foo_count}, final_bar_count={final_bar_count}"
-        );
         assert_eq!(
             final_foo_count, 0,
             "Final foo count should be 0 after replacement"

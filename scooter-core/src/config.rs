@@ -240,11 +240,12 @@ where
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct KeysConfig {
     #[serde(default)]
     pub general: KeysGeneral,
     #[serde(default)]
-    pub search_fields: KeysSearchFields,
+    pub search: KeysSearch,
     #[serde(default)]
     pub performing_replacement: KeysPerformingReplacement,
     #[serde(default)]
@@ -254,7 +255,7 @@ pub struct KeysConfig {
 // TODO(key-remap): remove duplication of deserialize_key_or_keys
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 pub struct KeysGeneral {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub quit: Vec<KeyEvent>,
@@ -275,8 +276,8 @@ impl Default for KeysGeneral {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
-pub struct KeysSearchFields {
+#[serde(deny_unknown_fields, default)]
+pub struct KeysSearch {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub toggle_preview_wrapping: Vec<KeyEvent>,
     #[serde(default)]
@@ -285,7 +286,7 @@ pub struct KeysSearchFields {
     pub results: KeysSearchFocusResults,
 }
 
-impl Default for KeysSearchFields {
+impl Default for KeysSearch {
     fn default() -> Self {
         Self {
             toggle_preview_wrapping: vec![KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)],
@@ -296,7 +297,7 @@ impl Default for KeysSearchFields {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusFields {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub unlock_prepopulated_fields: Vec<KeyEvent>,
@@ -323,7 +324,7 @@ impl Default for KeysSearchFocusFields {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusResults {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub trigger_replacement: Vec<KeyEvent>,
@@ -409,12 +410,12 @@ impl Default for KeysSearchFocusResults {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 #[derive(Default)]
 pub struct KeysPerformingReplacement {}
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(default)]
+#[serde(deny_unknown_fields, default)]
 pub struct KeysResults {
     #[serde(deserialize_with = "deserialize_key_or_keys")]
     pub scroll_errors_down: Vec<KeyEvent>,
@@ -613,5 +614,23 @@ command = "vim %file +%line"
             config.get_theme(),
             Some(&load_theme("base16-ocean.dark").unwrap())
         );
+    }
+
+    #[test]
+    fn test_unknown_keys_field_rejected() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.this_doesnt_exist]
+trigger_search = "a"
+
+[keys.search.fields]
+trigger_search = "S-backtab"
+"#,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `this_doesnt_exist`"));
     }
 }

@@ -1,6 +1,5 @@
 use std::{
     cmp::{max, min},
-    collections::HashMap,
     io::Cursor,
     iter::{self, Iterator},
     mem,
@@ -29,7 +28,11 @@ use tokio::{
 };
 
 use crate::{
-    config::{Config, KeysConfig},
+    commands::{
+        display_conflict_errors, Command, CommandGeneral, CommandSearchFields,
+        CommandSearchFocusFields, CommandSearchFocusResults, KeyMap,
+    },
+    config::Config,
     errors::AppError,
     fields::{FieldName, SearchFieldValues, SearchFields},
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
@@ -485,327 +488,6 @@ enum SearchStrategy {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Command {
-    General(CommandGeneral),
-    SearchFields(CommandSearchFields),
-    PerformingReplacement(CommandPerformingReplacement),
-    Results(CommandResults),
-}
-
-// Events applicable to all screens
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CommandGeneral {
-    Quit,         // (KeyCode::Char('c'), KeyModifiers::CONTROL)
-    Reset,        // (KeyCode::Char('r'), KeyModifiers::CONTROL)
-    ShowHelpMenu, // (KeyCode::Char('h'), KeyModifiers::CONTROL)
-}
-
-// Events applicable only to `SearchFields` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CommandSearchFields {
-    TogglePreviewWrapping, // (KeyCode::Char('l'), KeyModifiers::CONTROL)
-    SearchFocusFields(CommandSearchFocusFields),
-    SearchFocusResults(CommandSearchFocusResults),
-}
-
-// Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CommandSearchFocusFields {
-    UnlockPrepopulatedFields, // (KeyCode::Char('u'), KeyModifiers::ALT)
-    TriggerSearch,            // (KeyCode::Enter, _)
-    FocusNextField,           // (KeyCode::Tab, _)
-    FocusPreviousField,       // (KeyCode::BackTab, _) | (KeyCode::Tab, KeyModifiers::ALT)
-    EnterChars(KeyCode, KeyModifiers),
-}
-
-// Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CommandSearchFocusResults {
-    TriggerReplacement, // (KeyCode::Enter, _)
-    BackToFields,       // (KeyCode::Char('o'), KeyModifiers::CONTROL)
-    OpenInEditor,       // (KeyCode::Char('e'), KeyModifiers::NONE)
-
-    MoveSelectedDown, // (KeyCode::Char('j') | KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL)
-    MoveSelectedUp, // (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
-    MoveSelectedDownHalfPage, // (KeyCode::Char('d'), KeyModifiers::CONTROL)
-    MoveSelectedDownFullPage, // (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL)
-    MoveSelectedUpHalfPage,   // (KeyCode::Char('u'), KeyModifiers::CONTROL)
-    MoveSelectedUpFullPage,   // (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL)
-    MoveSelectedTop,          // (KeyCode::Char('g'), _)
-    MoveSelectedBottom,       // (KeyCode::Char('G'), _)
-
-    ToggleSelectedInclusion, // (KeyCode::Char(' '), _)
-    ToggleAllSelected,       // (KeyCode::Char('a'), _)
-    ToggleMultiselectMode,   // (KeyCode::Char('v'), _)
-
-    FlipMultiselectDirection, // (KeyCode::Char(';'), KeyModifiers::ALT)
-}
-
-// TODO(key-remap): should we add anything here?
-// Events applicable only to `PerformingReplacement` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum CommandPerformingReplacement {}
-
-// Events applicable only to `Results` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CommandResults {
-    ScrollErrorsDown, // (KeyCode::Char('j') | KeyCode::Down, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL)
-    ScrollErrorsUp, // (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL)
-    Quit,           // (KeyCode::Enter | KeyCode::Char('q'), _)
-}
-
-/// Fast O(1) key event lookup structure built from `KeysConfig`
-#[derive(Debug)]
-struct KeyMap {
-    general: HashMap<KeyEvent, CommandGeneral>,
-    search_fields: HashMap<KeyEvent, CommandSearchFocusFields>,
-    search_results: HashMap<KeyEvent, CommandSearchFocusResults>,
-    search_common: HashMap<KeyEvent, CommandSearchFields>,
-    #[allow(clippy::zero_sized_map_values)]
-    performing_replacement: HashMap<KeyEvent, CommandPerformingReplacement>,
-    results: HashMap<KeyEvent, CommandResults>,
-}
-
-/// Represents a key binding conflict detected during `KeyMap` construction
-#[derive(Debug)]
-pub struct KeyConflict {
-    pub key: KeyEvent,
-    pub context: String,
-    pub commands: Vec<String>,
-}
-
-impl KeyMap {
-    /// Build a `KeyMap` from `KeysConfig`, detecting any conflicts
-    #[allow(clippy::too_many_lines)]
-    fn from_config(keys_config: &KeysConfig) -> Result<Self, Vec<KeyConflict>> {
-        macro_rules! build_map {
-            ($config:expr, $context:expr, $conflicts:expr, [
-                $(($field:ident, $command:expr)),* $(,)?
-            ]) => {{
-                let mut map = HashMap::new();
-                $(
-                    for key in &$config.$field {
-                        Self::insert_and_detect(&mut map, *key, $command, $context, $conflicts);
-                    }
-                )*
-                map
-            }};
-        }
-
-        let mut conflicts = Vec::new();
-
-        let general = build_map!(
-            &keys_config.general,
-            "general",
-            &mut conflicts,
-            [
-                (quit, CommandGeneral::Quit),
-                (reset, CommandGeneral::Reset),
-                (show_help_menu, CommandGeneral::ShowHelpMenu),
-            ]
-        );
-
-        let search_common = build_map!(
-            &keys_config.search_fields,
-            "search_fields",
-            &mut conflicts,
-            [(
-                toggle_preview_wrapping,
-                CommandSearchFields::TogglePreviewWrapping
-            ),]
-        );
-
-        let search_fields = build_map!(
-            &keys_config.search_fields.fields,
-            "search_focus_fields",
-            &mut conflicts,
-            [
-                (
-                    unlock_prepopulated_fields,
-                    CommandSearchFocusFields::UnlockPrepopulatedFields
-                ),
-                (trigger_search, CommandSearchFocusFields::TriggerSearch),
-                (focus_next_field, CommandSearchFocusFields::FocusNextField),
-                (
-                    focus_previous_field,
-                    CommandSearchFocusFields::FocusPreviousField
-                ),
-            ]
-        );
-
-        let search_results = build_map!(
-            &keys_config.search_fields.results,
-            "search_focus_results",
-            &mut conflicts,
-            [
-                (
-                    trigger_replacement,
-                    CommandSearchFocusResults::TriggerReplacement
-                ),
-                (back_to_fields, CommandSearchFocusResults::BackToFields),
-                (open_in_editor, CommandSearchFocusResults::OpenInEditor),
-                (
-                    move_selected_down,
-                    CommandSearchFocusResults::MoveSelectedDown
-                ),
-                (move_selected_up, CommandSearchFocusResults::MoveSelectedUp),
-                (
-                    move_selected_down_half_page,
-                    CommandSearchFocusResults::MoveSelectedDownHalfPage
-                ),
-                (
-                    move_selected_down_full_page,
-                    CommandSearchFocusResults::MoveSelectedDownFullPage
-                ),
-                (
-                    move_selected_up_half_page,
-                    CommandSearchFocusResults::MoveSelectedUpHalfPage
-                ),
-                (
-                    move_selected_up_full_page,
-                    CommandSearchFocusResults::MoveSelectedUpFullPage
-                ),
-                (
-                    move_selected_top,
-                    CommandSearchFocusResults::MoveSelectedTop
-                ),
-                (
-                    move_selected_bottom,
-                    CommandSearchFocusResults::MoveSelectedBottom
-                ),
-                (
-                    toggle_selected_inclusion,
-                    CommandSearchFocusResults::ToggleSelectedInclusion
-                ),
-                (
-                    toggle_all_selected,
-                    CommandSearchFocusResults::ToggleAllSelected
-                ),
-                (
-                    toggle_multiselect_mode,
-                    CommandSearchFocusResults::ToggleMultiselectMode
-                ),
-                (
-                    flip_multiselect_direction,
-                    CommandSearchFocusResults::FlipMultiselectDirection
-                ),
-            ]
-        );
-
-        let results = build_map!(
-            &keys_config.results,
-            "results",
-            &mut conflicts,
-            [
-                (scroll_errors_down, CommandResults::ScrollErrorsDown),
-                (scroll_errors_up, CommandResults::ScrollErrorsUp),
-                (quit, CommandResults::Quit),
-            ]
-        );
-
-        #[allow(clippy::zero_sized_map_values)]
-        let performing_replacement = HashMap::new();
-
-        if conflicts.is_empty() {
-            Ok(Self {
-                general,
-                search_fields,
-                search_results,
-                search_common,
-                performing_replacement,
-                results,
-            })
-        } else {
-            Err(conflicts)
-        }
-    }
-
-    /// Insert a key binding and detect conflicts
-    fn insert_and_detect<T: std::fmt::Debug>(
-        map: &mut HashMap<KeyEvent, T>,
-        key: KeyEvent,
-        command: T,
-        context: &str,
-        conflicts: &mut Vec<KeyConflict>,
-    ) {
-        if let Some(existing) = map.insert(key, command) {
-            // Convert snake_case Debug names to human-readable format
-            let format_command = |cmd: &T| -> String {
-                let debug_str = format!("{cmd:?}");
-                // Convert PascalCase to space-separated words
-                debug_str
-                    .chars()
-                    .enumerate()
-                    .flat_map(|(i, c)| {
-                        if i > 0 && c.is_uppercase() {
-                            vec![' ', c]
-                        } else {
-                            vec![c]
-                        }
-                    })
-                    .collect::<String>()
-                    .to_lowercase()
-            };
-
-            conflicts.push(KeyConflict {
-                key,
-                context: context.to_string(),
-                commands: vec![
-                    format_command(&existing),
-                    format_command(map.get(&key).unwrap()),
-                ],
-            });
-        }
-    }
-
-    /// Look up a command for the given key event and screen context
-    fn lookup(&self, screen: &Screen, key_event: KeyEvent) -> Option<Command> {
-        // Check screen-specific commands
-        if let Some(cmd) = match screen {
-            Screen::SearchFields(state) => {
-                // Check common SearchFields commands first
-                if let Some(cmd) = self.search_common.get(&key_event) {
-                    return Some(Command::SearchFields(cmd.clone()));
-                }
-                // Then check focus-specific commands
-                match state.focussed_section {
-                    FocussedSection::SearchFields => {
-                        self.search_fields.get(&key_event).map(|cmd| {
-                            Command::SearchFields(CommandSearchFields::SearchFocusFields(
-                                cmd.clone(),
-                            ))
-                        })
-                    }
-                    FocussedSection::SearchResults => {
-                        self.search_results.get(&key_event).map(|cmd| {
-                            Command::SearchFields(CommandSearchFields::SearchFocusResults(
-                                cmd.clone(),
-                            ))
-                        })
-                    }
-                }
-            }
-            Screen::PerformingReplacement(_) => self
-                .performing_replacement
-                .get(&key_event)
-                .map(|cmd| Command::PerformingReplacement(cmd.clone())),
-            Screen::Results(_) => self
-                .results
-                .get(&key_event)
-                .map(|cmd| Command::Results(cmd.clone())),
-        } {
-            return Some(cmd);
-        }
-
-        // Check general commands
-        if let Some(cmd) = self.general.get(&key_event) {
-            return Some(Command::General(cmd.clone()));
-        }
-        None
-    }
-}
-
 impl<'a> App {
     fn new(
         input_source: InputSource,
@@ -1256,7 +938,10 @@ impl<'a> App {
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchFields`
     #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
-    fn handle_key_search_fields(&mut self, event: CommandSearchFocusFields) -> EventHandlingResult {
+    fn handle_command_search_fields(
+        &mut self,
+        event: CommandSearchFocusFields,
+    ) -> EventHandlingResult {
         match event {
             CommandSearchFocusFields::UnlockPrepopulatedFields => {
                 self.unlock_prepopulated_fields();
@@ -1393,7 +1078,7 @@ impl<'a> App {
 
     /// Should only be called on `Screen::SearchFields`, and when focussed section is `FocussedSection::SearchResults`
     #[allow(clippy::needless_pass_by_value)]
-    fn try_handle_key_search_results(
+    fn handle_command_search_results(
         &mut self,
         event: CommandSearchFocusResults,
     ) -> EventHandlingResult {
@@ -1564,7 +1249,7 @@ impl<'a> App {
                                 search_fields_state.focussed_section
                             );
                         }
-                        self.handle_key_search_fields(event)
+                        self.handle_command_search_fields(event)
                     }
                     CommandSearchFields::SearchFocusResults(event) => {
                         if !matches!(
@@ -1577,7 +1262,7 @@ impl<'a> App {
                             );
                         }
                         // TODO(key-remap): currently this always returns Some
-                        self.try_handle_key_search_results(event)
+                        self.handle_command_search_results(event)
                     }
                 }
             }
@@ -1586,7 +1271,7 @@ impl<'a> App {
                 let Command::Results(event) = event else {
                     panic!("Expected SearchFields event, found {event:?}");
                 };
-                replace_state.handle_key_results(event)
+                replace_state.handle_command_results(event)
             }
         }
     }
@@ -1926,25 +1611,6 @@ impl<'a> App {
             false
         }
     }
-}
-
-fn display_conflict_errors(conflicts: Vec<KeyConflict>) -> anyhow::Error {
-    use std::fmt::Write;
-
-    let mut error_msg = String::from("Key binding conflict detected!\n\n");
-    for conflict in conflicts {
-        writeln!(
-            &mut error_msg,
-            "The key '{}' is bound to multiple commands in [keys.{}]:",
-            conflict.key, conflict.context
-        )
-        .unwrap();
-        for (i, cmd) in conflict.commands.iter().enumerate() {
-            writeln!(&mut error_msg, "  {}. {}", i + 1, cmd).unwrap();
-        }
-        error_msg.push_str("\nPlease update your config to use unique key bindings.");
-    }
-    anyhow::anyhow!(error_msg)
 }
 
 fn read_line(

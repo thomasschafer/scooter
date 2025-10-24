@@ -18,7 +18,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::app::{AppEvent, BackgroundProcessingEvent, CommandResults, Event, EventHandlingResult};
+use crate::{
+    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
+    commands::CommandResults,
+};
 
 pub fn split_results(
     results: Vec<SearchResultWithReplacement>,
@@ -117,7 +120,7 @@ pub struct ReplaceState {
 
 impl ReplaceState {
     #[allow(clippy::needless_pass_by_value)]
-    pub(crate) fn handle_key_results(&mut self, event: CommandResults) -> EventHandlingResult {
+    pub(crate) fn handle_command_results(&mut self, event: CommandResults) -> EventHandlingResult {
         #[allow(clippy::match_same_arms)]
         match event {
             CommandResults::ScrollErrorsDown => {
@@ -237,7 +240,8 @@ mod tests {
     };
 
     use crate::{
-        app::{CommandResults, EventHandlingResult},
+        app::EventHandlingResult,
+        commands::CommandResults,
         replace::{self, ReplaceState},
     };
 
@@ -386,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_state_handle_key_results() {
+    fn test_replace_state_handle_command_results() {
         let mut state = ReplaceState {
             num_successes: 5,
             num_ignored: 2,
@@ -411,15 +415,15 @@ mod tests {
             replacement_errors_pos: 0,
         };
 
-        let result = state.handle_key_results(CommandResults::ScrollErrorsDown);
+        let result = state.handle_command_results(CommandResults::ScrollErrorsDown);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 1);
 
-        let result = state.handle_key_results(CommandResults::ScrollErrorsUp);
+        let result = state.handle_command_results(CommandResults::ScrollErrorsUp);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 0);
 
-        let result = state.handle_key_results(CommandResults::Quit);
+        let result = state.handle_command_results(CommandResults::Quit);
         assert!(matches!(result, EventHandlingResult::Exit(None)));
     }
 
