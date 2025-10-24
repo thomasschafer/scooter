@@ -315,10 +315,7 @@ impl Default for KeysSearchFocusFields {
             unlock_prepopulated_fields: vec![KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT)],
             trigger_search: vec![KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
             focus_next_field: vec![KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)],
-            focus_previous_field: vec![
-                KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
-                KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), // TODO(key-remap): why do we need this?
-            ],
+            focus_previous_field: vec![KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)],
         }
     }
 }
@@ -395,10 +392,7 @@ impl Default for KeysSearchFocusResults {
                 KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
             ],
             move_selected_top: vec![KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)],
-            move_selected_bottom: vec![
-                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE),
-                KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT), // TODO: why is this needed?
-            ],
+            move_selected_bottom: vec![KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)],
 
             toggle_selected_inclusion: vec![KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)],
             toggle_all_selected: vec![KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)],
@@ -624,7 +618,7 @@ command = "vim %file +%line"
 trigger_search = "a"
 
 [keys.search.fields]
-trigger_search = "S-backtab"
+trigger_search = "S-tab"
 "#,
         );
         assert!(result.is_err());
