@@ -983,9 +983,9 @@ impl<'a> App {
                     .focus_next(self.config.search.disable_prepopulated_fields);
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusFields::EnterChars(key_code, key_modifiers) => self
-                .enter_chars_into_field(key_code, key_modifiers)
-                .unwrap_or(EventHandlingResult::Rerender),
+            CommandSearchFocusFields::EnterChars(key_code, key_modifiers) => {
+                self.enter_chars_into_field(key_code, key_modifiers)
+            }
         }
     }
 
@@ -993,9 +993,9 @@ impl<'a> App {
         &mut self,
         key_code: KeyCode,
         key_modifiers: KeyModifiers,
-    ) -> Option<EventHandlingResult> {
+    ) -> EventHandlingResult {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-            return Some(EventHandlingResult::None);
+            return EventHandlingResult::None;
         };
         if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
             // TODO: ideally this should only happen when the field is checked, but for now this will do
@@ -1012,10 +1012,10 @@ impl<'a> App {
         if let Some(search_config) = self.validate_fields().unwrap() {
             self.searcher = Some(search_config);
         } else {
-            return Some(EventHandlingResult::Rerender);
+            return EventHandlingResult::Rerender;
         }
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-            return Some(EventHandlingResult::None);
+            return EventHandlingResult::None;
         };
         let file_searcher = self
             .searcher
@@ -1060,7 +1060,7 @@ impl<'a> App {
                 let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
             }));
         }
-        None
+        EventHandlingResult::Rerender
     }
 
     fn get_search_state_unwrap(&mut self) -> &mut SearchState {
@@ -1180,7 +1180,6 @@ impl<'a> App {
         let event = if let Some(event) = self.key_map.lookup(&self.current_screen, key_event) {
             event
         } else {
-            // TODO(key-remap): test this
             if key_event.code == KeyCode::Esc {
                 // TODO(key-remap): test this, both with and without override
                 self.set_popup(Popup::Text{
