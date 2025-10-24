@@ -447,7 +447,10 @@ impl Default for KeysSearchFocusResults {
     fn default() -> Self {
         Self {
             trigger_replacement: vec![KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
-            back_to_fields: vec![KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)],
+            back_to_fields: vec![
+                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+                KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            ],
             open_in_editor: vec![KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)],
 
             move_selected_down: vec![
