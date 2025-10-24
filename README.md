@@ -294,6 +294,55 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 <!-- CONFIG END -->
 
+### `[keys]` section
+
+This section can be used to override the default keymappings. The default keymappings are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
+
+You can set any number of mappings for a given command using an array, e.g. `quit = ["esc", "C-c"]`. If you are only setting one keymap, you can omit the square brackets, e.g. `quit = "C-c"`.
+
+<!-- KEYS START -->
+```toml
+[keys.general]
+quit = "C-c"
+reset = "C-r"
+show_help_menu = "C-h"
+
+[keys.search]
+toggle_preview_wrapping = "C-l"
+
+[keys.search.fields]
+unlock_prepopulated_fields = "M-u"
+trigger_search = "ret"
+focus_next_field = "tab"
+focus_previous_field = "S-tab"
+
+[keys.search.results]
+trigger_replacement = "ret"
+back_to_fields = "C-o"
+open_in_editor = "e"
+move_selected_down = ["j", "down", "C-n"]
+move_selected_up = ["k", "up", "C-p"]
+move_selected_down_half_page = "C-d"
+move_selected_down_full_page = ["pagedown", "C-f"]
+move_selected_up_half_page = "C-u"
+move_selected_up_full_page = ["pageup", "C-b"]
+move_selected_top = "g"
+move_selected_bottom = "G"
+toggle_selected_inclusion = "space"
+toggle_all_selected = "a"
+toggle_multiselect_mode = "v"
+flip_multiselect_direction = "M-;"
+
+[keys.performing_replacement]
+
+[keys.results]
+scroll_errors_down = ["j", "down", "C-n"]
+scroll_errors_up = ["k", "up", "C-p"]
+quit = ["ret", "q"]
+```
+<!-- KEYS END -->
+
+<!-- TODO(key-remap): add full list of available keys and modifiers programmatically --> 
 
 ## Editor configuration
 

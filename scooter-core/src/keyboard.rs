@@ -1,6 +1,7 @@
 // This code is copied from Helix: https://github.com/helix-editor/helix/blob/d79cce4e/helix-view/src/keyboard.rs
 use anyhow::anyhow;
 use bitflags::bitflags;
+use serde::Serialize;
 
 bitflags! {
     /// Represents key modifiers (shift, control, alt).
@@ -440,18 +441,29 @@ impl KeyEvent {
     }
 }
 
+impl Serialize for KeyEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+const MODIFIERS: [(KeyModifiers, &str); 3] = [
+    (KeyModifiers::SHIFT, "S-"),
+    (KeyModifiers::CONTROL, "C-"),
+    (KeyModifiers::ALT, "M-"),
+];
+
 impl std::fmt::Display for KeyEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut result = String::new();
 
-        if self.modifiers.contains(KeyModifiers::SHIFT) {
-            result.push_str("S-");
-        }
-        if self.modifiers.contains(KeyModifiers::CONTROL) {
-            result.push_str("C-");
-        }
-        if self.modifiers.contains(KeyModifiers::ALT) {
-            result.push_str("M-");
+        for (modifier, str) in MODIFIERS {
+            if self.modifiers.contains(modifier) {
+                result.push_str(str);
+            }
         }
 
         match self.code {

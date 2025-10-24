@@ -10,6 +10,8 @@ clap = { version = "4.5", features = ["derive"] }
 syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }
 quote = "1.0"
 pretty_assertions = "1.4.1"
+scooter-core = { path = "../scooter-core" }
+toml = "0.8"
 
 [lints]
 workspace = true

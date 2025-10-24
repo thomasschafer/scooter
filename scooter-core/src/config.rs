@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
-use serde::{Deserialize, Deserializer, de};
+use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -239,7 +239,19 @@ where
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+/// Serialize a Vec of `KeyEvent`s, using a single value if the vec has one element
+fn serialize_key_or_keys<S>(keys: &Vec<KeyEvent>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if keys.len() == 1 {
+        keys[0].serialize(serializer)
+    } else {
+        keys.serialize(serializer)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct KeysConfig {
     #[serde(default)]
@@ -254,14 +266,24 @@ pub struct KeysConfig {
 
 // TODO(key-remap): remove duplication of deserialize_key_or_keys
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on all screens
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysGeneral {
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub quit: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub reset: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub show_help_menu: Vec<KeyEvent>,
 }
 
@@ -275,10 +297,14 @@ impl Default for KeysGeneral {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on the search screen
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearch {
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub toggle_preview_wrapping: Vec<KeyEvent>,
     #[serde(default)]
     pub fields: KeysSearchFocusFields,
@@ -296,16 +322,29 @@ impl Default for KeysSearch {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on the search screen, when the search fields are focussed
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusFields {
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub unlock_prepopulated_fields: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub trigger_search: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub focus_next_field: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub focus_previous_field: Vec<KeyEvent>,
 }
 
@@ -320,41 +359,87 @@ impl Default for KeysSearchFocusFields {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on the search screen, when the search results are focussed
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusResults {
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub trigger_replacement: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub back_to_fields: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub open_in_editor: Vec<KeyEvent>,
 
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_down: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_up: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_down_half_page: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_down_full_page: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_up_half_page: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_up_full_page: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_top: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub move_selected_bottom: Vec<KeyEvent>,
 
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub toggle_selected_inclusion: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub toggle_all_selected: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub toggle_multiselect_mode: Vec<KeyEvent>,
 
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub flip_multiselect_direction: Vec<KeyEvent>,
 }
 
@@ -403,19 +488,30 @@ impl Default for KeysSearchFocusResults {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on the replacement-in-progress screen
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 #[derive(Default)]
 pub struct KeysPerformingReplacement {}
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+/// Commands available on the results screen
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysResults {
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub scroll_errors_down: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub scroll_errors_up: Vec<KeyEvent>,
-    #[serde(deserialize_with = "deserialize_key_or_keys")]
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
     pub quit: Vec<KeyEvent>,
 }
 

@@ -253,13 +253,13 @@ impl KeyMap {
             // Convert snake_case Debug names to human-readable format
             let format_command = |cmd: &T| -> String {
                 let debug_str = format!("{cmd:?}");
-                // Convert PascalCase to space-separated words
+                // Convert PascalCase to snake_case
                 debug_str
                     .chars()
                     .enumerate()
                     .flat_map(|(i, c)| {
                         if i > 0 && c.is_uppercase() {
-                            vec![' ', c]
+                            vec!['_', c]
                         } else {
                             vec![c]
                         }
