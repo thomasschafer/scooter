@@ -255,18 +255,21 @@ where
 #[serde(deny_unknown_fields)]
 pub struct KeysConfig {
     #[serde(default)]
+    /// Commands available on all screens
     pub general: KeysGeneral,
     #[serde(default)]
+    /// Commands available on the search screen
     pub search: KeysSearch,
     #[serde(default)]
+    /// Commands available on the replacement-in-progress screen
     pub performing_replacement: KeysPerformingReplacement,
     #[serde(default)]
+    /// Commands available on the results screen
     pub results: KeysResults,
 }
 
 // TODO(key-remap): remove duplication of deserialize_key_or_keys
 
-/// Commands available on all screens
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysGeneral {
@@ -274,16 +277,19 @@ pub struct KeysGeneral {
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Exit scooter
     pub quit: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Cancel in-progress operations, reset fields to default values and return to search screen
     pub reset: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Show the help menu containing keymaps
     pub show_help_menu: Vec<KeyEvent>,
 }
 
@@ -297,7 +303,6 @@ impl Default for KeysGeneral {
     }
 }
 
-/// Commands available on the search screen
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearch {
@@ -305,10 +310,13 @@ pub struct KeysSearch {
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Toggle wrapping of lines that don't fit within the width of the preview
     pub toggle_preview_wrapping: Vec<KeyEvent>,
     #[serde(default)]
+    /// Commands available on the search screen, when the search fields are focussed
     pub fields: KeysSearchFocusFields,
     #[serde(default)]
+    /// Commands available on the search screen, when the search results are focussed
     pub results: KeysSearchFocusResults,
 }
 
@@ -322,7 +330,6 @@ impl Default for KeysSearch {
     }
 }
 
-/// Commands available on the search screen, when the search fields are focussed
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusFields {
@@ -330,21 +337,25 @@ pub struct KeysSearchFocusFields {
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Allow editing of fields that were populated using CLI args, such as `--search_text foo`. (Note that you can use the `disable_prepopulated_fields` config option to change the default behaviour.)
     pub unlock_prepopulated_fields: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Trigger a search
     pub trigger_search: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Focus on the next field
     pub focus_next_field: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Focus on the previous field
     pub focus_previous_field: Vec<KeyEvent>,
 }
 
@@ -359,7 +370,6 @@ impl Default for KeysSearchFocusFields {
     }
 }
 
-/// Commands available on the search screen, when the search results are focussed
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysSearchFocusResults {
@@ -367,79 +377,94 @@ pub struct KeysSearchFocusResults {
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Trigger a replacement
     pub trigger_replacement: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Move focus back to the search fields
     pub back_to_fields: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
     pub open_in_editor: Vec<KeyEvent>,
 
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result below
     pub move_selected_down: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result above
     pub move_selected_up: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result half a page below
     pub move_selected_down_half_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result a page below
     pub move_selected_down_full_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result half a page above
     pub move_selected_up_half_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the search result a page above
     pub move_selected_up_full_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the first search result
     pub move_selected_top: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the last search result
     pub move_selected_bottom: Vec<KeyEvent>,
 
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Toggle whether the currently highlighted result will be replaced or ignored
     pub toggle_selected_inclusion: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Toggle whether all results will be replaced or ignored
     pub toggle_all_selected: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Toggle whether multiselect mode is enabled
     pub toggle_multiselect_mode: Vec<KeyEvent>,
 
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Flip the direction of the multiselect selection
     pub flip_multiselect_direction: Vec<KeyEvent>,
 }
 
@@ -491,13 +516,11 @@ impl Default for KeysSearchFocusResults {
     }
 }
 
-/// Commands available on the replacement-in-progress screen
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 #[derive(Default)]
 pub struct KeysPerformingReplacement {}
 
-/// Commands available on the results screen
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KeysResults {
@@ -505,16 +528,19 @@ pub struct KeysResults {
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the error below
     pub scroll_errors_down: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Navigate to the error above
     pub scroll_errors_up: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
+    /// Exit scooter. This is in addition to the `quit` command in the `general` section.
     pub quit: Vec<KeyEvent>,
 }
 

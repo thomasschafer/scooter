@@ -298,6 +298,8 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 This section can be used to override the default keymappings. The default keymappings are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
 
+There is a `general` section for keymaps that apply to all screens, and then there are screen-specific sections which only apply to certain screens in scooter. Note that if a keymap is bound in both the screen-specific and general sections, the screen-specific mapping takes priority.
+
 You can set any number of mappings for a given command using an array, e.g. `quit = ["esc", "C-c"]`. If you are only setting one keymap, you can omit the square brackets, e.g. `quit = "C-c"`.
 
 <!-- KEYS START -->
@@ -318,7 +320,7 @@ focus_previous_field = "S-tab"
 
 [keys.search.results]
 trigger_replacement = "ret"
-back_to_fields = "C-o"
+back_to_fields = ["C-o", "esc"]
 open_in_editor = "e"
 move_selected_down = ["j", "down", "C-n"]
 move_selected_up = ["k", "up", "C-p"]

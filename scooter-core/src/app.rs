@@ -1439,6 +1439,7 @@ impl<'a> App {
             CompactOnly,
         }
 
+        // TODO(key-remap): generate this based on keymap
         let current_screen_keys = match &self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 let mut keys = vec![];
