@@ -10,7 +10,10 @@ const TOC_START_MARKER: &str = "<!-- TOC START -->";
 const TOC_END_MARKER: &str = "<!-- TOC END -->";
 const CONFIG_START_MARKER: &str = "<!-- CONFIG START -->";
 const CONFIG_END_MARKER: &str = "<!-- CONFIG END -->";
+const KEYS_START_MARKER: &str = "<!-- KEYS START -->";
+const KEYS_END_MARKER: &str = "<!-- KEYS END -->";
 const TOC_HEADING: &str = "## Contents";
+const KEYS_FIELD_NAME: &str = "keys";
 
 pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool) -> Result<()> {
     println!("Processing README file: {}", readme_path.display());
@@ -24,6 +27,7 @@ pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool)
 
     if config_path.exists() {
         updated_content = generate_config_docs(&updated_content, config_path)?;
+        updated_content = generate_keys_docs(&updated_content)?;
     } else {
         println!(
             "Warning: Config file '{}' not found.",
@@ -211,6 +215,12 @@ fn process_struct(
         for field in &fields.named {
             if let Some(ident) = &field.ident {
                 let field_name = ident.to_string();
+
+                // Skip the keys field as it has its own section (see `generate_keys_docs`)
+                if toml_prefix.is_empty() && field_name == KEYS_FIELD_NAME {
+                    continue;
+                }
+
                 let field_doc = extract_doc_comment(&field.attrs);
 
                 if let Some(nested_struct) = all_structs.get(&get_type_name(field)) {
@@ -265,6 +275,50 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     }
 
     doc_lines.join("\n")
+}
+
+// TODO(key-remap): include doc comments
+fn generate_keys_docs(content: &str) -> Result<String> {
+    println!("Generating keys documentation...");
+
+    let keys_config = scooter_core::config::KeysConfig::default();
+    let toml_str =
+        toml::to_string(&keys_config).context("Failed to serialize keys config to TOML")?;
+
+    // Prepend [keys] to all section headers to make them nested under keys
+    let keys_str_with_prefix = toml_str
+        .lines()
+        .map(|line| {
+            if line.starts_with('[') && !line.starts_with("[[") {
+                format!("[{}.{}", KEYS_FIELD_NAME, &line[1..])
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let keys_docs = format!("```toml\n{keys_str_with_prefix}\n```\n");
+
+    let mut result = String::new();
+    let mut in_keys_section = false;
+    for line in content.lines() {
+        if line == KEYS_START_MARKER {
+            result.push_str(line);
+            result.push('\n');
+            result.push_str(&keys_docs);
+            in_keys_section = true;
+        } else if line == KEYS_END_MARKER {
+            in_keys_section = false;
+            result.push_str(line);
+            result.push('\n');
+        } else if !in_keys_section {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
