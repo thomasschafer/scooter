@@ -1173,20 +1173,20 @@ impl<'a> App {
     }
 
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> EventHandlingResult {
+        if self.popup.is_some() {
+            self.clear_popup();
+            return EventHandlingResult::Rerender;
+        }
+        if key_event.code == KeyCode::Esc && self.multiselect_enabled() {
+            self.toggle_multiselect_mode();
+            return EventHandlingResult::Rerender;
+        }
+
         let event = if let Some(event) = self.key_map.lookup(&self.current_screen, key_event) {
             event
         } else {
             // TODO(key-remap): test this
-            if self.popup.is_some() {
-                self.clear_popup();
-                return EventHandlingResult::Rerender;
-            }
-            // TODO(key-remap): test this
             if key_event.code == KeyCode::Esc {
-                if self.multiselect_enabled() {
-                    self.toggle_multiselect_mode();
-                    return EventHandlingResult::Rerender;
-                }
                 // TODO(key-remap): test this, both with and without override
                 self.set_popup(Popup::Text{
                     title: "Key mapping deprecated".to_string(),
