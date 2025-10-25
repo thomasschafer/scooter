@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - 'README.md'
-      - 'scooter/src/config.rs'
+      - 'scooter-core/src/config.rs'
       - '.github/workflows/check-readme.yml'
       - 'xtask/**'
 

@@ -25,4 +25,4 @@ expression: snapshot.as_ref()
      ↪  so it will initially be truncated, but REPLACED can toggle text        
      ↪ wrapping so that it all shows up on the screen.                         
                                                                                
-space> toggle / <C-o> back to search fields / <enter> replace selected / <C-h>
+space> toggle / <esc> back to search fields / <ret> replace selected / <C-h> he

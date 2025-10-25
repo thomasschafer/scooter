@@ -20,7 +20,7 @@ enum Commands {
         readme: PathBuf,
 
         /// Path to config.rs file
-        #[arg(long, default_value = "scooter/src/config.rs")]
+        #[arg(long, default_value = "scooter-core/src/config.rs")]
         config: PathBuf,
 
         /// Only check if README is up to date, without modifying it

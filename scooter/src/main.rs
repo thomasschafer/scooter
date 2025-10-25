@@ -10,6 +10,7 @@ use std::{
 
 use scooter_core::{
     app::AppRunConfig,
+    config,
     fields::{FieldValue, SearchFieldValues},
 };
 
@@ -18,8 +19,6 @@ use headless::{run_headless, run_headless_with_stdin};
 use logging::{setup_logging, DEFAULT_LOG_LEVEL};
 
 mod app_runner;
-mod config;
-mod conversions;
 mod headless;
 mod logging;
 mod tui;

@@ -8,32 +8,32 @@ expression: app.keymaps_all()
         "toggle",
     ),
     (
-        "a",
+        "<a>",
         "toggle all",
     ),
     (
-        "v",
+        "<v>",
         "toggle multi-select mode",
     ),
     (
-        "<A-;>",
+        "<M-;>",
         "flip multi-select direction",
     ),
     (
-        "e",
+        "<e>",
         "open in editor",
     ),
     (
-        "<C-o>",
+        "<esc>",
         "back to search fields",
     ),
     (
-        "j",
-        "up",
+        "<j>",
+        "down",
     ),
     (
-        "k",
-        "down",
+        "<k>",
+        "up",
     ),
     (
         "<C-u>",
@@ -52,15 +52,15 @@ expression: app.keymaps_all()
         "down a full page",
     ),
     (
-        "g",
+        "<g>",
         "jump to top",
     ),
     (
-        "G",
+        "<G>",
         "jump to bottom",
     ),
     (
-        "<enter>",
+        "<ret>",
         "replace selected",
     ),
     (
@@ -77,7 +77,7 @@ expression: app.keymaps_all()
     ),
     (
         "<esc>",
-        "quit / close popup / exit multi-select",
+        "close popup / exit multi-select",
     ),
     (
         "<C-c>",
