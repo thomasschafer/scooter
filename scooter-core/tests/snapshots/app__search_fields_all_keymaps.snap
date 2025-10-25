@@ -4,7 +4,7 @@ expression: app.keymaps_all()
 ---
 [
     (
-        "<enter>",
+        "<ret>",
         "jump to results",
     ),
     (
@@ -20,7 +20,7 @@ expression: app.keymaps_all()
         "toggle checkbox",
     ),
     (
-        "<A-u>",
+        "<M-u>",
         "unlock pre-populated fields",
     ),
     (
@@ -37,7 +37,7 @@ expression: app.keymaps_all()
     ),
     (
         "<esc>",
-        "quit / close popup",
+        "close popup",
     ),
     (
         "<C-c>",

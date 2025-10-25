@@ -12,15 +12,15 @@ expression: snapshot
     ┌───┐                                                                                          
     │   │ Fixed strings                                                                            
     └───┘   ┌──────────────────────────────────Help───────────────────────────────────┐            
-    ┌───┐   │  <enter>  jump to results                                               │            
+    ┌───┐   │    <ret>  jump to results                                               │            
     │   │ Ma│    <tab>  focus next                                                    │            
     └───┘   │  <S-tab>  focus previous                                                │            
     ┌───┐   │  <space>  toggle checkbox                                               │            
-    │ X │ Ma│    <A-u>  unlock pre-populated fields                                   │            
+    │ X │ Ma│    <M-u>  unlock pre-populated fields                                   │            
     └───┘   │    <C-l>  toggle text wrapping in preview                               │            
     ┌Files t│    <C-r>  reset                                                         │──────┐     
     │       │    <C-h>  help                                                          │      │     
-    └───────│    <esc>  quit / close popup                                            │──────┘     
+    └───────│    <esc>  close popup                                                   │──────┘     
     ┌Files t│    <C-c>  quit                                                          │──────┐     
     │       └─────────────────────────────────────────────────────────────────────────┘      │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     
@@ -31,4 +31,4 @@ expression: snapshot
                                                                                                    
                                                                                                    
                                                                                                    
-     <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <esc> close popup
+         <ret> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <C-c> quit
