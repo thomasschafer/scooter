@@ -296,7 +296,7 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 ### `[keys]` section
 
-This section can be used to override the default keymappings. The default keymappings are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
+This section can be used to override the default keymappings. These defaults are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
 
 There is a `general` section for keymaps that apply to all screens, and then there are screen-specific sections which only apply to certain screens in scooter. Note that if a keymap is bound in both the screen-specific and general sections, the screen-specific mapping takes priority.
 
@@ -320,14 +320,14 @@ focus_previous_field = "S-tab"
 
 [keys.search.results]
 trigger_replacement = "ret"
-back_to_fields = ["C-o", "esc"]
+back_to_fields = ["esc", "C-o"]
 open_in_editor = "e"
 move_selected_down = ["j", "down", "C-n"]
 move_selected_up = ["k", "up", "C-p"]
 move_selected_down_half_page = "C-d"
-move_selected_down_full_page = ["pagedown", "C-f"]
+move_selected_down_full_page = ["C-f", "pagedown"]
 move_selected_up_half_page = "C-u"
-move_selected_up_full_page = ["pageup", "C-b"]
+move_selected_up_full_page = ["C-b", "pageup"]
 move_selected_top = "g"
 move_selected_bottom = "G"
 toggle_selected_inclusion = "space"

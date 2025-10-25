@@ -1,10 +1,10 @@
 ---
-source: scooter/tests/app.rs
+source: scooter-core/tests/app.rs
 expression: app.keymaps_compact()
 ---
 [
     (
-        "<enter>",
+        "<ret>",
         "jump to results",
     ),
     (
@@ -20,7 +20,7 @@ expression: app.keymaps_compact()
         "help",
     ),
     (
-        "<esc>",
-        "close popup",
+        "<C-c>",
+        "quit",
     ),
 ]
