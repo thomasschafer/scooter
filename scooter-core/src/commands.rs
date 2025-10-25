@@ -318,7 +318,7 @@ impl KeyMap {
             return Some(cmd);
         }
 
-        // Check general commands
+        // Check general commands - must happen after looking up screen-specific commands
         if let Some(cmd) = self.general.get(&key_event) {
             return Some(Command::General(cmd.clone()));
         }
