@@ -38,7 +38,7 @@ use crate::{
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     replace::{self, PerformingReplacementState, ReplaceState},
     search::Searcher,
-    utils::ceil_div,
+    utils::{ceil_div, Either, Either::Left, Either::Right},
 };
 
 #[derive(Debug, Clone)]
@@ -506,7 +506,6 @@ impl<'a> App {
             search_fields_state.focussed_section = FocussedSection::SearchResults;
         }
 
-        // Build the key map from config, returning a helpful error if there are conflicts
         let key_map = KeyMap::from_config(&config.keys).map_err(display_conflict_errors)?;
 
         let mut app = Self {
@@ -1173,43 +1172,15 @@ impl<'a> App {
     }
 
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> EventHandlingResult {
-        if self.popup.is_some() {
-            self.clear_popup();
-            return EventHandlingResult::Rerender;
-        }
-        if key_event.code == KeyCode::Esc && self.multiselect_enabled() {
-            self.toggle_multiselect_mode();
-            return EventHandlingResult::Rerender;
-        }
-
-        let event = if let Some(event) = self.key_map.lookup(&self.current_screen, key_event) {
-            event
-        } else {
-            if key_event.code == KeyCode::Esc {
-                // TODO(key-remap): test this, both with and without override
-                self.set_popup(Popup::Text{
-                    title: "Key mapping deprecated".to_string(),
-                    body: "Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead.\n\nYou can remap this in your scooter config.".to_string(),
-                });
-                return EventHandlingResult::Rerender;
-            }
-
-            // If we're in SearchFields focus, treat unmatched keys as text input
-            if let Screen::SearchFields(state) = &self.current_screen {
-                if state.focussed_section == FocussedSection::SearchFields {
-                    Command::SearchFields(CommandSearchFields::SearchFocusFields(
-                        CommandSearchFocusFields::EnterChars(key_event.code, key_event.modifiers),
-                    ))
-                } else {
-                    return EventHandlingResult::None;
-                }
-            } else {
-                return EventHandlingResult::None;
-            }
+        let command = match self.handle_special_cases(key_event) {
+            Left(command) => command,
+            Right(event_handling_result) => return event_handling_result,
         };
 
-        if let Command::General(event) = event {
-            match event {
+        // Note that general commands are looked up after screen-specific commands in `.lookup`, so this if will only be hit
+        // if there ar eno screen-specific commands
+        if let Command::General(command) = command {
+            match command {
                 CommandGeneral::Quit => {
                     self.reset();
                     return EventHandlingResult::Exit(None);
@@ -1228,17 +1199,17 @@ impl<'a> App {
         match &mut (self.current_screen) {
             Screen::SearchFields(search_fields_state) => {
                 #[allow(clippy::single_match)]
-                let Command::SearchFields(event) = event
+                let Command::SearchFields(command) = command
                 else {
-                    panic!("Expected SearchFields event, found {event:?}");
+                    panic!("Expected SearchFields command, found {command:?}");
                 };
 
-                match event {
+                match command {
                     CommandSearchFields::TogglePreviewWrapping => {
                         self.config.preview.wrap_text = !self.config.preview.wrap_text;
                         EventHandlingResult::Rerender
                     }
-                    CommandSearchFields::SearchFocusFields(event) => {
+                    CommandSearchFields::SearchFocusFields(command) => {
                         if !matches!(
                             search_fields_state.focussed_section,
                             FocussedSection::SearchFields
@@ -1248,9 +1219,9 @@ impl<'a> App {
                                 search_fields_state.focussed_section
                             );
                         }
-                        self.handle_command_search_fields(event)
+                        self.handle_command_search_fields(command)
                     }
-                    CommandSearchFields::SearchFocusResults(event) => {
+                    CommandSearchFields::SearchFocusResults(command) => {
                         if !matches!(
                             search_fields_state.focussed_section,
                             FocussedSection::SearchResults
@@ -1261,18 +1232,64 @@ impl<'a> App {
                             );
                         }
                         // TODO(key-remap): currently this always returns Some
-                        self.handle_command_search_results(event)
+                        self.handle_command_search_results(command)
                     }
                 }
             }
             Screen::PerformingReplacement(_) => EventHandlingResult::None,
             Screen::Results(replace_state) => {
-                let Command::Results(event) = event else {
-                    panic!("Expected SearchFields event, found {event:?}");
+                let Command::Results(command) = command else {
+                    panic!("Expected SearchFields event, found {command:?}");
                 };
-                replace_state.handle_command_results(event)
+                replace_state.handle_command_results(command)
             }
         }
+    }
+
+    fn handle_special_cases(
+        &mut self,
+        key_event: KeyEvent,
+    ) -> Either<Command, EventHandlingResult> {
+        let maybe_event = self.key_map.lookup(&self.current_screen, key_event);
+
+        // Quit should take precedent over closing popup etc.
+        if !matches!(maybe_event, Some(Command::General(CommandGeneral::Quit))) {
+            if self.popup.is_some() {
+                self.clear_popup();
+                return Right(EventHandlingResult::Rerender);
+            }
+            if key_event.code == KeyCode::Esc && self.multiselect_enabled() {
+                self.toggle_multiselect_mode();
+                return Right(EventHandlingResult::Rerender);
+            }
+        }
+
+        let event = if let Some(event) = maybe_event {
+            event
+        } else {
+            if key_event.code == KeyCode::Esc {
+                // TODO(key-remap): test this, both with and without override
+                self.set_popup(Popup::Text{
+                    title: "Key mapping deprecated".to_string(),
+                    body: "Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead.\n\nYou can remap this in your scooter config.".to_string(),
+                });
+                return Right(EventHandlingResult::Rerender);
+            }
+
+            // If we're in SearchFields focus, treat unmatched keys as text input
+            if let Screen::SearchFields(state) = &self.current_screen {
+                if state.focussed_section == FocussedSection::SearchFields {
+                    Command::SearchFields(CommandSearchFields::SearchFocusFields(
+                        CommandSearchFocusFields::EnterChars(key_event.code, key_event.modifiers),
+                    ))
+                } else {
+                    return Right(EventHandlingResult::None);
+                }
+            } else {
+                return Right(EventHandlingResult::None);
+            }
+        };
+        Left(event)
     }
 
     pub fn validate_fields(&mut self) -> anyhow::Result<Option<Searcher>> {
@@ -2183,5 +2200,40 @@ mod tests {
         );
         state.move_selected_down();
         assert_eq!(state.selected, Selected::Single(0));
+    }
+
+    #[test]
+    fn test_key_handling_quit_takes_precedent() {
+        let (mut app, _app_event_receiver) = App::new_with_receiver(
+            InputSource::Directory(std::env::current_dir().unwrap()),
+            &SearchFieldValues::default(),
+            &AppRunConfig::default(),
+            Config::default(),
+        )
+        .unwrap();
+        app.set_popup(Popup::Text {
+            title: "Error title".to_owned(),
+            body: "some text in the body".to_owned(),
+        });
+        let res = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(matches!(res, EventHandlingResult::Exit(None)));
+    }
+
+    #[test]
+    fn test_key_handling_unmapped_key_closes_popup() {
+        let (mut app, _app_event_receiver) = App::new_with_receiver(
+            InputSource::Directory(std::env::current_dir().unwrap()),
+            &SearchFieldValues::default(),
+            &AppRunConfig::default(),
+            Config::default(),
+        )
+        .unwrap();
+        app.set_popup(Popup::Text {
+            title: "Error title".to_owned(),
+            body: "some text in the body".to_owned(),
+        });
+        let res = app.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(matches!(res, EventHandlingResult::Rerender));
+        assert!(app.popup().is_none());
     }
 }
