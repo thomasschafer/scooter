@@ -473,8 +473,8 @@ impl Default for KeysSearchFocusResults {
         Self {
             trigger_replacement: vec![KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
             back_to_fields: vec![
-                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
                 KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
             ],
             open_in_editor: vec![KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)],
 
@@ -493,16 +493,16 @@ impl Default for KeysSearchFocusResults {
                 KeyModifiers::CONTROL,
             )],
             move_selected_down_full_page: vec![
-                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             ],
             move_selected_up_half_page: vec![KeyEvent::new(
                 KeyCode::Char('u'),
                 KeyModifiers::CONTROL,
             )],
             move_selected_up_full_page: vec![
-                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+                KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
             ],
             move_selected_top: vec![KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)],
             move_selected_bottom: vec![KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)],

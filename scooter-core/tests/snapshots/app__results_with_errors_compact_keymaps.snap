@@ -1,6 +1,5 @@
 ---
-source: scooter/tests/app.rs
-assertion_line: 1596
+source: scooter-core/tests/app.rs
 expression: app.keymaps_compact()
 ---
 [
@@ -21,7 +20,7 @@ expression: app.keymaps_compact()
         "help",
     ),
     (
-        "<esc>",
+        "<C-c>",
         "quit",
     ),
 ]

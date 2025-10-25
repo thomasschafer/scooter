@@ -25,4 +25,4 @@ expression: snapshot.as_ref()
      quite as long.                                                            
      Some                                                                      
                                                                                
-space> toggle / <C-o> back to search fields / <enter> replace selected / <C-h>
+space> toggle / <esc> back to search fields / <ret> replace selected / <C-h> he

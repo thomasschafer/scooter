@@ -1439,20 +1439,32 @@ impl<'a> App {
         self.popup = Some(popup);
     }
 
-    pub fn keymaps_all(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_all(&self) -> Vec<(String, String)> {
         self.keymaps_impl(false)
     }
 
-    pub fn keymaps_compact(&self) -> Vec<(&str, String)> {
+    pub fn keymaps_compact(&self) -> Vec<(String, String)> {
         self.keymaps_impl(true)
     }
 
     #[allow(clippy::too_many_lines)]
-    fn keymaps_impl(&self, compact: bool) -> Vec<(&str, String)> {
+    fn keymaps_impl(&self, compact: bool) -> Vec<(String, String)> {
         enum Show {
             Both,
             FullOnly,
+            #[allow(dead_code)]
             CompactOnly,
+        }
+
+        macro_rules! keymap {
+            ($($path:tt).+, $name:expr, $show:expr $(,)?) => {
+                (
+                    format!("<{}>", self.config.keys.$($path).+.first()
+                        .map_or_else(|| "n/a".to_string(), std::string::ToString::to_string)),
+                    $name,
+                    $show,
+                )
+            };
         }
 
         // TODO(key-remap): generate this based on keymap
@@ -1462,44 +1474,115 @@ impl<'a> App {
                 match search_fields_state.focussed_section {
                     FocussedSection::SearchFields => {
                         keys.extend([
-                            ("<enter>", "jump to results", Show::Both),
-                            ("<tab>", "focus next", Show::Both),
-                            ("<S-tab>", "focus previous", Show::FullOnly),
-                            ("<space>", "toggle checkbox", Show::FullOnly),
+                            keymap!(search.fields.trigger_search, "jump to results", Show::Both),
+                            keymap!(search.fields.focus_next_field, "focus next", Show::Both),
+                            keymap!(
+                                search.fields.focus_previous_field,
+                                "focus previous",
+                                Show::FullOnly,
+                            ),
+                            ("<space>".to_string(), "toggle checkbox", Show::FullOnly), // TODO(key-remap): add to config?
                         ]);
                         if self.config.search.disable_prepopulated_fields {
-                            keys.push(("<A-u>", "unlock pre-populated fields", Show::FullOnly));
+                            keys.push(keymap!(
+                                search.fields.unlock_prepopulated_fields,
+                                "unlock pre-populated fields",
+                                if self.search_fields.fields.iter().any(|f| f.set_by_cli) {
+                                    Show::Both
+                                } else {
+                                    Show::FullOnly
+                                },
+                            ));
                         }
                     }
                     FocussedSection::SearchResults => {
                         keys.extend([
-                            ("<space>", "toggle", Show::Both),
-                            ("a", "toggle all", Show::FullOnly),
-                            ("v", "toggle multi-select mode", Show::FullOnly),
-                            ("<A-;>", "flip multi-select direction", Show::FullOnly),
-                            ("e", "open in editor", Show::FullOnly),
-                            ("<C-o>", "back to search fields", Show::Both),
-                            ("j", "up", Show::FullOnly),
-                            ("k", "down", Show::FullOnly),
-                            ("<C-u>", "up half a page", Show::FullOnly),
-                            ("<C-d>", "down half a page", Show::FullOnly),
-                            ("<C-b>", "up a full page", Show::FullOnly),
-                            ("<C-f>", "down a full page", Show::FullOnly),
-                            ("g", "jump to top", Show::FullOnly),
-                            ("G", "jump to bottom", Show::FullOnly),
+                            keymap!(
+                                search.results.toggle_selected_inclusion,
+                                "toggle",
+                                Show::Both,
+                            ),
+                            keymap!(
+                                search.results.toggle_all_selected,
+                                "toggle all",
+                                Show::FullOnly,
+                            ),
+                            keymap!(
+                                search.results.toggle_multiselect_mode,
+                                "toggle multi-select mode",
+                                Show::FullOnly,
+                            ),
+                            keymap!(
+                                search.results.flip_multiselect_direction,
+                                "flip multi-select direction",
+                                Show::FullOnly,
+                            ),
+                            keymap!(
+                                search.results.open_in_editor,
+                                "open in editor",
+                                Show::FullOnly,
+                            ),
+                            keymap!(
+                                search.results.back_to_fields,
+                                "back to search fields",
+                                Show::Both,
+                            ),
+                            keymap!(search.results.move_selected_down, "down", Show::FullOnly),
+                            keymap!(search.results.move_selected_up, "up", Show::FullOnly),
+                            keymap!(
+                                search.results.move_selected_up_half_page,
+                                "up half a page",
+                                Show::FullOnly
+                            ),
+                            keymap!(
+                                search.results.move_selected_down_half_page,
+                                "down half a page",
+                                Show::FullOnly
+                            ),
+                            keymap!(
+                                search.results.move_selected_up_full_page,
+                                "up a full page",
+                                Show::FullOnly
+                            ),
+                            keymap!(
+                                search.results.move_selected_down_full_page,
+                                "down a full page",
+                                Show::FullOnly
+                            ),
+                            keymap!(
+                                search.results.move_selected_top,
+                                "jump to top",
+                                Show::FullOnly
+                            ),
+                            keymap!(
+                                search.results.move_selected_bottom,
+                                "jump to bottom",
+                                Show::FullOnly
+                            ),
                         ]);
                         if self.search_has_completed() {
-                            keys.push(("<enter>", "replace selected", Show::Both));
+                            keys.push(keymap!(
+                                search.results.trigger_replacement,
+                                "replace selected",
+                                Show::Both,
+                            ));
                         }
                     }
                 }
-                keys.push(("<C-l>", "toggle text wrapping in preview", Show::FullOnly));
+                keys.push(keymap!(
+                    search.toggle_preview_wrapping,
+                    "toggle text wrapping in preview",
+                    Show::FullOnly,
+                ));
                 keys
             }
             Screen::PerformingReplacement(_) => vec![],
             Screen::Results(replace_state) => {
                 if !replace_state.errors.is_empty() {
-                    vec![("<j>", "down", Show::Both), ("<k>", "up", Show::Both)]
+                    vec![
+                        keymap!(results.scroll_errors_down, "down", Show::Both),
+                        keymap!(results.scroll_errors_up, "up", Show::Both),
+                    ]
                 } else {
                     vec![]
                 }
@@ -1511,8 +1594,9 @@ impl<'a> App {
         } else {
             false
         };
+
         let esc_help = format!(
-            "quit / close popup{}",
+            "close popup{}",
             if on_search_results {
                 " / exit multi-select"
             } else {
@@ -1521,8 +1605,8 @@ impl<'a> App {
         );
 
         let additional_keys = vec![
-            (
-                "<C-r>",
+            keymap!(
+                general.reset,
                 "reset",
                 if on_search_results {
                     Show::FullOnly
@@ -1530,20 +1614,9 @@ impl<'a> App {
                     Show::Both
                 },
             ),
-            ("<C-h>", "help", Show::Both),
-            (
-                "<esc>",
-                if self.popup.is_some() {
-                    "close popup"
-                } else if self.multiselect_enabled() {
-                    "exit multi-select"
-                } else {
-                    "quit"
-                },
-                Show::CompactOnly,
-            ),
-            ("<esc>", &esc_help, Show::FullOnly),
-            ("<C-c>", "quit", Show::FullOnly),
+            keymap!(general.show_help_menu, "help", Show::Both),
+            ("<esc>".to_string(), esc_help.as_str(), Show::FullOnly),
+            keymap!(general.quit, "quit", Show::Both),
         ];
 
         let all_keys = current_screen_keys.into_iter().chain(additional_keys);

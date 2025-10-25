@@ -1264,7 +1264,7 @@ fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     render_paragraph_popup("Errors", error_lines, frame, area);
 }
 
-fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: Rect) {
+fn render_help_popup(keymaps: Vec<(String, String)>, frame: &mut Frame<'_>, area: Rect) {
     let max_from_width = keymaps
         .iter()
         .map(|(from, _)| from.len())
