@@ -1,0 +1,9 @@
+---
+source: scooter-core/src/config.rs
+expression: error
+---
+TOML parse error at line 3, column 18
+  |
+3 | trigger_search = "C-Enter"
+  |                  ^^^^^^^^^
+Invalid key binding 'C-Enter': Invalid key code 'Enter'
