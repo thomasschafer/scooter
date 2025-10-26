@@ -229,14 +229,21 @@ where
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum OneOrMany {
-        One(KeyEvent),
-        Many(Vec<KeyEvent>),
+        One(String),
+        Many(Vec<String>),
     }
 
-    match OneOrMany::deserialize(deserializer)? {
-        OneOrMany::One(key) => Ok(vec![key]),
-        OneOrMany::Many(keys) => Ok(keys),
-    }
+    let keys = match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::One(s) => vec![s],
+        OneOrMany::Many(v) => v,
+    };
+
+    keys.into_iter()
+        .map(|s| {
+            s.parse::<KeyEvent>()
+                .map_err(|e| de::Error::custom(format!("Invalid key binding '{s}': {e}")))
+        })
+        .collect()
 }
 
 /// Serialize a Vec of `KeyEvent`s, using a single value if the vec has one element
@@ -751,5 +758,31 @@ trigger_search = "S-tab"
             .unwrap_err()
             .to_string()
             .contains("unknown field `this_doesnt_exist`"));
+    }
+
+    #[test]
+    fn test_invalid_key_code_error_message() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "C-Enter"
+"#,
+        );
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        insta::assert_snapshot!(error);
+    }
+
+    #[test]
+    fn test_invalid_key_modifier_error_message() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "D-ret"
+"#,
+        );
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        insta::assert_snapshot!(error);
     }
 }
