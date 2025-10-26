@@ -304,43 +304,50 @@ You can set any number of mappings for a given command using an array, e.g. `qui
 
 <!-- KEYS START -->
 ```toml
+# Commands available on all screens
 [keys.general]
-quit = "C-c"
-reset = "C-r"
-show_help_menu = "C-h"
+quit = "C-c"            # Exit scooter
+reset = "C-r"           # Cancel in-progress operations, reset fields to default values and return to search screen
+show_help_menu = "C-h"  # Show the help menu containing keymaps
 
+# Commands available on the search screen
 [keys.search]
-toggle_preview_wrapping = "C-l"
+toggle_preview_wrapping = "C-l"  # Toggle wrapping of lines that don't fit within the width of the preview
 
+# Commands available on the search screen, when the search fields are focussed
 [keys.search.fields]
-unlock_prepopulated_fields = "A-u"
-trigger_search = "ret"
-focus_next_field = "tab"
-focus_previous_field = "S-tab"
+unlock_prepopulated_fields = "A-u"  # Allow editing of fields that were populated using CLI args, such as `--search_text foo`. (Note that you can use the `disable_prepopulated_fields` config option to change the default behaviour.)
+trigger_search = "ret"              # Trigger a search
+focus_next_field = "tab"            # Focus on the next field
+focus_previous_field = "S-tab"      # Focus on the previous field
 
+# Commands available on the search screen, when the search results are focussed
 [keys.search.results]
-trigger_replacement = "ret"
-back_to_fields = ["esc", "C-o"]
-open_in_editor = "e"
-move_selected_down = ["j", "down", "C-n"]
-move_selected_up = ["k", "up", "C-p"]
-move_selected_down_half_page = "C-d"
-move_selected_down_full_page = ["C-f", "pagedown"]
-move_selected_up_half_page = "C-u"
-move_selected_up_full_page = ["C-b", "pageup"]
-move_selected_top = "g"
-move_selected_bottom = "G"
-toggle_selected_inclusion = "space"
-toggle_all_selected = "a"
-toggle_multiselect_mode = "v"
-flip_multiselect_direction = "A-;"
+trigger_replacement = "ret"                         # Trigger a replacement
+back_to_fields = ["esc", "C-o"]                     # Move focus back to the search fields
+open_in_editor = "e"                                # Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
+move_selected_down = ["j", "down", "C-n"]           # Navigate to the search result below
+move_selected_up = ["k", "up", "C-p"]               # Navigate to the search result above
+move_selected_down_half_page = "C-d"                # Navigate to the search result half a page below
+move_selected_down_full_page = ["C-f", "pagedown"]  # Navigate to the search result a page below
+move_selected_up_half_page = "C-u"                  # Navigate to the search result half a page above
+move_selected_up_full_page = ["C-b", "pageup"]      # Navigate to the search result a page above
+move_selected_top = "g"                             # Navigate to the first search result
+move_selected_bottom = "G"                          # Navigate to the last search result
+toggle_selected_inclusion = "space"                 # Toggle whether the currently highlighted result will be replaced or ignored
+toggle_all_selected = "a"                           # Toggle whether all results will be replaced or ignored
+toggle_multiselect_mode = "v"                       # Toggle whether multiselect mode is enabled
+flip_multiselect_direction = "A-;"                  # Flip the direction of the multiselect selection
 
+# Commands available on the replacement-in-progress screen
 [keys.performing_replacement]
 
+# Commands available on the results screen
 [keys.results]
-scroll_errors_down = ["j", "down", "C-n"]
-scroll_errors_up = ["k", "up", "C-p"]
-quit = ["ret", "q"]
+scroll_errors_down = ["j", "down", "C-n"]  # Navigate to the error below
+scroll_errors_up = ["k", "up", "C-p"]      # Navigate to the error above
+quit = ["ret", "q"]                        # Exit scooter. This is in addition to the `quit` command in the `general` section.
+
 ```
 <!-- KEYS END -->
 
