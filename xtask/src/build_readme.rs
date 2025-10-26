@@ -159,22 +159,7 @@ fn create_anchor(title: &str) -> String {
 fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
     println!("Extracting config documentation...");
 
-    let config_content = fs::read_to_string(config_path).context(format!(
-        "Failed to read config file: {}",
-        config_path.display()
-    ))?;
-
-    let syntax = parse_file(&config_content).context(format!(
-        "Failed to parse config file: {}",
-        config_path.display()
-    ))?;
-
-    let mut structs: HashMap<String, ItemStruct> = HashMap::new();
-    for item in &syntax.items {
-        if let Item::Struct(s) = item {
-            structs.insert(s.ident.to_string(), s.clone());
-        }
-    }
+    let structs = parse_config_structs(config_path)?;
 
     let mut docs = String::new();
 
@@ -184,25 +169,12 @@ fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
         println!("Warning: Config struct not found in the source file.");
     }
 
-    let mut result = String::new();
-    let mut in_config_section = false;
-    for line in content.lines() {
-        if line == CONFIG_START_MARKER {
-            result.push_str(line);
-            result.push('\n');
-            result.push_str(&docs);
-            in_config_section = true;
-        } else if line == CONFIG_END_MARKER {
-            in_config_section = false;
-            result.push_str(line);
-            result.push('\n');
-        } else if !in_config_section {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    Ok(result)
+    Ok(replace_section_content(
+        content,
+        CONFIG_START_MARKER,
+        CONFIG_END_MARKER,
+        &docs,
+    ))
 }
 
 fn process_struct(
@@ -277,7 +249,6 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     doc_lines.join("\n")
 }
 
-// TODO(key-remap): include doc comments
 fn generate_keys_docs(content: &str) -> Result<String> {
     println!("Generating keys documentation...");
 
@@ -285,40 +256,185 @@ fn generate_keys_docs(content: &str) -> Result<String> {
     let toml_str =
         toml::to_string(&keys_config).context("Failed to serialize keys config to TOML")?;
 
-    // Prepend [keys] to all section headers to make them nested under keys
-    let keys_str_with_prefix = toml_str
-        .lines()
-        .map(|line| {
-            if line.starts_with('[') && !line.starts_with("[[") {
-                format!("[{}.{}", KEYS_FIELD_NAME, &line[1..])
-            } else {
-                line.to_string()
+    let config_path = Path::new("scooter-core/src/config.rs");
+    let structs = parse_config_structs(config_path)?;
+
+    // Extract doc comments for all structs in the keys hierarchy
+    let doc_comments = extract_keys_doc_comments(&structs)?;
+
+    // Parse TOML into sections for alignment
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current_section = String::new();
+    let mut current_lines: Vec<String> = Vec::new();
+
+    for line in toml_str.lines() {
+        if line.starts_with('[') && !line.starts_with("[[") {
+            // Save previous section if it exists
+            if !current_section.is_empty() {
+                sections.push((current_section.clone(), current_lines.clone()));
+                current_lines.clear();
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
 
-    let keys_docs = format!("```toml\n{keys_str_with_prefix}\n```\n");
+            // Extract section name (e.g., "general" from "[general]")
+            let section_name = &line[1..line.len() - 1];
+            current_section = format!("keys.{section_name}");
+        } else if line.contains('=') {
+            current_lines.push(line.to_string());
+        }
+    }
 
+    // Don't forget the last section
+    if !current_section.is_empty() {
+        sections.push((current_section, current_lines));
+    }
+
+    // Generate output with aligned comments
+    let mut keys_str_with_comments = String::new();
+
+    for (section, lines) in sections {
+        // Add section comment above the section header
+        if let Some(doc) = doc_comments.get(&section) {
+            writeln!(keys_str_with_comments, "# {doc}")?;
+        }
+        writeln!(keys_str_with_comments, "[{section}]")?;
+
+        if lines.is_empty() {
+            writeln!(keys_str_with_comments)?;
+            continue;
+        }
+
+        // Calculate max width for alignment
+        let max_width = lines
+            .iter()
+            .map(std::string::String::len)
+            .max()
+            .unwrap_or(0);
+
+        // Add fields with aligned comments
+        for line in &lines {
+            let field_name = line.split('=').next().unwrap().trim();
+            let field_key = format!("{section}.{field_name}");
+
+            if let Some(doc) = doc_comments.get(&field_key) {
+                // Pad line to max_width, then add comment
+                writeln!(keys_str_with_comments, "{line:<max_width$}  # {doc}")?;
+            } else {
+                writeln!(keys_str_with_comments, "{line}")?;
+            }
+        }
+
+        writeln!(keys_str_with_comments)?;
+    }
+
+    let keys_docs = format!("```toml\n{keys_str_with_comments}```\n");
+
+    Ok(replace_section_content(
+        content,
+        KEYS_START_MARKER,
+        KEYS_END_MARKER,
+        &keys_docs,
+    ))
+}
+
+/// Parse config.rs and extract all struct definitions
+fn parse_config_structs(config_path: &Path) -> Result<HashMap<String, ItemStruct>> {
+    let config_content = fs::read_to_string(config_path).context(format!(
+        "Failed to read config file: {}",
+        config_path.display()
+    ))?;
+
+    let syntax = parse_file(&config_content).context(format!(
+        "Failed to parse config file: {}",
+        config_path.display()
+    ))?;
+
+    let mut structs = HashMap::new();
+    for item in &syntax.items {
+        if let Item::Struct(s) = item {
+            structs.insert(s.ident.to_string(), s.clone());
+        }
+    }
+
+    Ok(structs)
+}
+
+/// Replace content between start and end markers with new content
+fn replace_section_content(
+    content: &str,
+    start_marker: &str,
+    end_marker: &str,
+    new_content: &str,
+) -> String {
     let mut result = String::new();
-    let mut in_keys_section = false;
+    let mut in_section = false;
+
     for line in content.lines() {
-        if line == KEYS_START_MARKER {
+        if line == start_marker {
             result.push_str(line);
             result.push('\n');
-            result.push_str(&keys_docs);
-            in_keys_section = true;
-        } else if line == KEYS_END_MARKER {
-            in_keys_section = false;
+            result.push_str(new_content);
+            in_section = true;
+        } else if line == end_marker {
+            in_section = false;
             result.push_str(line);
             result.push('\n');
-        } else if !in_keys_section {
+        } else if !in_section {
             result.push_str(line);
             result.push('\n');
         }
     }
 
-    Ok(result)
+    result
+}
+
+fn extract_keys_doc_comments(
+    structs: &HashMap<String, ItemStruct>,
+) -> Result<HashMap<String, String>> {
+    let mut comments = HashMap::new();
+
+    // Start with KeysConfig struct
+    if let Some(keys_config) = structs.get("KeysConfig") {
+        extract_struct_comments(keys_config, structs, "keys", &mut comments)?;
+    }
+
+    Ok(comments)
+}
+
+fn extract_struct_comments(
+    struct_item: &ItemStruct,
+    all_structs: &HashMap<String, ItemStruct>,
+    prefix: &str,
+    comments: &mut HashMap<String, String>,
+) -> Result<()> {
+    if let Fields::Named(ref fields) = struct_item.fields {
+        for field in &fields.named {
+            if let Some(ident) = &field.ident {
+                let field_name = ident.to_string();
+                let field_path = format!("{prefix}.{field_name}");
+                let doc = extract_doc_comment(&field.attrs);
+
+                let type_name = get_type_name(field);
+
+                // Check if this field is a nested struct
+                if let Some(nested_struct) = all_structs.get(&type_name) {
+                    // Store section-level comment
+                    if !doc.is_empty() {
+                        comments.insert(field_path.clone(), doc);
+                    }
+
+                    // Recursively extract comments from nested struct
+                    extract_struct_comments(nested_struct, all_structs, &field_path, comments)?;
+                } else {
+                    // This is a regular field (Vec<KeyEvent>), store its comment
+                    if !doc.is_empty() {
+                        comments.insert(field_path, doc);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
