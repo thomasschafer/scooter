@@ -313,7 +313,7 @@ show_help_menu = "C-h"
 toggle_preview_wrapping = "C-l"
 
 [keys.search.fields]
-unlock_prepopulated_fields = "M-u"
+unlock_prepopulated_fields = "A-u"
 trigger_search = "ret"
 focus_next_field = "tab"
 focus_previous_field = "S-tab"
@@ -333,7 +333,7 @@ move_selected_bottom = "G"
 toggle_selected_inclusion = "space"
 toggle_all_selected = "a"
 toggle_multiselect_mode = "v"
-flip_multiselect_direction = "M-;"
+flip_multiselect_direction = "A-;"
 
 [keys.performing_replacement]
 

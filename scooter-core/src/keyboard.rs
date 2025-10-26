@@ -453,7 +453,7 @@ impl Serialize for KeyEvent {
 const MODIFIERS: [(KeyModifiers, &str); 3] = [
     (KeyModifiers::SHIFT, "S-"),
     (KeyModifiers::CONTROL, "C-"),
-    (KeyModifiers::ALT, "M-"),
+    (KeyModifiers::ALT, "A-"),
 ];
 
 impl std::fmt::Display for KeyEvent {
@@ -632,7 +632,7 @@ impl std::str::FromStr for KeyEvent {
         for token in tokens {
             let flag = match token {
                 "S" => KeyModifiers::SHIFT,
-                "A" => KeyModifiers::ALT,
+                "A" | "M" => KeyModifiers::ALT,
                 "C" => KeyModifiers::CONTROL,
                 "Meta" | "Cmd" | "Win" => KeyModifiers::SUPER,
                 _ => return Err(anyhow!("Invalid key modifier '{token}-'")),
