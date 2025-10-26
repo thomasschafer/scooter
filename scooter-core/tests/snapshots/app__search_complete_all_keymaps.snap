@@ -16,7 +16,7 @@ expression: app.keymaps_all()
         "toggle multi-select mode",
     ),
     (
-        "<M-;>",
+        "<A-;>",
         "flip multi-select direction",
     ),
     (
