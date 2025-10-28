@@ -360,9 +360,9 @@ Keybindings are specified using optional modifier prefixes combined with key nam
 
 **Available keys**:
 
-Alphanumeric characters (a-z, A-Z, 0-9), function keys (F1-F24), and the following special keys:
+Alphanumeric characters (`a`-`z`, `A`-`Z`, `0`-`9`), function keys (`F1`-`F24`), and the following special keys:
 <!-- KEYS LIST START -->
-`backspace`, `ret`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`, `minus`, `lt`, `gt`, `capslock`, `scrolllock`, `numlock`, `printscreen`, `pause`, `menu`, `keypadbegin`, `play`, `pausemedia`, `playpause`, `reverse`, `stop`, `fastforward`, `rewind`, `tracknext`, `trackprevious`, `record`, `lowervolume`, `raisevolume`, `mutevolume`, `leftshift`, `leftcontrol`, `leftalt`, `leftsuper`, `lefthyper`, `leftmeta`, `rightshift`, `rightcontrol`, `rightalt`, `rightsuper`, `righthyper`, `rightmeta`, `isolevel3shift`, `isolevel5shift`
+`backspace`, `ret`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`
 <!-- KEYS LIST END -->
 
 ## Editor configuration
