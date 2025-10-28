@@ -261,12 +261,13 @@ fn generate_key_format_docs(content: &str) -> Result<String> {
 
     // Parse keyboard.rs and extract modifiers
     let modifiers = extract_modifier_strings(keyboard_path)?;
-    let modifiers_list_formatted: Vec<String> = modifiers.iter().map(|m| format!("`{}`", m)).collect();
+    let modifiers_list_formatted: Vec<String> =
+        modifiers.iter().map(|m| format!("`{m}`")).collect();
     let modifiers_list = format!("{}\n", modifiers_list_formatted.join(", "));
 
     // Parse keyboard.rs and extract all key constants
     let keys = extract_key_constants(keyboard_path)?;
-    let keys_list: Vec<String> = keys.iter().map(|k| format!("`{}`", k)).collect();
+    let keys_list: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
     let keys_list_str = format!("{}\n", keys_list.join(", "));
 
     // Replace modifiers list
@@ -290,11 +291,15 @@ fn generate_key_format_docs(content: &str) -> Result<String> {
 
 /// Extract modifier strings from the MODIFIERS const in keyboard.rs
 fn extract_modifier_strings(keyboard_path: &Path) -> Result<Vec<String>> {
-    let content = fs::read_to_string(keyboard_path)
-        .context(format!("Failed to read keyboard file: {}", keyboard_path.display()))?;
+    let content = fs::read_to_string(keyboard_path).context(format!(
+        "Failed to read keyboard file: {}",
+        keyboard_path.display()
+    ))?;
 
-    let syntax = parse_file(&content)
-        .context(format!("Failed to parse keyboard file: {}", keyboard_path.display()))?;
+    let syntax = parse_file(&content).context(format!(
+        "Failed to parse keyboard file: {}",
+        keyboard_path.display()
+    ))?;
 
     // Find the MODIFIERS const
     for item in &syntax.items {
@@ -331,11 +336,15 @@ fn extract_modifier_strings(keyboard_path: &Path) -> Result<Vec<String>> {
 
 /// Extract all const string values from the `keys` module in keyboard.rs
 fn extract_key_constants(keyboard_path: &Path) -> Result<Vec<String>> {
-    let content = fs::read_to_string(keyboard_path)
-        .context(format!("Failed to read keyboard file: {}", keyboard_path.display()))?;
+    let content = fs::read_to_string(keyboard_path).context(format!(
+        "Failed to read keyboard file: {}",
+        keyboard_path.display()
+    ))?;
 
-    let syntax = parse_file(&content)
-        .context(format!("Failed to parse keyboard file: {}", keyboard_path.display()))?;
+    let syntax = parse_file(&content).context(format!(
+        "Failed to parse keyboard file: {}",
+        keyboard_path.display()
+    ))?;
 
     let mut key_values = Vec::new();
 
@@ -347,6 +356,16 @@ fn extract_key_constants(keyboard_path: &Path) -> Result<Vec<String>> {
                     // Extract all const declarations
                     for item in items {
                         if let Item::Const(const_item) = item {
+                            let const_name = const_item.ident.to_string();
+
+                            // Check if this const should be ignored in docs by looking for lines that contain both the const name and DOCS: ignore
+                            if content.lines().any(|line| {
+                                line.contains(&format!("const {const_name}: "))
+                                    && line.contains("// DOCS: ignore")
+                            }) {
+                                continue;
+                            }
+
                             // Extract the string literal value
                             if let syn::Expr::Lit(expr_lit) = &*const_item.expr {
                                 if let syn::Lit::Str(lit_str) = &expr_lit.lit {
