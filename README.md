@@ -298,10 +298,6 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 This section can be used to override the default keymappings. These defaults are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
 
-There is a `general` section for keymaps that apply to all screens, and then there are screen-specific sections which only apply to certain screens in scooter. Note that if a keymap is bound in both the screen-specific and general sections, the screen-specific mapping takes priority.
-
-You can set any number of mappings for a given command using an array, e.g. `quit = ["esc", "C-c"]`. If you are only setting one keymap, you can omit the square brackets, e.g. `quit = "C-c"`.
-
 <!-- KEYS START -->
 ```toml
 # Commands available on all screens
@@ -351,7 +347,23 @@ quit = ["ret", "q"]                        # Exit scooter. This is in addition t
 ```
 <!-- KEYS END -->
 
-<!-- TODO(key-remap): add full list of available keys and modifiers programmatically --> 
+There is a `general` section for keymaps that apply to all screens, and then there are screen-specific sections which only apply to certain screens. Note that if a keymap is bound in both the screen-specific and general sections, the screen-specific mapping takes priority.
+
+You can set any number of mappings for a given command using an array, e.g. `quit = ["esc", "C-c"]`. If you are only setting one keymap, you can omit the square brackets, e.g. `quit = "C-c"`.
+
+Keybindings are specified using optional modifier prefixes combined with key names. For example, `C-a` represents Ctrl+a, `A-S-x` represents Alt+Shift+x, and `j` represents the j key with no modifiers.
+
+**Available modifiers:**
+<!-- MODIFIERS LIST START -->
+`S-`, `C-`, `A-`
+<!-- MODIFIERS LIST END -->
+
+**Available keys**:
+
+Alphanumeric characters (a-z, A-Z, 0-9), function keys (F1-F24), and the following special keys:
+<!-- KEYS LIST START -->
+`backspace`, `ret`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`, `minus`, `lt`, `gt`, `capslock`, `scrolllock`, `numlock`, `printscreen`, `pause`, `menu`, `keypadbegin`, `play`, `pausemedia`, `playpause`, `reverse`, `stop`, `fastforward`, `rewind`, `tracknext`, `trackprevious`, `record`, `lowervolume`, `raisevolume`, `mutevolume`, `leftshift`, `leftcontrol`, `leftalt`, `leftsuper`, `lefthyper`, `leftmeta`, `rightshift`, `rightcontrol`, `rightalt`, `rightsuper`, `righthyper`, `rightmeta`, `isolevel3shift`, `isolevel5shift`
+<!-- KEYS LIST END -->
 
 ## Editor configuration
 
