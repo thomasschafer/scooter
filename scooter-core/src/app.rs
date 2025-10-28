@@ -1118,37 +1118,37 @@ impl<'a> App {
                 }
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedDown => {
+            CommandSearchFocusResults::MoveDown => {
                 self.get_search_state_unwrap().move_selected_down();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedUp => {
+            CommandSearchFocusResults::MoveUp => {
                 self.get_search_state_unwrap().move_selected_up();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedDownHalfPage => {
+            CommandSearchFocusResults::MoveDownHalfPage => {
                 self.get_search_state_unwrap()
                     .move_selected_down_half_page();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedDownFullPage => {
+            CommandSearchFocusResults::MoveDownFullPage => {
                 self.get_search_state_unwrap()
                     .move_selected_down_full_page();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedUpHalfPage => {
+            CommandSearchFocusResults::MoveUpHalfPage => {
                 self.get_search_state_unwrap().move_selected_up_half_page();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedUpFullPage => {
+            CommandSearchFocusResults::MoveUpFullPage => {
                 self.get_search_state_unwrap().move_selected_up_full_page();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedTop => {
+            CommandSearchFocusResults::MoveTop => {
                 self.get_search_state_unwrap().move_selected_top();
                 EventHandlingResult::Rerender
             }
-            CommandSearchFocusResults::MoveSelectedBottom => {
+            CommandSearchFocusResults::MoveBottom => {
                 self.get_search_state_unwrap().move_selected_bottom();
                 EventHandlingResult::Rerender
             }
@@ -1527,38 +1527,30 @@ impl<'a> App {
                                 "back to search fields",
                                 Show::Both,
                             ),
-                            keymap!(search.results.move_selected_down, "down", Show::FullOnly),
-                            keymap!(search.results.move_selected_up, "up", Show::FullOnly),
+                            keymap!(search.results.move_down, "down", Show::FullOnly),
+                            keymap!(search.results.move_up, "up", Show::FullOnly),
                             keymap!(
-                                search.results.move_selected_up_half_page,
+                                search.results.move_up_half_page,
                                 "up half a page",
                                 Show::FullOnly
                             ),
                             keymap!(
-                                search.results.move_selected_down_half_page,
+                                search.results.move_down_half_page,
                                 "down half a page",
                                 Show::FullOnly
                             ),
                             keymap!(
-                                search.results.move_selected_up_full_page,
+                                search.results.move_up_full_page,
                                 "up a full page",
                                 Show::FullOnly
                             ),
                             keymap!(
-                                search.results.move_selected_down_full_page,
+                                search.results.move_down_full_page,
                                 "down a full page",
                                 Show::FullOnly
                             ),
-                            keymap!(
-                                search.results.move_selected_top,
-                                "jump to top",
-                                Show::FullOnly
-                            ),
-                            keymap!(
-                                search.results.move_selected_bottom,
-                                "jump to bottom",
-                                Show::FullOnly
-                            ),
+                            keymap!(search.results.move_top, "jump to top", Show::FullOnly),
+                            keymap!(search.results.move_bottom, "jump to bottom", Show::FullOnly),
                         ]);
                         if self.search_has_completed() {
                             keys.push(keymap!(

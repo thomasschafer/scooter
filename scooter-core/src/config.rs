@@ -404,49 +404,49 @@ pub struct KeysSearchFocusResults {
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the search result below
-    pub move_selected_down: Vec<KeyEvent>,
+    pub move_down: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the search result above
-    pub move_selected_up: Vec<KeyEvent>,
+    pub move_up: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the search result half a page below
-    pub move_selected_down_half_page: Vec<KeyEvent>,
-    #[serde(
-        deserialize_with = "deserialize_key_or_keys",
-        serialize_with = "serialize_key_or_keys"
-    )]
-    /// Navigate to the search result a page below
-    pub move_selected_down_full_page: Vec<KeyEvent>,
+    pub move_down_half_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the search result half a page above
-    pub move_selected_up_half_page: Vec<KeyEvent>,
+    pub move_up_half_page: Vec<KeyEvent>,
+    #[serde(
+        deserialize_with = "deserialize_key_or_keys",
+        serialize_with = "serialize_key_or_keys"
+    )]
+    /// Navigate to the search result a page below
+    pub move_down_full_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the search result a page above
-    pub move_selected_up_full_page: Vec<KeyEvent>,
+    pub move_up_full_page: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the first search result
-    pub move_selected_top: Vec<KeyEvent>,
+    pub move_top: Vec<KeyEvent>,
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
         serialize_with = "serialize_key_or_keys"
     )]
     /// Navigate to the last search result
-    pub move_selected_bottom: Vec<KeyEvent>,
+    pub move_bottom: Vec<KeyEvent>,
 
     #[serde(
         deserialize_with = "deserialize_key_or_keys",
@@ -485,34 +485,28 @@ impl Default for KeysSearchFocusResults {
             ],
             open_in_editor: vec![KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)],
 
-            move_selected_down: vec![
+            move_down: vec![
                 KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
             ],
-            move_selected_up: vec![
+            move_up: vec![
                 KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
                 KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
             ],
-            move_selected_down_half_page: vec![KeyEvent::new(
-                KeyCode::Char('d'),
-                KeyModifiers::CONTROL,
-            )],
-            move_selected_down_full_page: vec![
+            move_down_half_page: vec![KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)],
+            move_down_full_page: vec![
                 KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
                 KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             ],
-            move_selected_up_half_page: vec![KeyEvent::new(
-                KeyCode::Char('u'),
-                KeyModifiers::CONTROL,
-            )],
-            move_selected_up_full_page: vec![
+            move_up_half_page: vec![KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)],
+            move_up_full_page: vec![
                 KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
                 KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
             ],
-            move_selected_top: vec![KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)],
-            move_selected_bottom: vec![KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)],
+            move_top: vec![KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)],
+            move_bottom: vec![KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE)],
 
             toggle_selected_inclusion: vec![KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)],
             toggle_all_selected: vec![KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)],
