@@ -12,6 +12,10 @@ const CONFIG_START_MARKER: &str = "<!-- CONFIG START -->";
 const CONFIG_END_MARKER: &str = "<!-- CONFIG END -->";
 const KEYS_START_MARKER: &str = "<!-- KEYS START -->";
 const KEYS_END_MARKER: &str = "<!-- KEYS END -->";
+const MODIFIERS_LIST_START_MARKER: &str = "<!-- MODIFIERS LIST START -->";
+const MODIFIERS_LIST_END_MARKER: &str = "<!-- MODIFIERS LIST END -->";
+const KEYS_LIST_START_MARKER: &str = "<!-- KEYS LIST START -->";
+const KEYS_LIST_END_MARKER: &str = "<!-- KEYS LIST END -->";
 const TOC_HEADING: &str = "## Contents";
 const KEYS_FIELD_NAME: &str = "keys";
 
@@ -27,6 +31,7 @@ pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool)
 
     if config_path.exists() {
         updated_content = generate_config_docs(&updated_content, config_path)?;
+        updated_content = generate_key_format_docs(&updated_content)?;
         updated_content = generate_keys_docs(&updated_content)?;
     } else {
         println!(
@@ -247,6 +252,120 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     }
 
     doc_lines.join("\n")
+}
+
+fn generate_key_format_docs(content: &str) -> Result<String> {
+    println!("Generating key format documentation...");
+
+    let keyboard_path = Path::new("scooter-core/src/keyboard.rs");
+
+    // Parse keyboard.rs and extract modifiers
+    let modifiers = extract_modifier_strings(keyboard_path)?;
+    let modifiers_list_formatted: Vec<String> = modifiers.iter().map(|m| format!("`{}`", m)).collect();
+    let modifiers_list = format!("{}\n", modifiers_list_formatted.join(", "));
+
+    // Parse keyboard.rs and extract all key constants
+    let keys = extract_key_constants(keyboard_path)?;
+    let keys_list: Vec<String> = keys.iter().map(|k| format!("`{}`", k)).collect();
+    let keys_list_str = format!("{}\n", keys_list.join(", "));
+
+    // Replace modifiers list
+    let mut updated_content = replace_section_content(
+        content,
+        MODIFIERS_LIST_START_MARKER,
+        MODIFIERS_LIST_END_MARKER,
+        &modifiers_list,
+    );
+
+    // Replace keys list
+    updated_content = replace_section_content(
+        &updated_content,
+        KEYS_LIST_START_MARKER,
+        KEYS_LIST_END_MARKER,
+        &keys_list_str,
+    );
+
+    Ok(updated_content)
+}
+
+/// Extract modifier strings from the MODIFIERS const in keyboard.rs
+fn extract_modifier_strings(keyboard_path: &Path) -> Result<Vec<String>> {
+    let content = fs::read_to_string(keyboard_path)
+        .context(format!("Failed to read keyboard file: {}", keyboard_path.display()))?;
+
+    let syntax = parse_file(&content)
+        .context(format!("Failed to parse keyboard file: {}", keyboard_path.display()))?;
+
+    // Find the MODIFIERS const
+    for item in &syntax.items {
+        if let Item::Const(const_item) = item {
+            if const_item.ident == "MODIFIERS" {
+                // Parse the array expression
+                if let syn::Expr::Array(array) = &*const_item.expr {
+                    let mut modifiers = Vec::new();
+
+                    // Extract string literals from tuples in the array
+                    for elem in &array.elems {
+                        if let syn::Expr::Tuple(tuple) = elem {
+                            // Get the second element of the tuple (the &str)
+                            if tuple.elems.len() >= 2 {
+                                if let syn::Expr::Lit(expr_lit) = &tuple.elems[1] {
+                                    if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                                        modifiers.push(lit_str.value());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !modifiers.is_empty() {
+                        return Ok(modifiers);
+                    }
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("MODIFIERS constant not found in keyboard.rs");
+}
+
+/// Extract all const string values from the `keys` module in keyboard.rs
+fn extract_key_constants(keyboard_path: &Path) -> Result<Vec<String>> {
+    let content = fs::read_to_string(keyboard_path)
+        .context(format!("Failed to read keyboard file: {}", keyboard_path.display()))?;
+
+    let syntax = parse_file(&content)
+        .context(format!("Failed to parse keyboard file: {}", keyboard_path.display()))?;
+
+    let mut key_values = Vec::new();
+
+    // Find the keys module
+    for item in &syntax.items {
+        if let Item::Mod(module) = item {
+            if module.ident == "keys" {
+                if let Some((_, items)) = &module.content {
+                    // Extract all const declarations
+                    for item in items {
+                        if let Item::Const(const_item) = item {
+                            // Extract the string literal value
+                            if let syn::Expr::Lit(expr_lit) = &*const_item.expr {
+                                if let syn::Lit::Str(lit_str) = &expr_lit.lit {
+                                    key_values.push(lit_str.value());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if key_values.is_empty() {
+        anyhow::bail!("No key constants found in keys module");
+    }
+
+    Ok(key_values)
 }
 
 fn generate_keys_docs(content: &str) -> Result<String> {
