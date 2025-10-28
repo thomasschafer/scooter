@@ -47,14 +47,14 @@ pub(crate) enum CommandSearchFocusResults {
     BackToFields,
     OpenInEditor,
 
-    MoveSelectedDown,
-    MoveSelectedUp,
-    MoveSelectedDownHalfPage,
-    MoveSelectedDownFullPage,
-    MoveSelectedUpHalfPage,
-    MoveSelectedUpFullPage,
-    MoveSelectedTop,
-    MoveSelectedBottom,
+    MoveDown,
+    MoveUp,
+    MoveDownHalfPage,
+    MoveDownFullPage,
+    MoveUpHalfPage,
+    MoveUpFullPage,
+    MoveTop,
+    MoveBottom,
 
     ToggleSelectedInclusion,
     ToggleAllSelected,
@@ -165,35 +165,20 @@ impl KeyMap {
                 ),
                 (back_to_fields, CommandSearchFocusResults::BackToFields),
                 (open_in_editor, CommandSearchFocusResults::OpenInEditor),
+                (move_down, CommandSearchFocusResults::MoveDown),
+                (move_up, CommandSearchFocusResults::MoveUp),
                 (
-                    move_selected_down,
-                    CommandSearchFocusResults::MoveSelectedDown
-                ),
-                (move_selected_up, CommandSearchFocusResults::MoveSelectedUp),
-                (
-                    move_selected_down_half_page,
-                    CommandSearchFocusResults::MoveSelectedDownHalfPage
+                    move_down_half_page,
+                    CommandSearchFocusResults::MoveDownHalfPage
                 ),
                 (
-                    move_selected_down_full_page,
-                    CommandSearchFocusResults::MoveSelectedDownFullPage
+                    move_down_full_page,
+                    CommandSearchFocusResults::MoveDownFullPage
                 ),
-                (
-                    move_selected_up_half_page,
-                    CommandSearchFocusResults::MoveSelectedUpHalfPage
-                ),
-                (
-                    move_selected_up_full_page,
-                    CommandSearchFocusResults::MoveSelectedUpFullPage
-                ),
-                (
-                    move_selected_top,
-                    CommandSearchFocusResults::MoveSelectedTop
-                ),
-                (
-                    move_selected_bottom,
-                    CommandSearchFocusResults::MoveSelectedBottom
-                ),
+                (move_up_half_page, CommandSearchFocusResults::MoveUpHalfPage),
+                (move_up_full_page, CommandSearchFocusResults::MoveUpFullPage),
+                (move_top, CommandSearchFocusResults::MoveTop),
+                (move_bottom, CommandSearchFocusResults::MoveBottom),
                 (
                     toggle_selected_inclusion,
                     CommandSearchFocusResults::ToggleSelectedInclusion

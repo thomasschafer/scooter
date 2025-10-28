@@ -319,21 +319,21 @@ focus_previous_field = "S-tab"      # Focus on the previous field
 
 # Commands available on the search screen, when the search results are focussed
 [keys.search.results]
-trigger_replacement = "ret"                         # Trigger a replacement
-back_to_fields = ["esc", "C-o"]                     # Move focus back to the search fields
-open_in_editor = "e"                                # Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
-move_selected_down = ["j", "down", "C-n"]           # Navigate to the search result below
-move_selected_up = ["k", "up", "C-p"]               # Navigate to the search result above
-move_selected_down_half_page = "C-d"                # Navigate to the search result half a page below
-move_selected_down_full_page = ["C-f", "pagedown"]  # Navigate to the search result a page below
-move_selected_up_half_page = "C-u"                  # Navigate to the search result half a page above
-move_selected_up_full_page = ["C-b", "pageup"]      # Navigate to the search result a page above
-move_selected_top = "g"                             # Navigate to the first search result
-move_selected_bottom = "G"                          # Navigate to the last search result
-toggle_selected_inclusion = "space"                 # Toggle whether the currently highlighted result will be replaced or ignored
-toggle_all_selected = "a"                           # Toggle whether all results will be replaced or ignored
-toggle_multiselect_mode = "v"                       # Toggle whether multiselect mode is enabled
-flip_multiselect_direction = "A-;"                  # Flip the direction of the multiselect selection
+trigger_replacement = "ret"                # Trigger a replacement
+back_to_fields = ["esc", "C-o"]            # Move focus back to the search fields
+open_in_editor = "e"                       # Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
+move_down = ["j", "down", "C-n"]           # Navigate to the search result below
+move_up = ["k", "up", "C-p"]               # Navigate to the search result above
+move_down_half_page = "C-d"                # Navigate to the search result half a page below
+move_up_half_page = "C-u"                  # Navigate to the search result half a page above
+move_down_full_page = ["C-f", "pagedown"]  # Navigate to the search result a page below
+move_up_full_page = ["C-b", "pageup"]      # Navigate to the search result a page above
+move_top = "g"                             # Navigate to the first search result
+move_bottom = "G"                          # Navigate to the last search result
+toggle_selected_inclusion = "space"        # Toggle whether the currently highlighted result will be replaced or ignored
+toggle_all_selected = "a"                  # Toggle whether all results will be replaced or ignored
+toggle_multiselect_mode = "v"              # Toggle whether multiselect mode is enabled
+flip_multiselect_direction = "A-;"         # Flip the direction of the multiselect selection
 
 # Commands available on the replacement-in-progress screen
 [keys.performing_replacement]
