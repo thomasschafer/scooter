@@ -6,7 +6,8 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
+    widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
+    Frame,
 };
 use scooter_core::{
     app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
@@ -1293,10 +1294,27 @@ fn render_help_popup(keymaps: Vec<(String, String)>, frame: &mut Frame<'_>, area
 }
 
 fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame<'_>, area: Rect) {
-    let content_height = u16::try_from(content.len()).unwrap() + 2;
-    let popup_area = get_popup_area(area, content_height);
+    let popup_block = create_popup_block(title);
 
-    let popup = Paragraph::new(content).block(create_popup_block(title));
+    // Calculate width available for text (75% of screen width, minus borders and padding)
+    let popup_width = area.width * 75 / 100;
+    let inner_width = popup_width.saturating_sub(4); // 2 for borders + 2 for horizontal padding
+
+    let popup = Paragraph::new(content)
+        .block(popup_block)
+        .wrap(Wrap { trim: true });
+
+    // Calculate popup height: wrapped lines + borders, capped at 80% of screen
+    let wrapped_line_count = popup.line_count(inner_width);
+    let popup_height =
+        (u16::try_from(wrapped_line_count).unwrap_or(u16::MAX)).min(area.height * 80 / 100);
+
+    let popup_area = center(
+        area,
+        Constraint::Percentage(75),
+        Constraint::Length(popup_height),
+    );
+
     frame.render_widget(Clear, popup_area);
     frame.render_widget(popup, popup_area);
 }
@@ -1334,6 +1352,9 @@ fn create_popup_block(title: &str) -> Block<'_> {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
     use super::*;
 
     #[test]
@@ -1944,5 +1965,85 @@ mod tests {
                 ]
             );
         }
+    }
+
+    fn get_snapshot(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let snapshot = buffer
+            .content
+            .chunks(buffer.area.width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        snapshot
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_wrapping_snapshot() {
+        // Test that popup correctly wraps text and sizes appropriately
+        let backend = TestBackend::new(100, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+
+                // Text that should wrap when narrower
+                let content = vec![
+                    Line::from("Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead."),
+                    Line::from(""),
+                    Line::from("You can remap this in your scooter config."),
+                ];
+
+                render_paragraph_popup("Key mapping deprecated", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_narrow_screen_snapshot() {
+        // Test wrapping on a narrow screen
+        let backend = TestBackend::new(50, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let content = vec![
+                    Line::from("Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead."),
+                    Line::from(""),
+                    Line::from("You can remap this in your scooter config."),
+                ];
+                render_paragraph_popup("Key mapping deprecated", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_short_text_snapshot() {
+        // Test that popup sizes appropriately for short text
+        let backend = TestBackend::new(100, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let content = vec![Line::from("Short message")];
+                render_paragraph_popup("Info", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
     }
 }
