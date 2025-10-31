@@ -13,9 +13,9 @@ use scooter_core::{
     fields::{FieldValue, SearchFieldValues},
 };
 
-use app_runner::{run_app_tui, AppConfig};
+use app_runner::{AppConfig, run_app_tui};
 use headless::{run_headless, run_headless_with_stdin};
-use logging::{setup_logging, DEFAULT_LOG_LEVEL};
+use logging::{DEFAULT_LOG_LEVEL, setup_logging};
 
 mod app_runner;
 mod config;
@@ -138,7 +138,9 @@ fn validate_flag_combinations(args: &Args) -> anyhow::Result<()> {
     if args.immediate_search || args.immediate_replace || args.print_results {
         for (name, enabled) in [("--no-tui", args.no_tui), ("--immediate", args.immediate)] {
             if enabled {
-                bail!("{name} cannot be combined with --immediate-search, --immediate-replace, or --print-results");
+                bail!(
+                    "{name} cannot be combined with --immediate-search, --immediate-replace, or --print-results"
+                );
             }
         }
     }
@@ -340,10 +342,12 @@ mod tests {
         };
         let result = validate_flag_combinations(&args);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("--no-tui cannot be combined with --immediate"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("--no-tui cannot be combined with --immediate")
+        );
     }
 
     #[test]
@@ -381,10 +385,12 @@ mod tests {
                 result.is_err(),
                 "Expected error for --no-tui with {flag_name}"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("--no-tui cannot be combined with"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("--no-tui cannot be combined with")
+            );
         }
     }
 
@@ -423,10 +429,12 @@ mod tests {
                 result.is_err(),
                 "Expected error for --immediate with {flag_name}"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("--immediate cannot be combined with"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("--immediate cannot be combined with")
+            );
         }
     }
 
@@ -472,10 +480,12 @@ mod tests {
                 result.is_err(),
                 "Expected error for {flag_name} without search text"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains(&format!("{flag_name} requires --search-text")));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("{flag_name} requires --search-text"))
+            );
         }
     }
 

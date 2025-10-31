@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
-use serde::{de, Deserialize, Deserializer};
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use serde::{Deserialize, Deserializer, de};
 use std::{
     fs,
     path::{Path, PathBuf},

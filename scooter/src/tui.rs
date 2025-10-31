@@ -1,7 +1,7 @@
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::backend::{Backend, TestBackend};
 use ratatui::Terminal;
+use ratatui::backend::{Backend, TestBackend};
 use scooter_core::app::App;
 use std::any::TypeId;
 use std::io;

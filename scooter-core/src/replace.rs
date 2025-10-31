@@ -1,5 +1,5 @@
 use frep_core::{
-    replace::{replace_in_file, replacement_if_match, ReplaceResult},
+    replace::{ReplaceResult, replace_in_file, replacement_if_match},
     search::{FileSearcher, SearchResultWithReplacement},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
@@ -7,8 +7,8 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},

@@ -14,7 +14,7 @@ use std::{
     env::current_dir,
     mem,
     path::PathBuf,
-    sync::{atomic::AtomicBool, atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicBool, atomic::AtomicUsize},
 };
 use tokio::sync::mpsc;
 
