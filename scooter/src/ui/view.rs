@@ -1296,9 +1296,8 @@ fn render_help_popup(keymaps: Vec<(String, String)>, frame: &mut Frame<'_>, area
 fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame<'_>, area: Rect) {
     let popup_block = create_popup_block(title);
 
-    // Calculate width available for text (75% of screen width, minus borders and padding)
-    let popup_width = area.width * 75 / 100;
-    let inner_width = popup_width.saturating_sub(4); // 2 for borders + 2 for horizontal padding
+    let width = popup_width(area);
+    let inner_width = width.saturating_sub(4); // 2 for borders + 2 for horizontal padding
 
     let popup = Paragraph::new(content)
         .block(popup_block)
@@ -1311,7 +1310,7 @@ fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame
 
     let popup_area = center(
         area,
-        Constraint::Percentage(75),
+        Constraint::Length(width),
         Constraint::Length(popup_height),
     );
 
@@ -1334,10 +1333,14 @@ fn render_table_popup(
     frame.render_widget(table, popup_area);
 }
 
+fn popup_width(area: Rect) -> u16 {
+    (area.width * 90 / 100).min(125)
+}
+
 fn get_popup_area(area: Rect, content_height: u16) -> Rect {
     center(
         area,
-        Constraint::Percentage(75),
+        Constraint::Length(popup_width(area)),
         Constraint::Length(content_height),
     )
 }
@@ -1986,8 +1989,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_paragraph_popup_wrapping_snapshot() {
-        // Test that popup correctly wraps text and sizes appropriately
+    fn test_render_paragraph_popup_wrapping() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -1997,9 +1999,10 @@ mod tests {
 
                 // Text that should wrap when narrower
                 let content = vec![
-                    Line::from("Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead."),
+                    Line::from("This is some long text for the popup. It should get wrapped over multiple lines and text shouldn't be cut off. It should render correctly."),
                     Line::from(""),
-                    Line::from("You can remap this in your scooter config."),
+                    Line::from("A short line."),
+                    Line::from("Here is another line that isn't quite as long as the first but should still get wrapped."),
                 ];
 
                 render_paragraph_popup("Key mapping deprecated", content, frame, area);
@@ -2010,8 +2013,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_paragraph_popup_narrow_screen_snapshot() {
-        // Test wrapping on a narrow screen
+    fn test_render_paragraph_popup_narrow_screen() {
         let backend = TestBackend::new(50, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -2019,9 +2021,10 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let content = vec![
-                    Line::from("Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead."),
+                    Line::from("This is some long text for the popup. It should get wrapped over multiple lines and text shouldn't be cut off. It should render correctly."),
                     Line::from(""),
-                    Line::from("You can remap this in your scooter config."),
+                    Line::from("A short line."),
+                    Line::from("Here is another line that isn't quite as long as the first but should still get wrapped."),
                 ];
                 render_paragraph_popup("Key mapping deprecated", content, frame, area);
             })
@@ -2031,8 +2034,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_paragraph_popup_short_text_snapshot() {
-        // Test that popup sizes appropriately for short text
+    fn test_render_paragraph_popup_short_text() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
 
