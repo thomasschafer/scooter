@@ -427,7 +427,7 @@ macro_rules! define_field_accessor_mut {
                 .find(|SearchField { name, .. }| *name == $field_name)
                 .expect("Couldn't find field");
 
-            if let Field::$field_variant(ref mut inner) = &mut field.field {
+            if let Field::$field_variant(inner) = &mut field.field {
                 inner
             } else {
                 panic!("Incorrect field type")

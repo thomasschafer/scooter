@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
 use std::path::Path;
-use syn::{parse_file, Attribute, Field, Fields, Item, ItemStruct, Meta};
+use syn::{Attribute, Field, Fields, Item, ItemStruct, Meta, parse_file};
 
 const TOC_START_MARKER: &str = "<!-- TOC START -->";
 const TOC_END_MARKER: &str = "<!-- TOC END -->";
@@ -90,11 +90,11 @@ fn generate_contents_table(content: &str) -> anyhow::Result<String> {
             let title = &line[3..];
             let anchor = create_anchor(title);
             writeln!(toc, "- [{title}](#{anchor})")?;
-        } else if let Some(title) = line.strip_prefix("### ") {
-            if !in_config_section(content, &lines, i) {
-                let anchor = create_anchor(title);
-                writeln!(toc, "  - [{title}](#{anchor})")?;
-            }
+        } else if let Some(title) = line.strip_prefix("### ")
+            && !in_config_section(content, &lines, i)
+        {
+            let anchor = create_anchor(title);
+            writeln!(toc, "  - [{title}](#{anchor})")?;
         }
     }
 
@@ -254,15 +254,13 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     let mut doc_lines = Vec::new();
 
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(meta) = attr.meta.clone() {
-                if let syn::Expr::Lit(expr_lit) = meta.value {
-                    if let syn::Lit::Str(lit_str) = expr_lit.lit {
-                        let comment = lit_str.value();
-                        doc_lines.push(comment.trim().to_string());
-                    }
-                }
-            }
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(meta) = attr.meta.clone()
+            && let syn::Expr::Lit(expr_lit) = meta.value
+            && let syn::Lit::Str(lit_str) = expr_lit.lit
+        {
+            let comment = lit_str.value();
+            doc_lines.push(comment.trim().to_string());
         }
     }
 

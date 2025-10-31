@@ -4,7 +4,7 @@ resolver = "2"
 default-members = ["scooter"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -20,7 +20,6 @@ bool_assert_comparison = "allow"
 
 [workspace.lints.rust]
 rust_2018_idioms = "warn"
-# rust_2024_compatibility = "warn" # TODO: uncomment
 
 [profile.release]
 lto = true

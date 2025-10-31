@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use syntect::{
     easy::HighlightLines,
     highlighting::{Style, Theme},
@@ -278,10 +278,10 @@ impl Iterator for HighlightedLinesIterator<'_> {
     type Item = (usize, HighlightedLine);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(end) = self.end_idx {
-            if self.current_idx > end {
-                return None;
-            }
+        if let Some(end) = self.end_idx
+            && self.current_idx > end
+        {
+            return None;
         }
 
         loop {
