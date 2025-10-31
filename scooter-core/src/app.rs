@@ -5,8 +5,8 @@ use std::{
     mem,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -16,8 +16,8 @@ use frep_core::{
     replace::{add_replacement, replacement_if_match},
     search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     validation::{
-        validate_search_configuration, DirConfig, SearchConfig, ValidationErrorHandler,
-        ValidationResult,
+        DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
+        validate_search_configuration,
     },
 };
 use ignore::WalkState;
@@ -464,7 +464,7 @@ impl Screen {
 
     fn unwrap_search_fields_state_mut(&mut self) -> &mut SearchFieldsState {
         let name = self.name().to_owned();
-        let Screen::SearchFields(ref mut search_fields_state) = self else {
+        let Screen::SearchFields(search_fields_state) = self else {
             panic!("Expected current_screen to be SearchFields, found {name}");
         };
         search_fields_state
@@ -1067,14 +1067,14 @@ impl<'a> App {
         if let FieldName::Replace = self.search_fields.highlighted_field().name {
             if let Some(ref mut state) = search_fields_state.search_state {
                 // Immediately update replacement on selected fields - the remainder will be updated async
-                if let Some(highlighted) = state.primary_selected_field_mut() {
-                    if let Some(updated) = replacement_if_match(
+                if let Some(highlighted) = state.primary_selected_field_mut()
+                    && let Some(updated) = replacement_if_match(
                         &highlighted.search_result.line,
                         file_searcher.search(),
                         file_searcher.replace(),
-                    ) {
-                        highlighted.replacement = updated;
-                    }
+                    )
+                {
+                    highlighted.replacement = updated;
                 }
 
                 // Debounce replacement requests
@@ -1440,7 +1440,7 @@ impl<'a> App {
                 keys
             }
             Screen::PerformingReplacement(_) => vec![],
-            Screen::Results(ref replace_state) => {
+            Screen::Results(replace_state) => {
                 if !replace_state.errors.is_empty() {
                     vec![("<j>", "down", Show::Both), ("<k>", "up", Show::Both)]
                 } else {

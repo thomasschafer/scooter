@@ -2,21 +2,21 @@ use anyhow::{anyhow, bail};
 use itertools::Itertools;
 use lru::LruCache;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
-    Frame,
 };
 use scooter_core::{
     app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
-    diff::{line_diff, Diff, DiffColour},
+    diff::{Diff, DiffColour, line_diff},
     errors::AppError,
-    fields::{Field, SearchField, SearchFields, NUM_SEARCH_FIELDS},
+    fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
     replace::{PerformingReplacementState, ReplaceState},
     utils::{
-        self, last_n_chars, read_lines_range_highlighted, relative_path, strip_control_chars,
-        HighlightedLine,
+        self, HighlightedLine, last_n_chars, read_lines_range_highlighted, relative_path,
+        strip_control_chars,
     },
 };
 use std::{
@@ -28,7 +28,7 @@ use std::{
     num::NonZeroUsize,
     ops::Div,
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     time::Duration,
 };
 use syntect::{
@@ -155,15 +155,15 @@ fn render_search_fields(
 
     if is_focussed && !show_popup {
         let field = search_fields.highlighted_field();
-        if !field.set_by_cli || !config.search.disable_prepopulated_fields {
-            if let Some(cursor_pos) = field.cursor_pos() {
-                let highlighted_area = areas[search_fields.highlighted];
+        if !(field.set_by_cli && config.search.disable_prepopulated_fields)
+            && let Some(cursor_pos) = field.cursor_pos()
+        {
+            let highlighted_area = areas[search_fields.highlighted];
 
-                frame.set_cursor_position(Position {
-                    x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
-                    y: highlighted_area.y + 1,
-                });
-            }
+            frame.set_cursor_position(Position {
+                x: highlighted_area.x + u16::try_from(cursor_pos).unwrap_or(0) + 1,
+                y: highlighted_area.y + 1,
+            });
         }
     }
 }
@@ -332,7 +332,7 @@ fn render_search_results(
                     preview_area,
                 );
             }
-        };
+        }
     }
 }
 
@@ -1156,7 +1156,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
 
     let show_popup = app.show_popup();
     match &mut app.current_screen {
-        Screen::SearchFields(ref mut search_fields_state) => {
+        Screen::SearchFields(search_fields_state) => {
             let num_search_fields_to_render = match search_fields_state.focussed_section {
                 FocussedSection::SearchFields => NUM_SEARCH_FIELDS,
                 FocussedSection::SearchResults => NUM_SEARCH_FIELDS_TRUNCATED,
@@ -1181,7 +1181,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
             );
 
             let replacements_in_progress = search_fields_state.replacements_in_progress();
-            if let Some(ref mut state) = &mut search_fields_state.search_state {
+            if let Some(state) = &mut search_fields_state.search_state {
                 let (is_complete, elapsed) = if let Some(completed) = state.search_completed {
                     (true, completed.duration_since(state.search_started))
                 } else {
@@ -1206,7 +1206,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
         Screen::PerformingReplacement(state) => {
             render_performing_replacement_view(frame, content_area, state);
         }
-        Screen::Results(ref replace_state) => {
+        Screen::Results(replace_state) => {
             render_results_view(frame, replace_state, content_area);
         }
     }
@@ -1528,7 +1528,7 @@ mod tests {
         // Combining diacritics should stay with their base character
         // e + combining acute = é (single grapheme)
         let e_acute = "e\u{0301}"; // é as e + combining acute
-                                   // The grapheme 'é' is alphabetic, space is not, so it splits after 'é'
+        // The grapheme 'é' is alphabetic, space is not, so it splits after 'é'
         let text1 = format!("{e_acute} test");
         assert_eq!(split_first_chunk(&text1), (e_acute, " test"));
 
@@ -1779,7 +1779,9 @@ mod tests {
 
             assert_eq!(
                 to_strings(result),
-                vec!["hello", "  ↪  ", "  ↪ w", "  ↪ o", "  ↪ r", "  ↪ l", "  ↪ d"]
+                vec![
+                    "hello", "  ↪  ", "  ↪ w", "  ↪ o", "  ↪ r", "  ↪ l", "  ↪ d"
+                ]
             );
         }
 

@@ -5,11 +5,11 @@ use crossterm::{
 };
 use frep_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use futures::{Stream, StreamExt};
-use log::{error, LevelFilter};
+use log::{LevelFilter, error};
 use ratatui::{
+    Terminal,
     backend::{Backend, CrosstermBackend, TestBackend},
     crossterm::event::KeyEventKind,
-    Terminal,
 };
 use scooter_core::{
     app::{
@@ -31,7 +31,7 @@ use std::{
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    config::{load_config, Config},
+    config::{Config, load_config},
     conversions,
     logging::DEFAULT_LOG_LEVEL,
     tui::Tui,

@@ -1,5 +1,5 @@
-use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
-use log::{info, LevelFilter};
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
+use log::{LevelFilter, info};
 use std::path::{Path, PathBuf};
 
 use crate::config::APP_NAME;
@@ -18,10 +18,10 @@ pub fn default_log_file() -> PathBuf {
 }
 
 fn make_parent_dir(path: &Path) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     Ok(())
 }
