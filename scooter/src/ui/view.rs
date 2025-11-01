@@ -7,7 +7,6 @@ use ratatui::{
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
-    Frame,
 };
 use scooter_core::{
     app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
@@ -1355,8 +1354,8 @@ fn create_popup_block(title: &str) -> Block<'_> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use super::*;
 
@@ -1972,7 +1971,7 @@ mod tests {
 
     fn get_snapshot(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
-        let snapshot = buffer
+        buffer
             .content
             .chunks(buffer.area.width as usize)
             .map(|row| {
@@ -1984,8 +1983,7 @@ mod tests {
             })
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
-            .join("\n");
-        snapshot
+            .join("\n")
     }
 
     #[test]

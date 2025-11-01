@@ -303,29 +303,28 @@ fn extract_modifier_strings(keyboard_path: &Path) -> Result<Vec<String>> {
 
     // Find the MODIFIERS const
     for item in &syntax.items {
-        if let Item::Const(const_item) = item {
-            if const_item.ident == "MODIFIERS" {
-                // Parse the array expression
-                if let syn::Expr::Array(array) = &*const_item.expr {
-                    let mut modifiers = Vec::new();
+        if let Item::Const(const_item) = item
+            && const_item.ident == "MODIFIERS"
+        {
+            // Parse the array expression
+            if let syn::Expr::Array(array) = &*const_item.expr {
+                let mut modifiers = Vec::new();
 
-                    // Extract string literals from tuples in the array
-                    for elem in &array.elems {
-                        if let syn::Expr::Tuple(tuple) = elem {
-                            // Get the second element of the tuple (the &str)
-                            if tuple.elems.len() >= 2 {
-                                if let syn::Expr::Lit(expr_lit) = &tuple.elems[1] {
-                                    if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                                        modifiers.push(lit_str.value());
-                                    }
-                                }
-                            }
+                // Extract string literals from tuples in the array
+                for elem in &array.elems {
+                    if let syn::Expr::Tuple(tuple) = elem {
+                        // Get the second element of the tuple (the &str)
+                        if tuple.elems.len() >= 2
+                            && let syn::Expr::Lit(expr_lit) = &tuple.elems[1]
+                            && let syn::Lit::Str(lit_str) = &expr_lit.lit
+                        {
+                            modifiers.push(lit_str.value());
                         }
                     }
+                }
 
-                    if !modifiers.is_empty() {
-                        return Ok(modifiers);
-                    }
+                if !modifiers.is_empty() {
+                    return Ok(modifiers);
                 }
             }
         }
@@ -350,33 +349,33 @@ fn extract_key_constants(keyboard_path: &Path) -> Result<Vec<String>> {
 
     // Find the keys module
     for item in &syntax.items {
-        if let Item::Mod(module) = item {
-            if module.ident == "keys" {
-                if let Some((_, items)) = &module.content {
-                    // Extract all const declarations
-                    for item in items {
-                        if let Item::Const(const_item) = item {
-                            let const_name = const_item.ident.to_string();
+        if let Item::Mod(module) = item
+            && module.ident == "keys"
+        {
+            if let Some((_, items)) = &module.content {
+                // Extract all const declarations
+                for item in items {
+                    if let Item::Const(const_item) = item {
+                        let const_name = const_item.ident.to_string();
 
-                            // Check if this const should be ignored in docs by looking for lines that contain both the const name and DOCS: ignore
-                            if content.lines().any(|line| {
-                                line.contains(&format!("const {const_name}: "))
-                                    && line.contains("// DOCS: ignore")
-                            }) {
-                                continue;
-                            }
+                        // Check if this const should be ignored in docs by looking for lines that contain both the const name and DOCS: ignore
+                        if content.lines().any(|line| {
+                            line.contains(&format!("const {const_name}: "))
+                                && line.contains("// DOCS: ignore")
+                        }) {
+                            continue;
+                        }
 
-                            // Extract the string literal value
-                            if let syn::Expr::Lit(expr_lit) = &*const_item.expr {
-                                if let syn::Lit::Str(lit_str) = &expr_lit.lit {
-                                    key_values.push(lit_str.value());
-                                }
-                            }
+                        // Extract the string literal value
+                        if let syn::Expr::Lit(expr_lit) = &*const_item.expr
+                            && let syn::Lit::Str(lit_str) = &expr_lit.lit
+                        {
+                            key_values.push(lit_str.value());
                         }
                     }
                 }
-                break;
             }
+            break;
         }
     }
 
