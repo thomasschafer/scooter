@@ -29,8 +29,8 @@ use tokio::{
 
 use crate::{
     commands::{
-        display_conflict_errors, Command, CommandGeneral, CommandSearchFields,
-        CommandSearchFocusFields, CommandSearchFocusResults, KeyMap,
+        Command, CommandGeneral, CommandSearchFields, CommandSearchFocusFields,
+        CommandSearchFocusResults, KeyMap, display_conflict_errors,
     },
     config::Config,
     errors::AppError,
@@ -38,7 +38,7 @@ use crate::{
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     replace::{self, PerformingReplacementState, ReplaceState},
     search::Searcher,
-    utils::{ceil_div, Either, Either::Left, Either::Right},
+    utils::{Either, Either::Left, Either::Right, ceil_div},
 };
 
 #[derive(Debug, Clone)]
@@ -1199,8 +1199,7 @@ impl<'a> App {
         match &mut (self.current_screen) {
             Screen::SearchFields(search_fields_state) => {
                 #[allow(clippy::single_match)]
-                let Command::SearchFields(command) = command
-                else {
+                let Command::SearchFields(command) = command else {
                     panic!("Expected SearchFields command, found {command:?}");
                 };
 
@@ -1231,7 +1230,6 @@ impl<'a> App {
                                 search_fields_state.focussed_section
                             );
                         }
-                        // TODO(key-remap): currently this always returns Some
                         self.handle_command_search_results(command)
                     }
                 }
@@ -1268,7 +1266,6 @@ impl<'a> App {
             event
         } else {
             if key_event.code == KeyCode::Esc {
-                // TODO(key-remap): test this, both with and without override
                 self.set_popup(Popup::Text{
                     title: "Key mapping deprecated".to_string(),
                     body: "Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead.\n\nYou can remap this in your scooter config.".to_string(),
@@ -1467,7 +1464,6 @@ impl<'a> App {
             };
         }
 
-        // TODO(key-remap): generate this based on keymap
         let current_screen_keys = match &self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 let mut keys = vec![];
