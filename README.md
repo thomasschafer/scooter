@@ -353,17 +353,25 @@ You can set any number of mappings for a given command using an array, e.g. `qui
 
 Keybindings are specified using optional modifier prefixes combined with key names. For example, `C-a` represents Ctrl+a, `A-S-x` represents Alt+Shift+x, and `j` represents the j key with no modifiers.
 
-**Available modifiers:**
+#### Available modifiers
 <!-- MODIFIERS LIST START -->
 `S-`, `C-`, `A-`
 <!-- MODIFIERS LIST END -->
 
-**Available keys**:
+#### Available keys
 
 Alphanumeric characters (`a`-`z`, `A`-`Z`, `0`-`9`), function keys (`F1`-`F24`), and the following special keys:
 <!-- KEYS LIST START -->
 `backspace`, `ret`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`
 <!-- KEYS LIST END -->
+
+#### Note on terminal limitations
+
+Some key combinations may not work due to terminal protocol limitations.
+
+Most modern terminals (Alacritty, Ghostty, Kitty, WezTerm etc.) support [Kitty's enhanced keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), which handles most key combinations correctly. However, there are still some combinations which won't work, such as Control in combination with some punctuation or special characters: for instance, `C-?` generally results in `/` being sent to the terminal application.
+
+Terminals that do not support the enhanced protocol face more limitations still, such as interpreting `C-h` as backspace, `C-i` as tab, `C-m` as enter, and `C-[` as escape.
 
 ## Editor configuration
 
