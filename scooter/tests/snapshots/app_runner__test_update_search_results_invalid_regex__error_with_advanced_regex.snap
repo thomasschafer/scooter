@@ -12,10 +12,10 @@ expression: snapshot
    ┌───┐                                                                       
    │   │ Fixed strings                                                         
    └───┘                                                                       
-   ┌───┐ ┌──────────────────────────Errors──────────────────────────┐          
-   │   │ │ Search text                                              │          
-   └───┘ │ Parsing error at position 14: Invalid character class    │          
-   ┌───┐ └──────────────────────────────────────────────────────────┘          
+   ┌─┌──────────────────────────────Errors──────────────────────────────┐      
+   │ │ Search text                                                      │      
+   └─│ Parsing error at position 14: Invalid character class            │      
+   ┌─└──────────────────────────────────────────────────────────────────┘      
    │ X │ Match case                                                            
    └───┘                                                                       
    ┌Files to include──────────────────────────────────────────────────────┐    

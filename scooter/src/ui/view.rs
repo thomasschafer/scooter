@@ -1300,7 +1300,7 @@ fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame
 
     let popup = Paragraph::new(content)
         .block(popup_block)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: false });
 
     // Calculate popup height: wrapped lines + borders, capped at 80% of screen
     let wrapped_line_count = popup.line_count(inner_width);
@@ -1333,7 +1333,7 @@ fn render_table_popup(
 }
 
 fn popup_width(area: Rect) -> u16 {
-    (area.width * 90 / 100).min(125)
+    (area.width * 85 / 100).min(125)
 }
 
 fn get_popup_area(area: Rect, content_height: u16) -> Rect {
