@@ -20,7 +20,7 @@ use tokio::{
 
 use crate::{
     app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
-    fields::{KeyCode, KeyModifiers},
+    commands::CommandResults,
 };
 
 pub fn split_results(
@@ -119,28 +119,20 @@ pub struct ReplaceState {
 }
 
 impl ReplaceState {
-    pub fn handle_key_results(
-        &mut self,
-        key_code: KeyCode,
-        key_modifiers: KeyModifiers,
-    ) -> EventHandlingResult {
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn handle_command_results(&mut self, event: CommandResults) -> EventHandlingResult {
         #[allow(clippy::match_same_arms)]
-        match (key_code, key_modifiers) {
-            (KeyCode::Char('j') | KeyCode::Down, _)
-            | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+        match event {
+            CommandResults::ScrollErrorsDown => {
                 self.scroll_replacement_errors_down();
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Char('k') | KeyCode::Up, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+            CommandResults::ScrollErrorsUp => {
                 self.scroll_replacement_errors_up();
+                EventHandlingResult::Rerender
             }
-            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {} // TODO: scroll down half a page
-            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {} // TODO: scroll down a full page
-            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {} // TODO: scroll up half a page
-            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {} // TODO: scroll up a full page
-            (KeyCode::Enter | KeyCode::Char('q'), _) => return EventHandlingResult::Exit(None),
-            _ => return EventHandlingResult::None,
+            CommandResults::Quit => EventHandlingResult::Exit(None),
         }
-        EventHandlingResult::Rerender
     }
 
     pub fn scroll_replacement_errors_up(&mut self) {
@@ -249,7 +241,7 @@ mod tests {
 
     use crate::{
         app::EventHandlingResult,
-        fields::{KeyCode, KeyModifiers},
+        commands::CommandResults,
         replace::{self, ReplaceState},
     };
 
@@ -398,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_state_handle_key_results() {
+    fn test_replace_state_handle_command_results() {
         let mut state = ReplaceState {
             num_successes: 5,
             num_ignored: 2,
@@ -423,32 +415,16 @@ mod tests {
             replacement_errors_pos: 0,
         };
 
-        // Test scrolling down with 'j'
-        let result = state.handle_key_results(KeyCode::Char('j'), KeyModifiers::NONE);
+        let result = state.handle_command_results(CommandResults::ScrollErrorsDown);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 1);
 
-        // Test scrolling up with 'k'
-        let result = state.handle_key_results(KeyCode::Char('k'), KeyModifiers::NONE);
+        let result = state.handle_command_results(CommandResults::ScrollErrorsUp);
         assert!(matches!(result, EventHandlingResult::Rerender));
         assert_eq!(state.replacement_errors_pos, 0);
 
-        // Test scrolling down with Down arrow
-        let result = state.handle_key_results(KeyCode::Down, KeyModifiers::NONE);
-        assert!(matches!(result, EventHandlingResult::Rerender));
-        assert_eq!(state.replacement_errors_pos, 1);
-
-        // Test exit with Enter
-        let result = state.handle_key_results(KeyCode::Enter, KeyModifiers::NONE);
+        let result = state.handle_command_results(CommandResults::Quit);
         assert!(matches!(result, EventHandlingResult::Exit(None)));
-
-        // Test exit with 'q'
-        let result = state.handle_key_results(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert!(matches!(result, EventHandlingResult::Exit(None)));
-
-        // Test unhandled key
-        let result = state.handle_key_results(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert!(matches!(result, EventHandlingResult::None));
     }
 
     #[test]

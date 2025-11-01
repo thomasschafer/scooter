@@ -1,0 +1,9 @@
+---
+source: scooter-core/src/config.rs
+expression: error
+---
+TOML parse error at line 3, column 18
+  |
+3 | trigger_search = "D-ret"
+  |                  ^^^^^^^
+Invalid key binding 'D-ret': Invalid key modifier 'D-'
