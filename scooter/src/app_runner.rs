@@ -32,12 +32,7 @@ use std::{
 };
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::{
-    config::{Config, load_config},
-    conversions,
-    logging::DEFAULT_LOG_LEVEL,
-    tui::Tui,
-};
+use crate::{logging::DEFAULT_LOG_LEVEL, tui::Tui};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
