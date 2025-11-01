@@ -63,7 +63,6 @@ pub(crate) enum CommandSearchFocusResults {
     FlipMultiselectDirection,
 }
 
-// TODO(key-remap): should we add anything here?
 // Events applicable only to `PerformingReplacement` screen
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandPerformingReplacement {}
