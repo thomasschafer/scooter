@@ -3,7 +3,7 @@ use quote::ToTokens;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use syn::{Attribute, Field, Fields, Item, ItemStruct, Meta, parse_file};
 
 const TOC_START_MARKER: &str = "<!-- TOC START -->";
@@ -473,26 +473,98 @@ fn generate_keys_docs(content: &str) -> Result<String> {
     ))
 }
 
-/// Parse config.rs and extract all struct definitions
+/// Parse config.rs and all its submodules, extracting all struct definitions
 fn parse_config_structs(config_path: &Path) -> Result<HashMap<String, ItemStruct>> {
-    let config_content = fs::read_to_string(config_path).context(format!(
-        "Failed to read config file: {}",
-        config_path.display()
-    ))?;
-
-    let syntax = parse_file(&config_content).context(format!(
-        "Failed to parse config file: {}",
-        config_path.display()
-    ))?;
-
     let mut structs = HashMap::new();
+    parse_file_and_modules(config_path, &mut structs)?;
+    Ok(structs)
+}
+
+/// Recursively parse a Rust file and its submodules, collecting all struct definitions
+fn parse_file_and_modules(
+    file_path: &Path,
+    structs: &mut HashMap<String, ItemStruct>,
+) -> Result<()> {
+    let content = fs::read_to_string(file_path)
+        .context(format!("Failed to read file: {}", file_path.display()))?;
+
+    let syntax =
+        parse_file(&content).context(format!("Failed to parse file: {}", file_path.display()))?;
+
+    // Collect structs and find submodules
     for item in &syntax.items {
-        if let Item::Struct(s) = item {
-            structs.insert(s.ident.to_string(), s.clone());
+        match item {
+            Item::Struct(s) => {
+                structs.insert(s.ident.to_string(), s.clone());
+            }
+            Item::Mod(module) => {
+                // Skip inline modules (those with content defined in braces)
+                if module.content.is_some() {
+                    continue;
+                }
+
+                // This is a `mod foo;` declaration - find and parse the module file
+                let mod_name = module.ident.to_string();
+                if let Ok(mod_path) = resolve_module_path(file_path, &mod_name) {
+                    parse_file_and_modules(&mod_path, structs)?;
+                }
+            }
+            _ => {}
         }
     }
 
-    Ok(structs)
+    Ok(())
+}
+
+const MOD_RS: &str = "mod.rs";
+const RS_EXT: &str = ".rs";
+
+/// Resolve a module declaration to its file path
+/// Handles Rust's module resolution rules:
+/// - For `src/foo.rs`, `mod bar;` looks for `src/foo/bar.rs` or `src/foo/bar/mod.rs`
+/// - For `src/foo/mod.rs`, `mod bar;` looks for `src/foo/bar.rs` or `src/foo/bar/mod.rs`
+fn resolve_module_path(parent_file: &Path, mod_name: &str) -> Result<PathBuf> {
+    let parent_dir = parent_file.parent().with_context(|| {
+        format!(
+            "Parent file has no parent directory: {}",
+            parent_file.display()
+        )
+    })?;
+
+    let parent_filename = parent_file
+        .file_name()
+        .with_context(|| format!("Parent file has no filename: {}", parent_file.display()))?;
+
+    // Determine the base directory for submodules
+    let base_dir = if parent_filename == MOD_RS {
+        // For `mod.rs`, submodules are in the same directory
+        parent_dir.to_path_buf()
+    } else {
+        // For `foo.rs`, submodules are in a `foo/` subdirectory
+        let file_stem = parent_file
+            .file_stem()
+            .with_context(|| format!("Parent file has no stem: {}", parent_file.display()))?;
+        parent_dir.join(file_stem)
+    };
+
+    // Try `mod_name.rs` first (e.g., config/keys.rs)
+    let mod_file = base_dir.join(format!("{mod_name}{RS_EXT}"));
+    if mod_file.exists() {
+        return Ok(mod_file);
+    }
+
+    // Try `mod_name/mod.rs` (e.g., config/keys/mod.rs)
+    let mod_dir = base_dir.join(mod_name).join(MOD_RS);
+    if mod_dir.exists() {
+        return Ok(mod_dir);
+    }
+
+    anyhow::bail!(
+        "Could not find module '{mod_name}' in {} (tried {} and {})",
+        parent_file.display(),
+        mod_file.display(),
+        mod_dir.display()
+    )
 }
 
 /// Replace content between start and end markers with new content
