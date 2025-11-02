@@ -106,7 +106,6 @@ macro_rules! delete_files {
 }
 
 #[cfg(test)]
-#[allow(dead_code)] // TODO: is there a better way to prevent errors than this?
 pub fn collect_files(dir: &Path, base: &Path, files: &mut Vec<String>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();

@@ -136,22 +136,34 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
 impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     // Used in integration tests
     #[allow(dead_code)]
-    pub fn new_test_with_snapshot(
+    pub fn new_snapshot_test(
         app_config: AppConfig<'_>,
         backend: TestBackend,
         event_stream: E,
         snapshot_sender: UnboundedSender<String>,
     ) -> anyhow::Result<Self> {
-        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
         // Tests should use default config, not load from user's config directory
         let test_config = Config::default();
-        Self::new(
+        Self::new_snapshot_test_override_config(
             app_config,
-            test_config,
             backend,
             event_stream,
-            snapshot_provider,
+            snapshot_sender,
+            test_config,
         )
+    }
+
+    // Used in integration tests
+    #[allow(dead_code)]
+    pub fn new_snapshot_test_override_config(
+        app_config: AppConfig<'_>,
+        backend: TestBackend,
+        event_stream: E,
+        snapshot_sender: UnboundedSender<String>,
+        config: Config,
+    ) -> anyhow::Result<Self> {
+        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
+        Self::new(app_config, config, backend, event_stream, snapshot_provider)
     }
 }
 
