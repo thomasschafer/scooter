@@ -99,13 +99,15 @@ impl KeyMap {
     #[allow(clippy::too_many_lines)]
     pub(crate) fn from_config(keys_config: &KeysConfig) -> Result<Self, Vec<KeyConflict>> {
         macro_rules! build_map {
-            ($config:expr, $context:expr, $conflicts:expr, [
+            ($($path:tt).+, $conflicts:expr, [
                 $(($field:ident, $command:expr)),* $(,)?
             ]) => {{
+                let context = stringify!($($path).+);
+                let config = &keys_config.$($path).+;
                 let mut map = HashMap::new();
                 $(
-                    for key in &$config.$field {
-                        Self::insert_and_detect(&mut map, *key, $command, $context, $conflicts);
+                    for key in &config.$field {
+                        Self::insert_and_detect(&mut map, *key, $command, context, $conflicts);
                     }
                 )*
                 map
@@ -115,8 +117,7 @@ impl KeyMap {
         let mut conflicts = Vec::new();
 
         let general = build_map!(
-            &keys_config.general,
-            "general",
+            general,
             &mut conflicts,
             [
                 (quit, CommandGeneral::Quit),
@@ -126,8 +127,7 @@ impl KeyMap {
         );
 
         let search_common = build_map!(
-            &keys_config.search,
-            "search_fields",
+            search,
             &mut conflicts,
             [(
                 toggle_preview_wrapping,
@@ -136,8 +136,7 @@ impl KeyMap {
         );
 
         let search_fields = build_map!(
-            &keys_config.search.fields,
-            "search_focus_fields",
+            search.fields,
             &mut conflicts,
             [
                 (
@@ -154,8 +153,7 @@ impl KeyMap {
         );
 
         let search_results = build_map!(
-            &keys_config.search.results,
-            "search_focus_results",
+            search.results,
             &mut conflicts,
             [
                 (
@@ -198,8 +196,7 @@ impl KeyMap {
         );
 
         let results = build_map!(
-            &keys_config.results,
-            "results",
+            results,
             &mut conflicts,
             [
                 (scroll_errors_down, CommandResults::ScrollErrorsDown),
