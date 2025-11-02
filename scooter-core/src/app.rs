@@ -588,7 +588,7 @@ impl<'a> App {
             },
             std::mem::take(&mut self.config),
         )
-        .expect("Key binding conflicts should have been detected at config load time");
+        .expect("App initialisation errors should have been detected on initial construction");
     }
 
     pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {

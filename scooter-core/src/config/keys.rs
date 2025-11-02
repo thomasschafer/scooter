@@ -53,6 +53,12 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub struct Keys(Vec<KeyEvent>);
 
+impl Keys {
+    pub fn new(keys: Vec<KeyEvent>) -> Self {
+        Self(keys)
+    }
+}
+
 impl<'de> Deserialize<'de> for Keys {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -89,9 +95,10 @@ impl<'a> IntoIterator for &'a Keys {
 }
 
 /// Helper macro for creating `Keys` from a vec of `KeyEvent`s
+#[macro_export]
 macro_rules! keys {
     ($($item:expr),* $(,)?) => {
-        Keys(vec![$($item),*])
+        $crate::config::Keys::new(vec![$($item),*])
     };
 }
 
