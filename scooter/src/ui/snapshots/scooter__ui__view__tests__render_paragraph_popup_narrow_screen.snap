@@ -2,14 +2,14 @@
 source: scooter/src/ui/view.rs
 expression: get_snapshot(&terminal)
 ---
-   ┌──────────Key mapping deprecated───────────┐
-   │ This is some long text for the popup. It  │
-   │ should get wrapped over multiple lines    │
-   │ and text shouldn't be cut off. It should  │
-   │ render correctly.                         │
-   │                                           │
-   │ A short line.                             │
-   │ Here is another line that isn't quite as  │
-   │ long as the first but should still get    │
-   │ wrapped.                                  │
-   └───────────────────────────────────────────┘
+    ┌─────────Key mapping deprecated─────────┐
+    │ This is some long text for the popup.  │
+    │ It should get wrapped over multiple    │
+    │ lines and text shouldn't be cut off.   │
+    │ It should render correctly.            │
+    │                                        │
+    │ A short line.                          │
+    │ Here is another line that isn't quite  │
+    │ as long as the first but should still  │
+    │ get wrapped.                           │
+    └────────────────────────────────────────┘
