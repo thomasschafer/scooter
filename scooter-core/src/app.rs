@@ -1178,7 +1178,7 @@ impl<'a> App {
         };
 
         // Note that general commands are looked up after screen-specific commands in `.lookup`, so this if will only be hit
-        // if there ar eno screen-specific commands
+        // if there are no screen-specific commands
         if let Command::General(command) = command {
             match command {
                 CommandGeneral::Quit => {

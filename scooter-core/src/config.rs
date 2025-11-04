@@ -214,6 +214,8 @@ impl Default for SearchConfig {
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::KeyMap;
+
     use super::*;
 
     #[test]
@@ -426,5 +428,109 @@ trigger_search = "D-ret"
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
         insta::assert_snapshot!(error);
+    }
+
+    #[test]
+    fn test_key_conflict_within_same_section() {
+        let config: Config = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "ret"
+focus_next_field = "ret"
+"#,
+        )
+        .unwrap();
+        let result = crate::commands::KeyMap::from_config(&config.keys);
+        assert!(result.is_err());
+        let conflicts = result.unwrap_err();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].context, "search.fields");
+        assert_eq!(conflicts[0].key.to_string(), "ret");
+    }
+
+    #[test]
+    fn test_key_conflict_with_multiple_mappings() {
+        let config: Config = toml::from_str(
+            r#"
+[keys.search.results]
+move_down = ["j", "down"]
+move_up = ["k", "down"]
+"#,
+        )
+        .unwrap();
+        let result = crate::commands::KeyMap::from_config(&config.keys);
+        assert!(result.is_err());
+        let conflicts = result.unwrap_err();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].context, "search.results");
+        assert_eq!(conflicts[0].key.to_string(), "down");
+    }
+
+    #[test]
+    fn test_no_conflict_between_different_screens() {
+        // Same key can be used in different screen contexts without conflict
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "ret"
+
+[keys.results]
+quit = "ret"
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_no_conflict_between_general_and_screen_specific() {
+        // Screen-specific keys take priority, so no conflict
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.general]
+quit = "q"
+
+[keys.results]
+quit = "q"
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_keys_same_command_no_conflict() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.results]
+move_down = ["A-r", "l"]
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_all_default_keybindings_are_valid() {
+        let config = Config::default();
+        // If KeyMap construction succeeds, all defaults are valid
+        let key_map_result = KeyMap::from_config(&config.keys);
+        assert!(
+            key_map_result.is_ok(),
+            "Default keybindings should be valid: {:?}",
+            key_map_result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_uppercase_char_conflict_detection() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.results]
+move_top = "R"
+move_bottom = "r"
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "r and R should be treated as different keys"
+        );
     }
 }
