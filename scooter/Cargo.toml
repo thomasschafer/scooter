@@ -19,7 +19,7 @@ crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.10.0"
 frep-core = "0.1.7"
 futures = "0.3.31"
-ignore = "0.4.23"
+ignore = "0.4.25"
 itertools = "0.14.0"
 log = "0.4.28"
 lru = "0.16.2"
