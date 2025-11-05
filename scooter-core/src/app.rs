@@ -1196,7 +1196,7 @@ impl<'a> App {
             }
         }
 
-        match &mut (self.current_screen) {
+        match &mut self.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 #[allow(clippy::single_match)]
                 let Command::SearchFields(command) = command else {
