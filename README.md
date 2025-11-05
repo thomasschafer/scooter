@@ -334,7 +334,7 @@ exit = true
 
 #### Piping to scooter
 
-You can pipe content from Helix to scooter, and it will write the updated contents back to the buffer in Helix. Select some contents in Helix, and then enter `:| scooter >/dev/tty` (i.e. press `:`, type or paste `| scooter >/dev/tty`, and then press enter). scooter will open, allowing you to find and replace on the contents: once you're done, the buffer will have been updated with any changes.
+You can pipe content from Helix to scooter, and it will write the updated contents back to the buffer in Helix. Select some contents in Helix, and then enter `:| scooter --print-on-exit >/dev/tty` (i.e. press `:`, type or paste `| scooter --print-on-exit >/dev/tty`, and then press enter). scooter will open, allowing you to find and replace on the contents: once you're done, the buffer will have been updated with any changes.
 
 ### Neovim
 

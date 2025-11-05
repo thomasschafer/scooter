@@ -78,6 +78,10 @@ struct Args {
     #[arg(long)]
     no_stdin: bool,
 
+    /// Print stdin content on exit
+    #[arg(long)]
+    print_on_exit: bool,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -187,6 +191,8 @@ fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Res
         if args.files_to_exclude.is_some() {
             bail!("Cannot use --files-to-exclude when processing stdin");
         }
+    } else if args.print_on_exit {
+        bail!("Cannot use --print-on-exit when not processing stdin");
     }
     Ok(())
 }
@@ -213,6 +219,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_search: args.immediate_search || immediate,
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
+                print_on_exit: args.print_on_exit,
             },
             stdin_content,
         })
@@ -316,6 +323,7 @@ mod tests {
             immediate: false,
             no_tui: false,
             no_stdin: false,
+            print_on_exit: false,
             search_text: None,
             replace_text: None,
             fixed_strings: false,

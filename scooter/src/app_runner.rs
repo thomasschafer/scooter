@@ -433,7 +433,15 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
                 None
             }
         }
-        None => None,
+        None => {
+            if runner.app.print_on_exit {
+                match runner.app.input_source {
+                    InputSource::Stdin(stdin) => write!(io::stderr(), "{stdin}")?,
+                    InputSource::Directory(_) => unreachable!(),
+                }
+            }
+            None
+        }
     }
     .map(|stats| {
         format_replacement_results(
