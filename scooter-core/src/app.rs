@@ -486,6 +486,7 @@ pub struct AppRunConfig {
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
+    pub print_on_exit: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -497,6 +498,7 @@ impl Default for AppRunConfig {
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
+            print_on_exit: false,
         }
     }
 }
@@ -514,6 +516,7 @@ pub struct App {
     include_hidden: bool,
     immediate_replace: bool,
     pub print_results: bool,
+    pub print_on_exit: bool,
     popup: Option<Popup>,
     advanced_regex: bool,
     pub wrap_preview_text: bool,
@@ -557,6 +560,7 @@ impl<'a> App {
             event_sender,
             immediate_replace: app_run_config.immediate_replace,
             print_results: app_run_config.print_results,
+            print_on_exit: app_run_config.print_on_exit,
             advanced_regex: app_run_config.advanced_regex,
             wrap_preview_text,
         };
@@ -623,6 +627,7 @@ impl<'a> App {
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
+                print_on_exit: self.print_on_exit,
             },
             self.disable_prepopulated_fields,
             self.wrap_preview_text,
