@@ -5,6 +5,7 @@ use insta::assert_snapshot;
 use rand::Rng;
 use ratatui::backend::TestBackend;
 use regex::Regex;
+use scooter::app_runner::{AppConfig, AppRunner};
 use serial_test::serial;
 use std::{env, io, path::Path, pin::Pin, task::Poll};
 use tempfile::TempDir;
@@ -14,10 +15,14 @@ use tokio::{
     time::{Duration, Instant, sleep},
 };
 
-use scooter::app_runner::{AppConfig, AppRunner};
 use scooter_core::{
     app::AppRunConfig,
+    config::{Config, KeysConfig, KeysSearch, KeysSearchFocusFields, KeysSearchFocusResults},
     fields::{FieldValue, SearchFieldValues},
+    keyboard::{
+        KeyCode as CoreKeyCode, KeyEvent as CoreKeyEvent, KeyModifiers as CoreKeyModifiers,
+    },
+    keys,
 };
 
 mod utils;
@@ -179,16 +184,10 @@ type TestRunner = (
     UnboundedReceiver<String>,
 );
 
-fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
-    build_test_runner_with_width(directory, advanced_regex, 30)
-}
+const DEFAULT_TEST_WIDTH: u16 = 30;
 
-fn build_test_runner_with_width(
-    directory: Option<&Path>,
-    advanced_regex: bool,
-    width: u16,
-) -> anyhow::Result<TestRunner> {
-    let config = AppConfig {
+fn build_test_runner(directory: Option<&Path>, advanced_regex: bool) -> anyhow::Result<TestRunner> {
+    let app_config = AppConfig {
         directory: directory.map_or(env::current_dir().unwrap(), Path::to_path_buf),
         app_run_config: AppRunConfig {
             advanced_regex,
@@ -196,15 +195,46 @@ fn build_test_runner_with_width(
         },
         ..AppConfig::default()
     };
-    build_test_runner_with_config_and_width(config, width)
+    build_test_runner_impl(app_config, Config::default(), DEFAULT_TEST_WIDTH)
 }
 
-fn build_test_runner_with_config(config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
-    build_test_runner_with_config_and_width(config, 24)
+fn build_test_runner_with_width(
+    directory: Option<&Path>,
+    advanced_regex: bool,
+    width: u16,
+) -> anyhow::Result<TestRunner> {
+    let app_config = AppConfig {
+        directory: directory.map_or(env::current_dir().unwrap(), Path::to_path_buf),
+        app_run_config: AppRunConfig {
+            advanced_regex,
+            ..AppRunConfig::default()
+        },
+        ..AppConfig::default()
+    };
+    build_test_runner_impl(app_config, Config::default(), width)
+}
+
+fn build_test_runner_with_config(app_config: AppConfig<'_>) -> anyhow::Result<TestRunner> {
+    build_test_runner_impl(app_config, Config::default(), DEFAULT_TEST_WIDTH)
 }
 
 fn build_test_runner_with_config_and_width(
-    config: AppConfig<'_>,
+    app_config: AppConfig<'_>,
+    width: u16,
+) -> anyhow::Result<TestRunner> {
+    build_test_runner_impl(app_config, Config::default(), width)
+}
+
+fn build_test_runner_with_custom_config(
+    app_config: AppConfig<'_>,
+    user_config: Config,
+) -> anyhow::Result<TestRunner> {
+    build_test_runner_impl(app_config, user_config, DEFAULT_TEST_WIDTH)
+}
+
+fn build_test_runner_impl(
+    app_config: AppConfig<'_>,
+    user_config: Config,
     width: u16,
 ) -> anyhow::Result<TestRunner> {
     let backend = TestBackend::new(width * 10 / 3, width);
@@ -212,7 +242,13 @@ fn build_test_runner_with_config_and_width(
     let (event_sender, event_stream) = TestEventStream::new();
     let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel();
 
-    let mut runner = AppRunner::new_test_with_snapshot(config, backend, event_stream, snapshot_tx)?;
+    let mut runner = AppRunner::new_snapshot_test_override_config(
+        app_config,
+        backend,
+        event_stream,
+        snapshot_tx,
+        user_config,
+    )?;
     runner.init()?;
 
     let run_handle = tokio::spawn(async move {
@@ -2932,9 +2968,6 @@ test_with_both_regex_modes!(
         wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
 
         let (final_foo_count, final_bar_count) = count_occurrences(temp_dir.path())?;
-        eprintln!(
-            "[debug] initial_foo_count = {initial_foo_count} + initial_bar_count = {initial_bar_count}, final_foo_count={final_foo_count}, final_bar_count={final_bar_count}"
-        );
         assert_eq!(
             final_foo_count, 0,
             "Final foo count should be 0 after replacement"
@@ -2955,7 +2988,7 @@ test_with_both_regex_modes!(
         let temp_dir = create_test_files!(
             "file1.txt" => text!(
                 "This is a file with",
-                "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but users can toggle text wrapping so that it all shows up on the screen.",
+                "some very long lines of text. This is really quite a long line. Lots of text which won't fit on one line so it will initially be truncated, but users can toggle text wrapping so that it all shows up on the screen.",
                 "Some more lines here which aren't",
                 "quite as long.",
                 "Some",
@@ -3017,7 +3050,7 @@ test_with_both_regex_modes!(
             temp_dir,
             "file1.txt" => text!(
                 "This is a file with",
-                "some very long lines of text. Lots of text which won't fit on one line so it will initially be truncated, but REPLACED can toggle text wrapping so that it all shows up on the screen.",
+                "some very long lines of text. This is really quite a long line. Lots of text which won't fit on one line so it will initially be truncated, but REPLACED can toggle text wrapping so that it all shows up on the screen.",
                 "Some more lines here which aren't",
                 "quite as long.",
                 "Some",
@@ -3034,6 +3067,131 @@ test_with_both_regex_modes!(
                 "8",
                 "9 REPLACED 10",
                 ".",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+#[tokio::test]
+#[serial]
+async fn test_custom_help_menu_keybinding() -> anyhow::Result<()> {
+    use scooter_core::config::{Config, KeysConfig, KeysGeneral};
+    use scooter_core::keyboard::{
+        KeyCode as CoreKeyCode, KeyEvent, KeyModifiers as CoreKeyModifiers,
+    };
+    use scooter_core::keys;
+
+    // Change help menu from C-h to F1
+    let mut config = Config::default();
+    config.keys = KeysConfig {
+        general: KeysGeneral {
+            show_help_menu: keys![KeyEvent::new(CoreKeyCode::F(1), CoreKeyModifiers::NONE)],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_custom_config(AppConfig::default(), config)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+    // F1 should open help
+    send_key(KeyCode::F(1), &event_sender);
+    let snapshot = wait_for_match(&mut snapshot_rx, Pattern::string("Help"), 100).await?;
+    assert_snapshot!(snapshot);
+
+    shutdown(event_sender, run_handle).await
+}
+
+test_with_both_regex_modes!(
+    test_custom_toggle_keybinding,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "foo1",
+                "foo2",
+                "foo3",
+                "foo4",
+                "bar",
+            ),
+        );
+
+        // Change toggle from space to 't'
+        let mut config = Config::default();
+        config.keys = KeysConfig {
+            search: KeysSearch {
+                fields: KeysSearchFocusFields {
+                    focus_next_field: keys![CoreKeyEvent::new(
+                        CoreKeyCode::Char('j'),
+                        CoreKeyModifiers::CONTROL,
+                    )],
+                    ..Default::default()
+                },
+                results: KeysSearchFocusResults {
+                    move_down: keys![CoreKeyEvent::new(
+                        CoreKeyCode::Char('d'),
+                        CoreKeyModifiers::NONE,
+                    )],
+                    toggle_selected_inclusion: keys![CoreKeyEvent::new(
+                        CoreKeyCode::Char('t'),
+                        CoreKeyModifiers::NONE,
+                    )],
+                    toggle_all_selected: keys![CoreKeyEvent::new(
+                        CoreKeyCode::Char('x'),
+                        CoreKeyModifiers::NONE,
+                    )],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_custom_config(app_config, config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars("foo", &event_sender);
+        send_key_with_modifiers(KeyCode::Char('j'), KeyModifiers::CONTROL, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        // Toggle all off
+        send_key(KeyCode::Char('x'), &event_sender);
+
+        // Down to third result
+        send_key(KeyCode::Char('d'), &event_sender);
+        send_key(KeyCode::Char('d'), &event_sender);
+
+        // Toggle third result
+        send_key(KeyCode::Char('t'), &event_sender);
+
+        // Perform replacement - should not replace the deselected line
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "foo1",
+                "foo2",
+                "REPLACED3",
+                "foo4",
+                "bar",
             ),
         );
 

@@ -3,14 +3,21 @@ use quote::ToTokens;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use syn::{Attribute, Field, Fields, Item, ItemStruct, Meta, parse_file};
 
 const TOC_START_MARKER: &str = "<!-- TOC START -->";
 const TOC_END_MARKER: &str = "<!-- TOC END -->";
 const CONFIG_START_MARKER: &str = "<!-- CONFIG START -->";
 const CONFIG_END_MARKER: &str = "<!-- CONFIG END -->";
+const KEYS_START_MARKER: &str = "<!-- KEYS START -->";
+const KEYS_END_MARKER: &str = "<!-- KEYS END -->";
+const MODIFIERS_LIST_START_MARKER: &str = "<!-- MODIFIERS LIST START -->";
+const MODIFIERS_LIST_END_MARKER: &str = "<!-- MODIFIERS LIST END -->";
+const KEYS_LIST_START_MARKER: &str = "<!-- KEYS LIST START -->";
+const KEYS_LIST_END_MARKER: &str = "<!-- KEYS LIST END -->";
 const TOC_HEADING: &str = "## Contents";
+const KEYS_FIELD_NAME: &str = "keys";
 
 pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool) -> Result<()> {
     println!("Processing README file: {}", readme_path.display());
@@ -24,6 +31,8 @@ pub fn generate_readme(readme_path: &Path, config_path: &Path, check_only: bool)
 
     if config_path.exists() {
         updated_content = generate_config_docs(&updated_content, config_path)?;
+        updated_content = generate_key_format_docs(&updated_content)?;
+        updated_content = generate_keys_docs(&updated_content)?;
     } else {
         println!(
             "Warning: Config file '{}' not found.",
@@ -155,22 +164,7 @@ fn create_anchor(title: &str) -> String {
 fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
     println!("Extracting config documentation...");
 
-    let config_content = fs::read_to_string(config_path).context(format!(
-        "Failed to read config file: {}",
-        config_path.display()
-    ))?;
-
-    let syntax = parse_file(&config_content).context(format!(
-        "Failed to parse config file: {}",
-        config_path.display()
-    ))?;
-
-    let mut structs: HashMap<String, ItemStruct> = HashMap::new();
-    for item in &syntax.items {
-        if let Item::Struct(s) = item {
-            structs.insert(s.ident.to_string(), s.clone());
-        }
-    }
+    let structs = parse_config_structs(config_path)?;
 
     let mut docs = String::new();
 
@@ -180,25 +174,12 @@ fn generate_config_docs(content: &str, config_path: &Path) -> Result<String> {
         println!("Warning: Config struct not found in the source file.");
     }
 
-    let mut result = String::new();
-    let mut in_config_section = false;
-    for line in content.lines() {
-        if line == CONFIG_START_MARKER {
-            result.push_str(line);
-            result.push('\n');
-            result.push_str(&docs);
-            in_config_section = true;
-        } else if line == CONFIG_END_MARKER {
-            in_config_section = false;
-            result.push_str(line);
-            result.push('\n');
-        } else if !in_config_section {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    Ok(result)
+    Ok(replace_section_content(
+        content,
+        CONFIG_START_MARKER,
+        CONFIG_END_MARKER,
+        &docs,
+    ))
 }
 
 fn process_struct(
@@ -211,6 +192,12 @@ fn process_struct(
         for field in &fields.named {
             if let Some(ident) = &field.ident {
                 let field_name = ident.to_string();
+
+                // Skip the keys field as it has its own section (see `generate_keys_docs`)
+                if toml_prefix.is_empty() && field_name == KEYS_FIELD_NAME {
+                    continue;
+                }
+
                 let field_doc = extract_doc_comment(&field.attrs);
 
                 if let Some(nested_struct) = all_structs.get(&get_type_name(field)) {
@@ -265,6 +252,405 @@ fn extract_doc_comment(attrs: &[Attribute]) -> String {
     }
 
     doc_lines.join("\n")
+}
+
+fn generate_key_format_docs(content: &str) -> Result<String> {
+    println!("Generating key format documentation...");
+
+    let keyboard_path = Path::new("scooter-core/src/keyboard.rs");
+
+    // Parse keyboard.rs and extract modifiers
+    let modifiers = extract_modifier_strings(keyboard_path)?;
+    let modifiers_list_formatted: Vec<String> =
+        modifiers.iter().map(|m| format!("`{m}`")).collect();
+    let modifiers_list = format!("{}\n", modifiers_list_formatted.join(", "));
+
+    // Parse keyboard.rs and extract all key constants
+    let keys = extract_key_constants(keyboard_path)?;
+    let excluded_keys = [
+        "ret", // We have "enter" too, no need for both
+    ];
+    let keys_list: Vec<String> = keys
+        .iter()
+        .filter(|k| !excluded_keys.contains(&k.as_str()))
+        .map(|k| format!("`{k}`"))
+        .collect();
+    let keys_list_str = format!("{}\n", keys_list.join(", "));
+
+    // Replace modifiers list
+    let mut updated_content = replace_section_content(
+        content,
+        MODIFIERS_LIST_START_MARKER,
+        MODIFIERS_LIST_END_MARKER,
+        &modifiers_list,
+    );
+
+    // Replace keys list
+    updated_content = replace_section_content(
+        &updated_content,
+        KEYS_LIST_START_MARKER,
+        KEYS_LIST_END_MARKER,
+        &keys_list_str,
+    );
+
+    Ok(updated_content)
+}
+
+/// Extract modifier strings from the MODIFIERS const in keyboard.rs
+fn extract_modifier_strings(keyboard_path: &Path) -> Result<Vec<String>> {
+    let content = fs::read_to_string(keyboard_path).context(format!(
+        "Failed to read keyboard file: {}",
+        keyboard_path.display()
+    ))?;
+
+    let syntax = parse_file(&content).context(format!(
+        "Failed to parse keyboard file: {}",
+        keyboard_path.display()
+    ))?;
+
+    // Find the MODIFIERS const
+    for item in &syntax.items {
+        if let Item::Const(const_item) = item
+            && const_item.ident == "MODIFIERS"
+        {
+            // Parse the array expression
+            if let syn::Expr::Array(array) = &*const_item.expr {
+                let mut modifiers = Vec::new();
+
+                // Extract string literals from tuples in the array
+                for elem in &array.elems {
+                    if let syn::Expr::Tuple(tuple) = elem {
+                        // Get the second element of the tuple (the &str)
+                        if tuple.elems.len() >= 2
+                            && let syn::Expr::Lit(expr_lit) = &tuple.elems[1]
+                            && let syn::Lit::Str(lit_str) = &expr_lit.lit
+                        {
+                            modifiers.push(lit_str.value());
+                        }
+                    }
+                }
+
+                if !modifiers.is_empty() {
+                    return Ok(modifiers);
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("MODIFIERS constant not found in keyboard.rs");
+}
+
+/// Extract all const string values from the `keys` module in keyboard.rs
+fn extract_key_constants(keyboard_path: &Path) -> Result<Vec<String>> {
+    let content = fs::read_to_string(keyboard_path).context(format!(
+        "Failed to read keyboard file: {}",
+        keyboard_path.display()
+    ))?;
+
+    let syntax = parse_file(&content).context(format!(
+        "Failed to parse keyboard file: {}",
+        keyboard_path.display()
+    ))?;
+
+    let mut key_values = Vec::new();
+
+    // Find the keys module
+    for item in &syntax.items {
+        if let Item::Mod(module) = item
+            && module.ident == "keys"
+        {
+            if let Some((_, items)) = &module.content {
+                // Extract all const declarations
+                for item in items {
+                    if let Item::Const(const_item) = item {
+                        let const_name = const_item.ident.to_string();
+
+                        // Check if this const should be ignored in docs by looking for lines that contain both the const name and DOCS: ignore
+                        if content.lines().any(|line| {
+                            line.contains(&format!("const {const_name}: "))
+                                && line.contains("// DOCS: ignore")
+                        }) {
+                            continue;
+                        }
+
+                        // Extract the string literal value
+                        if let syn::Expr::Lit(expr_lit) = &*const_item.expr
+                            && let syn::Lit::Str(lit_str) = &expr_lit.lit
+                        {
+                            key_values.push(lit_str.value());
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    if key_values.is_empty() {
+        anyhow::bail!("No key constants found in keys module");
+    }
+
+    Ok(key_values)
+}
+
+fn generate_keys_docs(content: &str) -> Result<String> {
+    println!("Generating keys documentation...");
+
+    let keys_config = scooter_core::config::KeysConfig::default();
+    let toml_str =
+        toml::to_string(&keys_config).context("Failed to serialize keys config to TOML")?;
+
+    let config_path = Path::new("scooter-core/src/config.rs");
+    let structs = parse_config_structs(config_path)?;
+
+    // Extract doc comments for all structs in the keys hierarchy
+    let doc_comments = extract_keys_doc_comments(&structs)?;
+
+    // Parse TOML into sections for alignment
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current_section = String::new();
+    let mut current_lines: Vec<String> = Vec::new();
+
+    for line in toml_str.lines() {
+        if line.starts_with('[') && !line.starts_with("[[") {
+            // Save previous section if it exists
+            if !current_section.is_empty() {
+                sections.push((current_section.clone(), current_lines.clone()));
+                current_lines.clear();
+            }
+
+            // Extract section name (e.g., "general" from "[general]")
+            let section_name = &line[1..line.len() - 1];
+            current_section = format!("keys.{section_name}");
+        } else if line.contains('=') {
+            current_lines.push(line.to_string());
+        }
+    }
+
+    // Don't forget the last section
+    if !current_section.is_empty() {
+        sections.push((current_section, current_lines));
+    }
+
+    // Generate output with aligned comments
+    let mut keys_str_with_comments = String::new();
+
+    for (section, lines) in sections {
+        // Add section comment above the section header
+        if let Some(doc) = doc_comments.get(&section) {
+            writeln!(keys_str_with_comments, "# {doc}")?;
+        }
+        writeln!(keys_str_with_comments, "[{section}]")?;
+
+        if lines.is_empty() {
+            writeln!(keys_str_with_comments)?;
+            continue;
+        }
+
+        // Calculate max width for alignment
+        let max_width = lines
+            .iter()
+            .map(std::string::String::len)
+            .max()
+            .unwrap_or(0);
+
+        // Add fields with aligned comments
+        for line in &lines {
+            let field_name = line.split('=').next().unwrap().trim();
+            let field_key = format!("{section}.{field_name}");
+
+            if let Some(doc) = doc_comments.get(&field_key) {
+                // Pad line to max_width, then add comment
+                writeln!(keys_str_with_comments, "{line:<max_width$}  # {doc}")?;
+            } else {
+                writeln!(keys_str_with_comments, "{line}")?;
+            }
+        }
+
+        writeln!(keys_str_with_comments)?;
+    }
+
+    let keys_docs = format!("```toml\n{keys_str_with_comments}```\n");
+
+    Ok(replace_section_content(
+        content,
+        KEYS_START_MARKER,
+        KEYS_END_MARKER,
+        &keys_docs,
+    ))
+}
+
+/// Parse config.rs and all its submodules, extracting all struct definitions
+fn parse_config_structs(config_path: &Path) -> Result<HashMap<String, ItemStruct>> {
+    let mut structs = HashMap::new();
+    parse_file_and_modules(config_path, &mut structs)?;
+    Ok(structs)
+}
+
+/// Recursively parse a Rust file and its submodules, collecting all struct definitions
+fn parse_file_and_modules(
+    file_path: &Path,
+    structs: &mut HashMap<String, ItemStruct>,
+) -> Result<()> {
+    let content = fs::read_to_string(file_path)
+        .context(format!("Failed to read file: {}", file_path.display()))?;
+
+    let syntax =
+        parse_file(&content).context(format!("Failed to parse file: {}", file_path.display()))?;
+
+    // Collect structs and find submodules
+    for item in &syntax.items {
+        match item {
+            Item::Struct(s) => {
+                structs.insert(s.ident.to_string(), s.clone());
+            }
+            Item::Mod(module) => {
+                // Skip inline modules (those with content defined in braces)
+                if module.content.is_some() {
+                    continue;
+                }
+
+                // This is a `mod foo;` declaration - find and parse the module file
+                let mod_name = module.ident.to_string();
+                if let Ok(mod_path) = resolve_module_path(file_path, &mod_name) {
+                    parse_file_and_modules(&mod_path, structs)?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+const MOD_RS: &str = "mod.rs";
+const RS_EXT: &str = ".rs";
+
+/// Resolve a module declaration to its file path
+/// Handles Rust's module resolution rules:
+/// - For `src/foo.rs`, `mod bar;` looks for `src/foo/bar.rs` or `src/foo/bar/mod.rs`
+/// - For `src/foo/mod.rs`, `mod bar;` looks for `src/foo/bar.rs` or `src/foo/bar/mod.rs`
+fn resolve_module_path(parent_file: &Path, mod_name: &str) -> Result<PathBuf> {
+    let parent_dir = parent_file.parent().with_context(|| {
+        format!(
+            "Parent file has no parent directory: {}",
+            parent_file.display()
+        )
+    })?;
+
+    let parent_filename = parent_file
+        .file_name()
+        .with_context(|| format!("Parent file has no filename: {}", parent_file.display()))?;
+
+    // Determine the base directory for submodules
+    let base_dir = if parent_filename == MOD_RS {
+        // For `mod.rs`, submodules are in the same directory
+        parent_dir.to_path_buf()
+    } else {
+        // For `foo.rs`, submodules are in a `foo/` subdirectory
+        let file_stem = parent_file
+            .file_stem()
+            .with_context(|| format!("Parent file has no stem: {}", parent_file.display()))?;
+        parent_dir.join(file_stem)
+    };
+
+    // Try `mod_name.rs` first (e.g., config/keys.rs)
+    let mod_file = base_dir.join(format!("{mod_name}{RS_EXT}"));
+    if mod_file.exists() {
+        return Ok(mod_file);
+    }
+
+    // Try `mod_name/mod.rs` (e.g., config/keys/mod.rs)
+    let mod_dir = base_dir.join(mod_name).join(MOD_RS);
+    if mod_dir.exists() {
+        return Ok(mod_dir);
+    }
+
+    anyhow::bail!(
+        "Could not find module '{mod_name}' in {} (tried {} and {})",
+        parent_file.display(),
+        mod_file.display(),
+        mod_dir.display()
+    )
+}
+
+/// Replace content between start and end markers with new content
+fn replace_section_content(
+    content: &str,
+    start_marker: &str,
+    end_marker: &str,
+    new_content: &str,
+) -> String {
+    let mut result = String::new();
+    let mut in_section = false;
+
+    for line in content.lines() {
+        if line == start_marker {
+            result.push_str(line);
+            result.push('\n');
+            result.push_str(new_content);
+            in_section = true;
+        } else if line == end_marker {
+            in_section = false;
+            result.push_str(line);
+            result.push('\n');
+        } else if !in_section {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
+fn extract_keys_doc_comments(
+    structs: &HashMap<String, ItemStruct>,
+) -> Result<HashMap<String, String>> {
+    let mut comments = HashMap::new();
+
+    // Start with KeysConfig struct
+    if let Some(keys_config) = structs.get("KeysConfig") {
+        extract_struct_comments(keys_config, structs, "keys", &mut comments)?;
+    }
+
+    Ok(comments)
+}
+
+fn extract_struct_comments(
+    struct_item: &ItemStruct,
+    all_structs: &HashMap<String, ItemStruct>,
+    prefix: &str,
+    comments: &mut HashMap<String, String>,
+) -> Result<()> {
+    if let Fields::Named(ref fields) = struct_item.fields {
+        for field in &fields.named {
+            if let Some(ident) = &field.ident {
+                let field_name = ident.to_string();
+                let field_path = format!("{prefix}.{field_name}");
+                let doc = extract_doc_comment(&field.attrs);
+
+                let type_name = get_type_name(field);
+
+                // Check if this field is a nested struct
+                if let Some(nested_struct) = all_structs.get(&type_name) {
+                    // Store section-level comment
+                    if !doc.is_empty() {
+                        comments.insert(field_path.clone(), doc);
+                    }
+
+                    // Recursively extract comments from nested struct
+                    extract_struct_comments(nested_struct, all_structs, &field_path, comments)?;
+                } else {
+                    // This is a regular field (Vec<KeyEvent>), store its comment
+                    if !doc.is_empty() {
+                        comments.insert(field_path, doc);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

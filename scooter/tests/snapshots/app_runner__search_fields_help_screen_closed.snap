@@ -31,4 +31,4 @@ expression: snapshot
                                                                                                    
                                                                                                    
                                                                                                    
-        <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <esc> quit
+        <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <C-c> quit

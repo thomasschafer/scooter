@@ -1,44 +1,13 @@
 // TODO: make most of the stuff in here pub(crate)
 
-use bitflags::bitflags;
 #[cfg(feature = "steel")]
 use steel_derive::Steel;
 use unicode_width::UnicodeWidthStr;
 
-use crate::errors::AppError;
-
-#[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum KeyCode {
-    BackTab,
-    Backspace,
-    Char(char),
-    Delete,
-    Down,
-    End,
-    Enter,
-    Esc,
-    Home,
-    Left,
-    PageDown,
-    PageUp,
-    Right,
-    Tab,
-    Up,
-}
-
-// Copied from crossterm
-bitflags! {
-    #[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy, Hash)]
-    pub struct KeyModifiers: u8 {
-        const SHIFT = 0b0000_0001;
-        const CONTROL = 0b0000_0010;
-        const ALT = 0b0000_0100;
-        const SUPER = 0b0000_1000;
-        const HYPER = 0b0001_0000;
-        const META = 0b0010_0000;
-        const NONE = 0b0000_0000;
-    }
-}
+use crate::{
+    errors::AppError,
+    keyboard::{KeyCode, KeyModifiers},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Field {

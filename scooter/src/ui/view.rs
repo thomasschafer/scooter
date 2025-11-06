@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table},
+    widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
 };
 use scooter_core::{
     app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
@@ -39,10 +39,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::Config;
-
 use frep_core::search::SearchResultWithReplacement;
-use scooter_core::utils::read_lines_range;
+use scooter_core::{config::Config, utils::read_lines_range};
 
 use super::colour::to_ratatui_colour;
 
@@ -1133,7 +1131,7 @@ fn error_result(result: &SearchResultWithReplacement) -> [ratatui::widgets::List
     .map(|(s, style)| ListItem::new(Text::styled(s, style)))
 }
 
-pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
+pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1173,7 +1171,7 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
             render_search_fields(
                 frame,
                 &app.search_fields,
-                config,
+                &app.config,
                 show_popup,
                 num_search_fields_to_render,
                 search_fields_state.focussed_section == FocussedSection::SearchFields,
@@ -1194,12 +1192,12 @@ pub fn render(app: &mut App, config: &Config, frame: &mut Frame<'_>) {
                     state,
                     elapsed,
                     results,
-                    config.get_theme(),
-                    config.style.true_color,
+                    app.config.get_theme(),
+                    app.config.style.true_color,
                     app.event_sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,
-                    app.wrap_preview_text,
+                    app.config.preview.wrap_text,
                 );
             }
         }
@@ -1266,7 +1264,7 @@ fn render_error_popup(errors: &[AppError], frame: &mut Frame<'_>, area: Rect) {
     render_paragraph_popup("Errors", error_lines, frame, area);
 }
 
-fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: Rect) {
+fn render_help_popup(keymaps: Vec<(String, String)>, frame: &mut Frame<'_>, area: Rect) {
     let max_from_width = keymaps
         .iter()
         .map(|(from, _)| from.len())
@@ -1295,10 +1293,26 @@ fn render_help_popup(keymaps: Vec<(&str, String)>, frame: &mut Frame<'_>, area: 
 }
 
 fn render_paragraph_popup(title: &str, content: Vec<Line<'_>>, frame: &mut Frame<'_>, area: Rect) {
-    let content_height = u16::try_from(content.len()).unwrap() + 2;
-    let popup_area = get_popup_area(area, content_height);
+    let popup_block = create_popup_block(title);
 
-    let popup = Paragraph::new(content).block(create_popup_block(title));
+    let width = popup_width(area);
+    let inner_width = width.saturating_sub(4); // 2 for borders + 2 for horizontal padding
+
+    let popup = Paragraph::new(content)
+        .block(popup_block)
+        .wrap(Wrap { trim: false });
+
+    // Calculate popup height: wrapped lines + borders, capped at 80% of screen
+    let wrapped_line_count = popup.line_count(inner_width);
+    let popup_height =
+        (u16::try_from(wrapped_line_count).unwrap_or(u16::MAX)).min(area.height * 80 / 100);
+
+    let popup_area = center(
+        area,
+        Constraint::Length(width),
+        Constraint::Length(popup_height),
+    );
+
     frame.render_widget(Clear, popup_area);
     frame.render_widget(popup, popup_area);
 }
@@ -1318,10 +1332,14 @@ fn render_table_popup(
     frame.render_widget(table, popup_area);
 }
 
+fn popup_width(area: Rect) -> u16 {
+    (area.width * 85 / 100).min(125)
+}
+
 fn get_popup_area(area: Rect, content_height: u16) -> Rect {
     center(
         area,
-        Constraint::Percentage(75),
+        Constraint::Length(popup_width(area)),
         Constraint::Length(content_height),
     )
 }
@@ -1336,6 +1354,9 @@ fn create_popup_block(title: &str) -> Block<'_> {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
     use super::*;
 
     #[test]
@@ -1946,5 +1967,83 @@ mod tests {
                 ]
             );
         }
+    }
+
+    fn get_snapshot(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        buffer
+            .content
+            .chunks(buffer.area.width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_wrapping() {
+        let backend = TestBackend::new(100, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+
+                // Text that should wrap when narrower
+                let content = vec![
+                    Line::from("This is some long text for the popup. It should get wrapped over multiple lines and text shouldn't be cut off. It should render correctly."),
+                    Line::from(""),
+                    Line::from("A short line."),
+                    Line::from("Here is another line that isn't quite as long as the first but should still get wrapped."),
+                ];
+
+                render_paragraph_popup("Key mapping deprecated", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_narrow_screen() {
+        let backend = TestBackend::new(50, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let content = vec![
+                    Line::from("This is some long text for the popup. It should get wrapped over multiple lines and text shouldn't be cut off. It should render correctly."),
+                    Line::from(""),
+                    Line::from("A short line."),
+                    Line::from("Here is another line that isn't quite as long as the first but should still get wrapped."),
+                ];
+                render_paragraph_popup("Key mapping deprecated", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    #[test]
+    fn test_render_paragraph_popup_short_text() {
+        let backend = TestBackend::new(100, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let content = vec![Line::from("Short message")];
+                render_paragraph_popup("Info", content, frame, area);
+            })
+            .unwrap();
+
+        insta::assert_snapshot!(get_snapshot(&terminal));
     }
 }

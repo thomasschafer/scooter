@@ -13,7 +13,9 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.100"
-scooter-core = { version = "0.2.0", path = "../scooter-core" }
+scooter-core = { version = "0.2.0", path = "../scooter-core", features = [
+  "term",
+] }
 clap = { version = "4.5.51", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.11.0"
@@ -23,14 +25,11 @@ ignore = "0.4.25"
 itertools = "0.14.0"
 log = "0.4.28"
 lru = "0.16.2"
-ratatui = "0.29.0"
+ratatui = { version = "0.29.0", features = ["unstable-rendered-line-info"] }
 regex = "1.12.2"
-serde = "1.0.228"
 simple-log = "2.4.0"
 syntect = "5.3.0"
-termini = "1.0.0"
 tokio = { version = "1.48.0", features = ["full"] }
-toml = "0.9.8"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.0"
 

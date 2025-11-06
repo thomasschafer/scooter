@@ -367,6 +367,12 @@ pub fn last_n_chars(s: &str, n: usize) -> &str {
     &s[idx..]
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Either<T, S> {
+    Left(T),
+    Right(S),
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;

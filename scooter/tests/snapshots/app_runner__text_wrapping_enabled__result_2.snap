@@ -2,27 +2,33 @@
 source: scooter/tests/app_runner.rs
 expression: snapshot.as_ref()
 ---
-                                     scooter                                    
-   ┌Search text───────────────────────────────────────────────────────────┐    
-   │users                                                                 │    
-   └──────────────────────────────────────────────────────────────────────┘    
-   ┌Replace text──────────────────────────────────────────────────────────┐    
-   │REPLACED                                                              │    
-   └──────────────────────────────────────────────────────────────────────┘    
-                                                                               
-   Results: 2 [Search complete]                       [Time taken: TIME]     
-                                                                               
-   [x] file1.txt:2                                                      (1)    
-   [x] file1.txt:17                                                     (2)    
-                                                                               
-                                                                               
-                                                                               
-                                                                               
-     6                                                                         
-     7                                                                         
-     8                                                                         
-   - 9 users 10                                                                
-   + 9 REPLACED 10                                                             
-     .                                                                         
-                                                                               
-space> toggle / <C-o> back to search fields / <enter> replace selected / <C-h>
+                                               scooter                                              
+    ┌Search text─────────────────────────────────────────────────────────────────────────────┐     
+    │users                                                                                   │     
+    └────────────────────────────────────────────────────────────────────────────────────────┘     
+    ┌Replace text────────────────────────────────────────────────────────────────────────────┐     
+    │REPLACED                                                                                │     
+    └────────────────────────────────────────────────────────────────────────────────────────┘     
+                                                                                                   
+    Results: 2 [Search complete]                                         [Time taken: TIME]      
+                                                                                                   
+    [x] file1.txt:2                                                                        (1)     
+    [x] file1.txt:17                                                                       (2)     
+                                                                                                   
+                                                                                                   
+                                                                                                   
+                                                                                                   
+      blah                                                                                         
+      1                                                                                            
+      2                                                                                            
+      3                                                                                            
+      4                                                                                            
+      5                                                                                            
+      6                                                                                            
+      7                                                                                            
+      8                                                                                            
+    - 9 users 10                                                                                   
+    + 9 REPLACED 10                                                                                
+      .                                                                                            
+                                                                                                   
+ <space> toggle / <esc> back to search fields / <enter> replace selected / <C-h> help / <C-c> quit

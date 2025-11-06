@@ -8,6 +8,7 @@ use scooter_core::{
     app::{EventHandlingResult, InputSource},
     errors::AppError,
     fields::{FieldValue, SearchFieldValues, SearchFields},
+    keyboard::KeyEvent,
     replace::{PerformingReplacementState, ReplaceState},
 };
 use std::{
@@ -20,7 +21,8 @@ use tokio::sync::mpsc;
 
 use scooter_core::{
     app::{App, AppRunConfig, FocussedSection, Popup, Screen, SearchFieldsState, SearchState},
-    fields::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
+    config::Config,
+    keyboard::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
 };
 
 #[tokio::test]
@@ -60,9 +62,9 @@ async fn test_app_reset() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
     app.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
@@ -81,9 +83,9 @@ async fn test_back_from_results() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
     let (sender, receiver) = mpsc::unbounded_channel();
     app.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
@@ -108,7 +110,10 @@ async fn test_back_from_results() {
         true,
     );
 
-    let res = app.handle_key_event(ScooterKeyCode::Char('o'), ScooterKeyModifiers::CONTROL);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('o'),
+        ScooterKeyModifiers::CONTROL,
+    ));
     assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert_eq!(app.search_fields.search().text(), "foo");
     assert_eq!(app.search_fields.replace().text(), "bar");
@@ -123,9 +128,9 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         InputSource::Directory(current_dir().unwrap()),
         search_fields,
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     // Simulate search being triggered in background
     let res = app.perform_search_if_valid();
@@ -133,15 +138,24 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup
-    app.handle_key_event(ScooterKeyCode::Enter, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Enter,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Esc,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(!matches!(res, EventHandlingResult::Exit(None)));
     assert!(!matches!(app.popup(), Some(Popup::Error)));
 
-    let res = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('c'),
+        ScooterKeyModifiers::CONTROL,
+    ));
     assert!(matches!(res, EventHandlingResult::Exit(None)));
 }
 
@@ -189,21 +203,27 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
     let screen_variant = std::mem::discriminant(&initial_screen);
     app.current_screen = initial_screen;
 
     assert!(app.popup().is_none());
     assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_open = app.handle_key_event(ScooterKeyCode::Char('h'), ScooterKeyModifiers::CONTROL);
+    let res_open = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('h'),
+        ScooterKeyModifiers::CONTROL,
+    ));
     assert!(matches!(res_open, EventHandlingResult::Rerender));
     assert!(matches!(app.popup(), Some(Popup::Help)));
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
 
-    let res_close = app.handle_key_event(ScooterKeyCode::Esc, ScooterKeyModifiers::NONE);
+    let res_close = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Esc,
+        ScooterKeyModifiers::NONE,
+    ));
     assert!(matches!(res_close, EventHandlingResult::Rerender));
     assert!(app.popup().is_none());
     assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
@@ -257,9 +277,9 @@ async fn test_keymaps_search_fields() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     assert!(matches!(app.current_screen, Screen::SearchFields(_)));
 
@@ -273,9 +293,9 @@ async fn test_keymaps_search_complete() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -298,9 +318,9 @@ async fn test_keymaps_search_progressing() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -322,9 +342,9 @@ async fn test_keymaps_performing_replacement() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -348,9 +368,9 @@ async fn test_keymaps_results() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     let replace_state_with_errors = ReplaceState {
         num_successes: 5,
@@ -394,9 +414,9 @@ async fn test_keymaps_popup() {
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
     app.add_error(AppError {
         name: "Test".to_string(),
         long: "Test error".to_string(),
@@ -422,9 +442,9 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     assert_eq!(
         app.search_fields
@@ -435,7 +455,10 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
         vec![true, false, false, false, false, true, false]
     );
 
-    let result = app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('u'),
+        ScooterKeyModifiers::ALT,
+    ));
     assert!(matches!(result, EventHandlingResult::Rerender));
 
     for field in &app.search_fields.fields {
@@ -459,22 +482,34 @@ async fn test_keybinding_integration_with_disabled_fields() {
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     assert_eq!(app.search_fields.highlighted, 2);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 3);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 4);
 
-    app.handle_key_event(ScooterKeyCode::Tab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.highlighted, 6);
 
-    app.handle_key_event(ScooterKeyCode::BackTab, ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Tab,
+        ScooterKeyModifiers::SHIFT,
+    ));
     assert_eq!(app.search_fields.highlighted, 4);
 }
 
@@ -494,23 +529,238 @@ async fn test_alt_u_unlocks_all_fields() {
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
-        true,
-        false,
-    );
+        Config::default(),
+    )
+    .unwrap();
 
     for field in &app.search_fields.fields {
         assert!(field.set_by_cli);
     }
 
-    app.handle_key_event(ScooterKeyCode::Char('x'), ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('x'),
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.search().text(), "search"); // Shouldn't have changed - all fields locked
 
-    app.handle_key_event(ScooterKeyCode::Char('u'), ScooterKeyModifiers::ALT);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('u'),
+        ScooterKeyModifiers::ALT,
+    ));
 
     for field in &app.search_fields.fields {
         assert!(!field.set_by_cli);
     }
 
-    app.handle_key_event(ScooterKeyCode::Char('x'), ScooterKeyModifiers::NONE);
+    app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('x'),
+        ScooterKeyModifiers::NONE,
+    ));
     assert_eq!(app.search_fields.search().text(), "searchx");
+}
+
+#[tokio::test]
+async fn test_handle_key_event_quit_with_ctrl_c_takes_precedence_over_popup() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    app.add_error(AppError {
+        name: "Test error".to_string(),
+        long: "Test error details".to_string(),
+    });
+    assert!(app.popup().is_some());
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('c'),
+        ScooterKeyModifiers::CONTROL,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Exit(None)));
+}
+
+#[tokio::test]
+async fn test_handle_key_event_unmapped_key_closes_popup() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    app.add_error(AppError {
+        name: "Test error".to_string(),
+        long: "Test error details".to_string(),
+    });
+    assert!(app.popup().is_some());
+
+    // Press an unmapped key (not a command)
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('z'),
+        ScooterKeyModifiers::NONE,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(app.popup().is_none());
+}
+
+#[tokio::test]
+async fn test_handle_key_event_unmapped_key_in_search_fields_focus_enters_chars() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("test", false),
+            ..Default::default()
+        },
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    let Screen::SearchFields(ref state) = app.current_screen else {
+        panic!(
+            "Expected Screen::SearchFields, found {:?}",
+            app.current_screen
+        );
+    };
+    assert_eq!(state.focussed_section, FocussedSection::SearchFields);
+
+    let initial_text = app.search_fields.search().text().to_string();
+
+    // Press a character that's not mapped to a command
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('x'),
+        ScooterKeyModifiers::NONE,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert_eq!(
+        app.search_fields.search().text(),
+        format!("{initial_text}x")
+    );
+}
+
+#[tokio::test]
+async fn test_handle_key_event_reset_command() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("test", false),
+            replace: FieldValue::new("replacement", false),
+            ..Default::default()
+        },
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    assert_eq!(app.search_fields.search().text(), "test");
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('r'),
+        ScooterKeyModifiers::CONTROL,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert_eq!(app.search_fields.search().text(), "");
+    assert_eq!(app.search_fields.replace().text(), "");
+}
+
+#[tokio::test]
+async fn test_handle_key_event_toggle_preview_wrapping() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    let initial_wrap = app.config.preview.wrap_text;
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('l'),
+        ScooterKeyModifiers::CONTROL,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert_eq!(app.config.preview.wrap_text, !initial_wrap);
+}
+
+#[tokio::test]
+async fn test_handle_key_event_show_help_menu() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues::default(),
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    assert!(app.popup().is_none());
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('h'),
+        ScooterKeyModifiers::CONTROL,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(matches!(app.popup(), Some(Popup::Help)));
+}
+
+#[tokio::test]
+async fn test_handle_key_event_enter_triggers_search_from_fields() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("test", false),
+            ..Default::default()
+        },
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    let Screen::SearchFields(ref state) = app.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    assert_eq!(state.focussed_section, FocussedSection::SearchFields);
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Enter,
+        ScooterKeyModifiers::NONE,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    let Screen::SearchFields(ref state) = app.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    assert_eq!(state.focussed_section, FocussedSection::SearchResults);
+}
+
+#[tokio::test]
+async fn test_handle_key_event_backspace_in_search_fields() {
+    let (mut app, _) = App::new_with_receiver(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("test", false),
+            ..Default::default()
+        },
+        &AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Backspace,
+        ScooterKeyModifiers::NONE,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert_eq!(app.search_fields.search().text(), "tes");
 }

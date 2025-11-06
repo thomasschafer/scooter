@@ -1,5 +1,5 @@
 ---
-source: scooter/tests/app.rs
+source: scooter-core/tests/app.rs
 expression: app.keymaps_compact()
 ---
 [
@@ -8,7 +8,7 @@ expression: app.keymaps_compact()
         "toggle",
     ),
     (
-        "<C-o>",
+        "<esc>",
         "back to search fields",
     ),
     (
@@ -20,7 +20,7 @@ expression: app.keymaps_compact()
         "help",
     ),
     (
-        "<esc>",
+        "<C-c>",
         "quit",
     ),
 ]

@@ -1,13 +1,14 @@
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::Terminal;
-use ratatui::backend::{Backend, TestBackend};
-use scooter_core::app::App;
 use std::any::TypeId;
 use std::io;
 use std::panic;
 
-use crate::config::Config;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::Terminal;
+use ratatui::backend::{Backend, TestBackend};
+
+use scooter_core::app::App;
+
 use crate::ui;
 
 #[derive(Debug)]
@@ -40,9 +41,8 @@ impl<B: Backend + 'static> Tui<B> {
         Ok(())
     }
 
-    pub fn draw(&mut self, app: &mut App, config: &Config) -> anyhow::Result<()> {
-        self.terminal
-            .draw(|frame| ui::view::render(app, config, frame))?;
+    pub fn draw(&mut self, app: &mut App) -> anyhow::Result<()> {
+        self.terminal.draw(|frame| ui::view::render(app, frame))?;
         Ok(())
     }
 

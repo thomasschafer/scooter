@@ -8,6 +8,9 @@ use std::{
 };
 use syntect::highlighting::{Theme, ThemeSet};
 
+mod keys;
+pub use keys::*;
+
 pub const APP_NAME: &str = "scooter";
 
 static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
@@ -46,7 +49,7 @@ fn themes_folder() -> PathBuf {
     config_dir().join("themes/")
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
@@ -57,12 +60,14 @@ pub struct Config {
     pub style: StyleConfig,
     #[serde(default)]
     pub search: SearchConfig,
+    #[serde(default)]
+    pub keys: KeysConfig,
 }
 
 impl Config {
     /// Returns `None` if the user wants syntax highlighting disabled, otherwise `Some(theme)` where `theme`
     /// is the user's selected theme or otherwise the default
-    pub(crate) fn get_theme(&self) -> Option<&Theme> {
+    pub fn get_theme(&self) -> Option<&Theme> {
         if self.preview.syntax_highlighting {
             Some(&self.preview.syntax_highlighting_theme)
         } else {
@@ -82,18 +87,9 @@ pub fn load_config() -> anyhow::Result<Config> {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        toml::from_str("").expect("Empty config should deserialize with defaults")
-    }
-}
-
-fn default_exit() -> bool {
-    false
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
+#[derive(Default)]
 pub struct EditorOpenConfig {
     /// The command used when pressing `e` on the search results page. Two variables are available: `%file`, which will be replaced
     /// with the file path of the search result, and `%line`, which will be replaced with the line number of the result. For example:
@@ -102,27 +98,15 @@ pub struct EditorOpenConfig {
     /// command = "vi %file +%line"
     /// ```
     /// If not set explicitly, scooter will attempt to use the editor set by the `$EDITOR` environment variable.
-    #[serde(default)]
     pub command: Option<String>,
     /// Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.
-    #[serde(default = "default_exit")]
     pub exit: bool,
 }
 
-impl Default for EditorOpenConfig {
-    fn default() -> Self {
-        Self {
-            command: None,
-            exit: default_exit(),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct PreviewConfig {
     /// Whether to apply syntax highlighting to the preview. Defaults to `true`.
-    #[serde(default = "default_syntax_highlighting")]
     pub syntax_highlighting: bool,
     /// The theme to use when syntax highlighting is enabled.
     ///
@@ -137,29 +121,17 @@ pub struct PreviewConfig {
     /// wget -P ~/.config/scooter/themes https://github.com/catppuccin/bat/raw/main/themes/Catppuccin%20Macchiato.tmTheme
     /// ```
     /// and then set `syntax_highlighting_theme = "Catppuccin Macchiato"`.
-    #[serde(
-        deserialize_with = "deserialize_syntax_highlighting_theme",
-        default = "default_syntax_highlighting_theme"
-    )]
+    #[serde(deserialize_with = "deserialize_syntax_highlighting_theme")]
     pub syntax_highlighting_theme: Theme,
     /// Wrap text onto the next line if it is wider than the preview window. Defaults to `false`. (Can be toggled in the UI using `ctrl+l`.)
-    #[serde(default)]
     pub wrap_text: bool,
-}
-
-fn default_syntax_highlighting() -> bool {
-    true
-}
-
-fn default_syntax_highlighting_theme() -> Theme {
-    load_theme("base16-eighties.dark").unwrap()
 }
 
 impl Default for PreviewConfig {
     fn default() -> Self {
         Self {
-            syntax_highlighting: default_syntax_highlighting(),
-            syntax_highlighting_theme: default_syntax_highlighting_theme(),
+            syntax_highlighting: true,
+            syntax_highlighting_theme: load_theme("base16-eighties.dark").unwrap(),
             wrap_text: false,
         }
     }
@@ -185,11 +157,10 @@ where
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct StyleConfig {
     /// Force enable or disable true color. `true` forces true color (supported by most modern terminals but not e.g. Apple Terminal), while `false` forces 256 colors (supported by almost all terminals including Apple Terminal).
     /// If omitted, scooter will attempt to determine whether the terminal being used supports true color.
-    #[serde(default = "detect_true_colour")]
     pub true_color: bool,
 }
 
@@ -227,27 +198,24 @@ fn detect_true_colour() -> bool {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct SearchConfig {
     /// Whether to disable fields set by CLI flags. Set to `false` to allow editing of these pre-populated fields. Defaults to `true`.
-    #[serde(default = "default_disable_prepopulated_fields")]
     pub disable_prepopulated_fields: bool,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            disable_prepopulated_fields: default_disable_prepopulated_fields(),
+            disable_prepopulated_fields: true,
         }
     }
 }
 
-fn default_disable_prepopulated_fields() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::commands::KeyMap;
+
     use super::*;
 
     #[test]
@@ -295,7 +263,7 @@ syntax_highlighting = false
         assert!(!config.preview.syntax_highlighting);
         assert_eq!(
             config.preview.syntax_highlighting_theme.name,
-            default_syntax_highlighting_theme().name
+            PreviewConfig::default().syntax_highlighting_theme.name
         );
 
         let default_editor_open = EditorOpenConfig::default();
@@ -352,6 +320,7 @@ disable_prepopulated_fields = false
                 search: SearchConfig {
                     disable_prepopulated_fields: false,
                 },
+                keys: KeysConfig::default(),
             }
         );
 
@@ -376,7 +345,7 @@ command = "vim %file +%line"
         let config = Config::default();
         assert_eq!(
             config.get_theme(),
-            Some(&default_syntax_highlighting_theme())
+            Some(&PreviewConfig::default().syntax_highlighting_theme)
         );
     }
 
@@ -391,6 +360,7 @@ command = "vim %file +%line"
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
+            keys: KeysConfig::default(),
         };
         assert_eq!(config.get_theme(), None);
     }
@@ -406,10 +376,161 @@ command = "vim %file +%line"
             },
             style: StyleConfig::default(),
             search: SearchConfig::default(),
+            keys: KeysConfig::default(),
         };
         assert_eq!(
             config.get_theme(),
             Some(&load_theme("base16-ocean.dark").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_unknown_keys_field_rejected() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.this_doesnt_exist]
+trigger_search = "a"
+
+[keys.search.fields]
+trigger_search = "S-tab"
+"#,
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `this_doesnt_exist`")
+        );
+    }
+
+    #[test]
+    fn test_invalid_key_code_error_message() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "C-Enter"
+"#,
+        );
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        insta::assert_snapshot!(error);
+    }
+
+    #[test]
+    fn test_invalid_key_modifier_error_message() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "D-ret"
+"#,
+        );
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        insta::assert_snapshot!(error);
+    }
+
+    #[test]
+    fn test_key_conflict_within_same_section() {
+        let config: Config = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "enter"
+focus_next_field = "enter"
+"#,
+        )
+        .unwrap();
+        let result = crate::commands::KeyMap::from_config(&config.keys);
+        assert!(result.is_err());
+        let conflicts = result.unwrap_err();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].context, "search.fields");
+        assert_eq!(conflicts[0].key.to_string(), "enter");
+    }
+
+    #[test]
+    fn test_key_conflict_with_multiple_mappings() {
+        let config: Config = toml::from_str(
+            r#"
+[keys.search.results]
+move_down = ["j", "down"]
+move_up = ["k", "down"]
+"#,
+        )
+        .unwrap();
+        let result = crate::commands::KeyMap::from_config(&config.keys);
+        assert!(result.is_err());
+        let conflicts = result.unwrap_err();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].context, "search.results");
+        assert_eq!(conflicts[0].key.to_string(), "down");
+    }
+
+    #[test]
+    fn test_no_conflict_between_different_screens() {
+        // Same key can be used in different screen contexts without conflict
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.fields]
+trigger_search = "ret"
+
+[keys.results]
+quit = "ret"
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_no_conflict_between_general_and_screen_specific() {
+        // Screen-specific keys take priority, so no conflict
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.general]
+quit = "q"
+
+[keys.results]
+quit = "q"
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_keys_same_command_no_conflict() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.results]
+move_down = ["A-r", "l"]
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_all_default_keybindings_are_valid() {
+        let config = Config::default();
+        // If KeyMap construction succeeds, all defaults are valid
+        let key_map_result = KeyMap::from_config(&config.keys);
+        assert!(
+            key_map_result.is_ok(),
+            "Default keybindings should be valid: {:?}",
+            key_map_result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_uppercase_char_conflict_detection() {
+        let result: Result<Config, _> = toml::from_str(
+            r#"
+[keys.search.results]
+move_top = "R"
+move_bottom = "r"
+"#,
+        );
+        assert!(
+            result.is_ok(),
+            "r and R should be treated as different keys"
         );
     }
 }

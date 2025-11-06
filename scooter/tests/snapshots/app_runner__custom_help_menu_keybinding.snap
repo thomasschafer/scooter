@@ -19,7 +19,7 @@ expression: snapshot
     │ X│    <A-u>  unlock pre-populated fields                                             │       
     └──│    <C-l>  toggle text wrapping in preview                                         │       
     ┌Fi│    <C-r>  reset                                                                   │─┐     
-    │  │    <C-h>  help                                                                    │ │     
+    │  │     <F1>  help                                                                    │ │     
     └──│    <esc>  close popup                                                             │─┘     
     ┌Fi│    <C-c>  quit                                                                    │─┐     
     │  └───────────────────────────────────────────────────────────────────────────────────┘ │     
@@ -31,4 +31,4 @@ expression: snapshot
                                                                                                    
                                                                                                    
                                                                                                    
-        <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <C-c> quit
+         <enter> jump to results / <tab> focus next / <C-r> reset / <F1> help / <C-c> quit

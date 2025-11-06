@@ -294,6 +294,84 @@ Whether to disable fields set by CLI flags. Set to `false` to allow editing of t
 
 <!-- CONFIG END -->
 
+### `[keys]` section
+
+This section can be used to override the default keymappings. These defaults are shown in the snippet below, but note that all keys are optional, so you only need to set those you wish to override.
+
+<!-- KEYS START -->
+```toml
+# Commands available on all screens
+[keys.general]
+quit = "C-c"            # Exit scooter
+reset = "C-r"           # Cancel in-progress operations, reset fields to default values and return to search screen
+show_help_menu = "C-h"  # Show the help menu containing keymaps
+
+# Commands available on the search screen
+[keys.search]
+toggle_preview_wrapping = "C-l"  # Toggle wrapping of lines that don't fit within the width of the preview
+
+# Commands available on the search screen, when the search fields are focussed
+[keys.search.fields]
+unlock_prepopulated_fields = "A-u"  # Allow editing of fields that were populated using CLI args, such as `--search_text foo`. (Note that you can use the `disable_prepopulated_fields` config option to change the default behaviour.)
+trigger_search = "enter"            # Trigger a search
+focus_next_field = "tab"            # Focus on the next field
+focus_previous_field = "S-tab"      # Focus on the previous field
+
+# Commands available on the search screen, when the search results are focussed
+[keys.search.results]
+trigger_replacement = "enter"              # Trigger a replacement
+back_to_fields = ["esc", "C-o"]            # Move focus back to the search fields
+open_in_editor = "e"                       # Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
+move_down = ["j", "down", "C-n"]           # Navigate to the search result below
+move_up = ["k", "up", "C-p"]               # Navigate to the search result above
+move_down_half_page = "C-d"                # Navigate to the search result half a page below
+move_up_half_page = "C-u"                  # Navigate to the search result half a page above
+move_down_full_page = ["C-f", "pagedown"]  # Navigate to the search result a page below
+move_up_full_page = ["C-b", "pageup"]      # Navigate to the search result a page above
+move_top = "g"                             # Navigate to the first search result
+move_bottom = "G"                          # Navigate to the last search result
+toggle_selected_inclusion = "space"        # Toggle whether the currently highlighted result will be replaced or ignored
+toggle_all_selected = "a"                  # Toggle whether all results will be replaced or ignored
+toggle_multiselect_mode = "v"              # Toggle whether multiselect mode is enabled
+flip_multiselect_direction = "A-;"         # Flip the direction of the multiselect selection
+
+# Commands available on the replacement-in-progress screen
+[keys.performing_replacement]
+
+# Commands available on the results screen
+[keys.results]
+scroll_errors_down = ["j", "down", "C-n"]  # Navigate to the error below
+scroll_errors_up = ["k", "up", "C-p"]      # Navigate to the error above
+quit = ["enter", "q"]                      # Exit scooter. This is in addition to the `quit` command in the `general` section.
+
+```
+<!-- KEYS END -->
+
+There is a `general` section for keymaps that apply to all screens, and then there are screen-specific sections which only apply to certain screens. Note that if a keymap is bound in both the screen-specific and general sections, the screen-specific mapping takes priority.
+
+You can set any number of mappings for a given command using an array, e.g. `quit = ["esc", "C-c"]`. If you are only setting one keymap, you can omit the square brackets, e.g. `quit = "C-c"`.
+
+Keybindings are specified using optional modifier prefixes combined with key names. For example, `C-a` represents Ctrl+a, `A-S-x` represents Alt+Shift+x, and `j` represents the j key with no modifiers.
+
+#### Available modifiers
+<!-- MODIFIERS LIST START -->
+`S-`, `C-`, `A-`
+<!-- MODIFIERS LIST END -->
+
+#### Available keys
+
+Alphanumeric characters (`a`-`z`, `A`-`Z`, `0`-`9`), function keys (`F1`-`F24`), and the following special keys:
+<!-- KEYS LIST START -->
+`backspace`, `enter`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`
+<!-- KEYS LIST END -->
+
+#### Note on terminal limitations
+
+Some key combinations may not work due to terminal protocol limitations.
+
+Most modern terminals (Alacritty, Ghostty, Kitty, WezTerm etc.) support [Kitty's enhanced keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), which handles most key combinations correctly. However, there are still some combinations which won't work, such as Control in combination with some punctuation or special characters: for instance, `C-?` generally results in `/` being sent to the terminal application.
+
+Terminals that do not support the enhanced protocol face more limitations still, such as interpreting `C-h` as backspace, `C-i` as tab, `C-m` as enter, and `C-[` as escape.
 
 ## Editor configuration
 

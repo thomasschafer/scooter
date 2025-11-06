@@ -10,25 +10,25 @@ expression: snapshot
     │                                                                                        │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     
     ┌───┐                                                                                          
-    │   │ Fixed strings                                                                            
-    └───┘   ┌─────────────────────────────────Errors──────────────────────────────────┐            
-    ┌───┐   │ Search text                                                             │            
-    │   │ Ma│ regex parse error:                                                      │            
-    └───┘   │     (                                                                   │            
-    ┌───┐   │     ^                                                                   │            
-    │ X │ Ma│ error: unclosed group                                                   │            
-    └───┘   │                                                                         │            
-    ┌Files t│ Files to include                                                        │──────┐     
-    │*, {   │ error parsing glob '{': unclosed alternate group; missing '}' (maybe es │      │     
-    └───────│                                                                         │──────┘     
-    ┌Files t│ Files to exclude                                                        │──────┐     
-    │{{     │ error parsing glob '!{{': unclosed alternate group; missing '}' (maybe  │      │     
-    └───────└─────────────────────────────────────────────────────────────────────────┘──────┘     
+    │  ┌──────────────────────────────────────Errors───────────────────────────────────────┐       
+    └──│ Search text                                                                       │       
+    ┌──│ regex parse error:                                                                │       
+    │  │     (                                                                             │       
+    └──│     ^                                                                             │       
+    ┌──│ error: unclosed group                                                             │       
+    │ X│                                                                                   │       
+    └──│ Files to include                                                                  │       
+    ┌Fi│ error parsing glob '{': unclosed alternate group; missing '}' (maybe escape '{'   │─┐     
+    │*,│ with '[{]'?)                                                                      │ │     
+    └──│                                                                                   │─┘     
+    ┌Fi│ Files to exclude                                                                  │─┐     
+    │{{│ error parsing glob '!{{': unclosed alternate group; missing '}' (maybe escape '{' │ │     
+    └──│ with '[{]'?)                                                                      │─┘     
+       └───────────────────────────────────────────────────────────────────────────────────┘       
                                                                                                    
                                                                                                    
                                                                                                    
                                                                                                    
                                                                                                    
                                                                                                    
-                                                                                                   
-     <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <esc> close popup
+        <enter> jump to results / <tab> focus next / <C-r> reset / <C-h> help / <C-c> quit
