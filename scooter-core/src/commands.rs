@@ -132,7 +132,7 @@ impl KeyMap {
             [(
                 toggle_preview_wrapping,
                 CommandSearchFields::TogglePreviewWrapping
-            ),]
+            )]
         );
 
         let search_fields = build_map!(
