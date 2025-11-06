@@ -4,7 +4,7 @@ expression: app.keymaps_compact()
 ---
 [
     (
-        "<ret>",
+        "<enter>",
         "jump to results",
     ),
     (

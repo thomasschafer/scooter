@@ -12,7 +12,7 @@ expression: snapshot
     ┌───┐                                                                                          
     │   │ Fixed strings                                                                            
     └──┌───────────────────────────────────────Help────────────────────────────────────────┐       
-    ┌──│    <ret>  jump to results                                                         │       
+    ┌──│  <enter>  jump to results                                                         │       
     │  │    <tab>  focus next                                                              │       
     └──│  <S-tab>  focus previous                                                          │       
     ┌──│  <space>  toggle checkbox                                                         │       
@@ -31,4 +31,4 @@ expression: snapshot
                                                                                                    
                                                                                                    
                                                                                                    
-          <ret> jump to results / <tab> focus next / <C-r> reset / <F1> help / <C-c> quit
+         <enter> jump to results / <tab> focus next / <C-r> reset / <F1> help / <C-c> quit

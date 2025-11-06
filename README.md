@@ -313,13 +313,13 @@ toggle_preview_wrapping = "C-l"  # Toggle wrapping of lines that don't fit withi
 # Commands available on the search screen, when the search fields are focussed
 [keys.search.fields]
 unlock_prepopulated_fields = "A-u"  # Allow editing of fields that were populated using CLI args, such as `--search_text foo`. (Note that you can use the `disable_prepopulated_fields` config option to change the default behaviour.)
-trigger_search = "ret"              # Trigger a search
+trigger_search = "enter"            # Trigger a search
 focus_next_field = "tab"            # Focus on the next field
 focus_previous_field = "S-tab"      # Focus on the previous field
 
 # Commands available on the search screen, when the search results are focussed
 [keys.search.results]
-trigger_replacement = "ret"                # Trigger a replacement
+trigger_replacement = "enter"              # Trigger a replacement
 back_to_fields = ["esc", "C-o"]            # Move focus back to the search fields
 open_in_editor = "e"                       # Open the currently selected search result in your editor. The editor command can be overriden using the `editor_open` section of your config.
 move_down = ["j", "down", "C-n"]           # Navigate to the search result below
@@ -342,7 +342,7 @@ flip_multiselect_direction = "A-;"         # Flip the direction of the multisele
 [keys.results]
 scroll_errors_down = ["j", "down", "C-n"]  # Navigate to the error below
 scroll_errors_up = ["k", "up", "C-p"]      # Navigate to the error above
-quit = ["ret", "q"]                        # Exit scooter. This is in addition to the `quit` command in the `general` section.
+quit = ["enter", "q"]                      # Exit scooter. This is in addition to the `quit` command in the `general` section.
 
 ```
 <!-- KEYS END -->
@@ -362,7 +362,7 @@ Keybindings are specified using optional modifier prefixes combined with key nam
 
 Alphanumeric characters (`a`-`z`, `A`-`Z`, `0`-`9`), function keys (`F1`-`F24`), and the following special keys:
 <!-- KEYS LIST START -->
-`backspace`, `ret`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`
+`backspace`, `enter`, `left`, `right`, `up`, `down`, `home`, `end`, `pageup`, `pagedown`, `tab`, `del`, `ins`, `null`, `esc`, `space`
 <!-- KEYS LIST END -->
 
 #### Note on terminal limitations

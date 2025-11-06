@@ -60,7 +60,7 @@ expression: app.keymaps_all()
         "jump to bottom",
     ),
     (
-        "<ret>",
+        "<enter>",
         "replace selected",
     ),
     (

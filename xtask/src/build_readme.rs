@@ -267,7 +267,14 @@ fn generate_key_format_docs(content: &str) -> Result<String> {
 
     // Parse keyboard.rs and extract all key constants
     let keys = extract_key_constants(keyboard_path)?;
-    let keys_list: Vec<String> = keys.iter().map(|k| format!("`{k}`")).collect();
+    let excluded_keys = [
+        "ret", // We have "enter" too, no need for both
+    ];
+    let keys_list: Vec<String> = keys
+        .iter()
+        .filter(|k| !excluded_keys.contains(&k.as_str()))
+        .map(|k| format!("`{k}`"))
+        .collect();
     let keys_list_str = format!("{}\n", keys_list.join(", "));
 
     // Replace modifiers list

@@ -363,6 +363,7 @@ impl From<crossterm::event::KeyCode> for KeyCode {
 pub(crate) mod keys {
     pub(crate) const BACKSPACE: &str = "backspace";
     pub(crate) const ENTER: &str = "ret";
+    pub(crate) const ENTER2: &str = "enter";
     pub(crate) const LEFT: &str = "left";
     pub(crate) const RIGHT: &str = "right";
     pub(crate) const UP: &str = "up";
@@ -468,7 +469,7 @@ impl std::fmt::Display for KeyEvent {
 
         match self.code {
             KeyCode::Backspace => result.push_str(keys::BACKSPACE),
-            KeyCode::Enter => result.push_str(keys::ENTER),
+            KeyCode::Enter => result.push_str(keys::ENTER2),
             KeyCode::Left => result.push_str(keys::LEFT),
             KeyCode::Right => result.push_str(keys::RIGHT),
             KeyCode::Up => result.push_str(keys::UP),
@@ -549,7 +550,7 @@ impl std::str::FromStr for KeyEvent {
         let mut tokens: Vec<_> = s.split('-').collect();
         let mut code = match tokens.pop().ok_or_else(|| anyhow!("Missing key code"))? {
             keys::BACKSPACE => KeyCode::Backspace,
-            keys::ENTER => KeyCode::Enter,
+            keys::ENTER | keys::ENTER2 => KeyCode::Enter,
             keys::LEFT => KeyCode::Left,
             keys::RIGHT => KeyCode::Right,
             keys::UP => KeyCode::Up,

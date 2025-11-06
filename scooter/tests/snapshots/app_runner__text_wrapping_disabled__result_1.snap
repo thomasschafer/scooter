@@ -31,4 +31,4 @@ expression: snapshot.as_ref()
       2                                                                                            
       3                                                                                            
                                                                                                    
-  <space> toggle / <esc> back to search fields / <ret> replace selected / <C-h> help / <C-c> quit
+ <space> toggle / <esc> back to search fields / <enter> replace selected / <C-h> help / <C-c> quit

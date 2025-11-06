@@ -435,8 +435,8 @@ trigger_search = "D-ret"
         let config: Config = toml::from_str(
             r#"
 [keys.search.fields]
-trigger_search = "ret"
-focus_next_field = "ret"
+trigger_search = "enter"
+focus_next_field = "enter"
 "#,
         )
         .unwrap();
@@ -445,7 +445,7 @@ focus_next_field = "ret"
         let conflicts = result.unwrap_err();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].context, "search.fields");
-        assert_eq!(conflicts[0].key.to_string(), "ret");
+        assert_eq!(conflicts[0].key.to_string(), "enter");
     }
 
     #[test]

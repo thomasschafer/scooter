@@ -12,7 +12,7 @@ expression: app.keymaps_compact()
         "back to search fields",
     ),
     (
-        "<ret>",
+        "<enter>",
         "replace selected",
     ),
     (
