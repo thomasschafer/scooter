@@ -88,7 +88,6 @@ pub enum BackgroundProcessingEvent {
 
 #[derive(Debug)]
 pub enum AppEvent {
-    Rerender,
     PerformSearch,
 }
 
@@ -102,9 +101,9 @@ pub struct ExitAndReplaceState {
 #[derive(Debug)]
 pub enum Event {
     LaunchEditor((PathBuf, usize)),
-    App(AppEvent),
-    PerformReplacement,
     ExitAndReplace(ExitAndReplaceState),
+    Rerender,
+    App(AppEvent),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -569,6 +568,16 @@ impl<'a> App {
         Ok((app, app_event_receiver))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn handle_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
+        match app_event {
+            AppEvent::PerformSearch => {
+                self.perform_search_unwrap();
+                EventHandlingResult::Rerender
+            }
+        }
+    }
+
     fn cancel_search(&mut self) {
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(SearchState { cancelled, .. }),
@@ -637,36 +646,24 @@ impl<'a> App {
         }
     }
 
-    pub fn handle_app_event(&mut self, event: &AppEvent) -> EventHandlingResult {
-        match event {
-            AppEvent::Rerender => EventHandlingResult::Rerender,
-            AppEvent::PerformSearch => {
-                if self.search_fields.search().text().is_empty() {
-                    if let Screen::SearchFields(ref mut search_fields_state) = self.current_screen {
-                        search_fields_state.search_state = None;
-                    }
-                    EventHandlingResult::Rerender
-                } else {
-                    self.perform_search_unwrap()
-                }
-            }
-        }
-    }
-
-    pub fn perform_search_if_valid(&mut self) -> EventHandlingResult {
-        if let Some(search_config) = self.validate_fields().unwrap() {
-            self.searcher = Some(search_config);
-        } else {
-            return EventHandlingResult::Rerender;
-        }
-        self.perform_search_unwrap()
+    // Called when searching explicitly: shows error popup if validation fails
+    pub fn perform_search_if_valid(&mut self) {
+        let Some(search_config) = self.validate_fields().unwrap() else {
+            return;
+        };
+        self.searcher = Some(search_config);
+        self.perform_search_unwrap();
     }
 
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
-    fn perform_search_unwrap(&mut self) -> EventHandlingResult {
+    // TODO: how can we enforce validation by type system - e.g. pass in searcher?
+    fn perform_search_unwrap(&mut self) {
         let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
-            return EventHandlingResult::None;
+            return;
         };
+        if self.search_fields.search().text().is_empty() {
+            search_fields_state.search_state = None;
+        }
 
         let (background_processing_sender, background_processing_receiver) =
             mpsc::unbounded_channel();
@@ -703,8 +700,6 @@ impl<'a> App {
         );
 
         search_fields_state.search_state = Some(search_state);
-
-        EventHandlingResult::Rerender
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -776,10 +771,6 @@ impl<'a> App {
         preview_update_state.replacements_updated += end - start + 1;
 
         EventHandlingResult::Rerender
-    }
-
-    pub fn trigger_replacement(&mut self) {
-        let _ = self.event_sender.send(Event::PerformReplacement);
     }
 
     pub fn perform_replacement(&mut self) {
@@ -893,7 +884,7 @@ impl<'a> App {
                     state.set_search_completed_now();
                     if self.immediate_replace && *focussed_section == FocussedSection::SearchResults
                     {
-                        self.trigger_replacement();
+                        self.perform_replacement();
                     }
                 }
                 EventHandlingResult::Rerender
@@ -986,7 +977,7 @@ impl<'a> App {
                     // Check if search has been performed
                     if search_fields_state.search_state.is_some() {
                         if self.immediate_replace && self.search_has_completed() {
-                            self.trigger_replacement();
+                            self.perform_replacement();
                         }
                     } else {
                         if let Some(timer) = search_fields_state.search_debounce_timer.take() {
@@ -1109,16 +1100,13 @@ impl<'a> App {
 
         match event {
             CommandSearchFocusResults::TriggerReplacement => {
-                self.trigger_replacement();
+                self.perform_replacement();
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusResults::BackToFields => {
                 self.cancel_search();
                 let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
                 search_fields_state.focussed_section = FocussedSection::SearchFields;
-                self.event_sender
-                    .send(Event::App(AppEvent::Rerender))
-                    .unwrap();
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusResults::OpenInEditor => {
@@ -1414,7 +1402,7 @@ impl<'a> App {
                         break;
                     },
                     _ = rerender_interval.tick() => {
-                        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                        let _ = event_sender.send(Event::Rerender);
                     }
                 }
             }

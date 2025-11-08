@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
 };
 use scooter_core::{
-    app::{App, AppEvent, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
+    app::{App, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
@@ -507,7 +507,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
         cache_guard.put(path, full);
 
         // Ignore error - likely app has closed
-        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+        let _ = event_sender.send(Event::Rerender);
     });
 }
 
