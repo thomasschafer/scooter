@@ -133,8 +133,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     .unwrap();
 
     // Simulate search being triggered in background
-    let res = app.perform_search_if_valid();
-    assert!(!matches!(res, EventHandlingResult::Exit(None)));
+    app.perform_search_if_valid();
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup

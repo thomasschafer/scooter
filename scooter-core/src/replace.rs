@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    app::{AppEvent, BackgroundProcessingEvent, Event, EventHandlingResult},
+    app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
 };
 
@@ -209,12 +209,12 @@ pub fn perform_replacement(
                     None => break,
                 },
                 _ = rerender_interval.tick() => {
-                    let _ = event_sender.send(Event::App(AppEvent::Rerender));
+                    let _ = event_sender.send(Event::Rerender);
                 }
             }
         }
 
-        let _ = event_sender.send(Event::App(AppEvent::Rerender));
+        let _ = event_sender.send(Event::Rerender);
 
         let stats = frep_core::replace::calculate_statistics(replacement_results);
         // Ignore error: we may have gone back to the previous screen
