@@ -447,7 +447,7 @@ vim.keymap.set('v', '<leader>r',
 
 Finally, replace the `-- REPLACE THIS: ...` line with one of the integration-specific code blocks below:
 
-#### Option 1: Using snacks.nvim
+#### Option 1: using snacks.nvim
 
 Install snacks.nvim as per the instructions [here](https://github.com/folke/snacks.nvim#-installation).
 
@@ -500,7 +500,7 @@ local function open_scooter_with_text(search_text)
 end
 ```
 
-#### Option 2: Using ToggleTerm
+#### Option 2: using ToggleTerm
 
 Install ToggleTerm as per the instructions [here](https://github.com/akinsho/toggleterm.nvim#installation), then add to your Neovim config:
 
