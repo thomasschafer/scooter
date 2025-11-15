@@ -251,15 +251,14 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                             self.tui.init()?;
                             res
                         }
-                        Event::App(app_event) => {
-                            self.app.handle_app_event(&app_event)
-                        }
-                        Event::PerformReplacement => {
-                            self.app.perform_replacement();
-                            EventHandlingResult::Rerender
-                        }
                         Event::ExitAndReplace(state) => {
                             return Ok(Some(ExitState::StdinState(state)));
+                        }
+                        Event::Rerender => {
+                            EventHandlingResult::Rerender
+                        }
+                        Event::App(app_event) => {
+                            self.app.handle_event(app_event)
                         }
                     }
                 }
