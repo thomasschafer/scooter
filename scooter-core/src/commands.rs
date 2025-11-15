@@ -6,7 +6,7 @@ use crate::{
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
     General(CommandGeneral),
     SearchFields(CommandSearchFields),
@@ -15,7 +15,7 @@ pub(crate) enum Command {
 }
 
 // Events applicable to all screens
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandGeneral {
     Quit,
     Reset,
@@ -23,7 +23,7 @@ pub(crate) enum CommandGeneral {
 }
 
 // Events applicable only to `SearchFields` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandSearchFields {
     TogglePreviewWrapping,
     SearchFocusFields(CommandSearchFocusFields),
@@ -31,7 +31,7 @@ pub(crate) enum CommandSearchFields {
 }
 
 // Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandSearchFocusFields {
     UnlockPrepopulatedFields,
     TriggerSearch,
@@ -41,7 +41,7 @@ pub(crate) enum CommandSearchFocusFields {
 }
 
 // Events applicable only to `Screen::SearchFields` screen when focussed section is `FocussedSection::SearchFields`
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandSearchFocusResults {
     TriggerReplacement,
     BackToFields,
@@ -64,11 +64,11 @@ pub(crate) enum CommandSearchFocusResults {
 }
 
 // Events applicable only to `PerformingReplacement` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandPerformingReplacement {}
 
 // Events applicable only to `Results` screen
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandResults {
     ScrollErrorsDown,
     ScrollErrorsUp,
@@ -267,22 +267,18 @@ impl KeyMap {
             Screen::SearchFields(state) => {
                 // Check common SearchFields commands first
                 if let Some(cmd) = self.search_common.get(&key_event) {
-                    return Some(Command::SearchFields(cmd.clone()));
+                    return Some(Command::SearchFields(*cmd));
                 }
                 // Then check focus-specific commands
                 match state.focussed_section {
                     FocussedSection::SearchFields => {
                         self.search_fields.get(&key_event).map(|cmd| {
-                            Command::SearchFields(CommandSearchFields::SearchFocusFields(
-                                cmd.clone(),
-                            ))
+                            Command::SearchFields(CommandSearchFields::SearchFocusFields(*cmd))
                         })
                     }
                     FocussedSection::SearchResults => {
                         self.search_results.get(&key_event).map(|cmd| {
-                            Command::SearchFields(CommandSearchFields::SearchFocusResults(
-                                cmd.clone(),
-                            ))
+                            Command::SearchFields(CommandSearchFields::SearchFocusResults(*cmd))
                         })
                     }
                 }
@@ -290,18 +286,18 @@ impl KeyMap {
             Screen::PerformingReplacement(_) => self
                 .performing_replacement
                 .get(&key_event)
-                .map(|cmd| Command::PerformingReplacement(cmd.clone())),
+                .map(|cmd| Command::PerformingReplacement(*cmd)),
             Screen::Results(_) => self
                 .results
                 .get(&key_event)
-                .map(|cmd| Command::Results(cmd.clone())),
+                .map(|cmd| Command::Results(*cmd)),
         } {
             return Some(cmd);
         }
 
         // Check general commands - must happen after looking up screen-specific commands
         if let Some(cmd) = self.general.get(&key_event) {
-            return Some(Command::General(cmd.clone()));
+            return Some(Command::General(*cmd));
         }
         None
     }
