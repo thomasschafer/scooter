@@ -488,6 +488,26 @@ enum SearchStrategy {
     },
 }
 
+fn generate_escape_deprecation_message(quit_keymap: Option<KeyEvent>) -> String {
+    let quit_keymap_str = quit_keymap.map_or("".to_string(), |keymap| {
+        let optional_help = if let KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+        } = keymap
+        {
+            // Add some additional help text when using the default
+            " (i.e. `ctrl + c`)"
+        } else {
+            ""
+        };
+        format!(": use `{keymap}`{optional_help} instead")
+    });
+
+    format!(
+        "Pressing escape to quit is no longer enabled by default{quit_keymap_str}.\n\nYou can remap this in your scooter config.",
+    )
+}
+
 impl<'a> App {
     fn new(
         input_source: InputSource,
@@ -1265,9 +1285,10 @@ impl<'a> App {
             event
         } else {
             if key_event.code == KeyCode::Esc {
-                self.set_popup(Popup::Text{
+                let quit_keymap = self.config.keys.general.quit.first().copied();
+                self.set_popup(Popup::Text {
                     title: "Key mapping deprecated".to_string(),
-                    body: "Pressing escape to quit is no longer enabled by default: use `ctrl + c` instead.\n\nYou can remap this in your scooter config.".to_string(),
+                    body: generate_escape_deprecation_message(quit_keymap),
                 });
                 return Right(EventHandlingResult::Rerender);
             }
@@ -2295,5 +2316,51 @@ mod tests {
         let res = app.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
         assert!(matches!(res, EventHandlingResult::Rerender));
         assert!(app.popup().is_none());
+    }
+
+    #[test]
+    fn test_escape_deprecation_message_with_default() {
+        let keymap = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let message = generate_escape_deprecation_message(Some(keymap));
+        assert_eq!(
+            message,
+            "Pressing escape to quit is no longer enabled by default: use `C-c` \
+             (i.e. `ctrl + c`) instead.\n\nYou can remap this in your scooter config."
+        );
+    }
+
+    #[test]
+    fn test_escape_deprecation_message_with_no_mapping() {
+        let message = generate_escape_deprecation_message(None);
+        assert_eq!(
+            message,
+            "Pressing escape to quit is no longer enabled by default.\n\n\
+             You can remap this in your scooter config."
+        );
+    }
+
+    #[test]
+    fn test_escape_deprecation_message_with_f_key() {
+        let keymap = KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE);
+        let message = generate_escape_deprecation_message(Some(keymap));
+        assert_eq!(
+            message,
+            "Pressing escape to quit is no longer enabled by default: use `F1` instead.\n\n\
+             You can remap this in your scooter config."
+        );
+    }
+
+    #[test]
+    fn test_escape_deprecation_message_with_ctrl_alt_q_keymap() {
+        let keymap = KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        let message = generate_escape_deprecation_message(Some(keymap));
+        assert_eq!(
+            message,
+            "Pressing escape to quit is no longer enabled by default: use `C-A-q` instead.\n\n\
+             You can remap this in your scooter config."
+        );
     }
 }
