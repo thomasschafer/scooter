@@ -591,7 +591,9 @@ impl<'a> App {
     pub fn handle_internal_event(&mut self, event: InternalEvent) -> EventHandlingResult {
         match event {
             InternalEvent::App(app_event) => self.handle_app_event(app_event),
-            InternalEvent::Background(bg_event) => self.handle_background_processing_event(bg_event),
+            InternalEvent::Background(bg_event) => {
+                self.handle_background_processing_event(bg_event)
+            }
         }
     }
 
@@ -1087,7 +1089,8 @@ impl<'a> App {
             let event_sender = self.event_sender.clone();
             search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(300)).await;
-                let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
+                let _ =
+                    event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
             }));
         }
         EventHandlingResult::Rerender

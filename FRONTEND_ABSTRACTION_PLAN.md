@@ -2,7 +2,7 @@
 
 ## Status
 
-**Phase 0 in progress.** Event system design finalized with unified event channel approach.
+**Phase 0 in progress** - Event system partially refactored. See Phase 0 section for remaining work.
 
 ## Goal
 
@@ -34,7 +34,7 @@ Make `scooter-core` a truly frontend-agnostic library with a minimal public API 
 **Frontends should:**
 - Translate input to `KeyEvent` and call `app.handle_key_event()`
 - Get view state via `app.view()` and render it
-- Handle async events via `next_event()` or `poll_event()`
+- Handle async events via `event_recv()` or `poll_event()`
 - Own syntax highlighting and styling
 
 ---
@@ -45,267 +45,41 @@ Make `scooter-core` a truly frontend-agnostic library with a minimal public API 
 
 **Goal:** Remove event passthrough and support both event-loop and callback-based frontends.
 
-#### Current Problem
+#### Current State
 
-Frontends receive events and must call methods back on `App`:
+✅ Core owns event channels, frontends call `app.event_recv()`
+✅ Internal events unified under `Event::Internal(InternalEvent)`
+✅ Frontend calls `app.handle_internal_event()` - no passthrough
 
-```rust
-// In scooter/src/app_runner.rs
-Some(event) = self.event_receiver.recv() => {
-    match event {
-        Event::App(app_event) => self.app.handle_app_event(&app_event),  // Passthrough
-        Event::PerformReplacement => self.app.perform_replacement(),      // Passthrough
-        Event::LaunchEditor((file, line)) => { /* handle */ }
-        Event::ExitAndReplace(state) => { /* exit */ }
-    }
-}
-```
+#### Remaining Work
 
-Core sends `Event::App` and `Event::PerformReplacement` to itself via a channel, making frontends be middlemen.
+🔲 **Wrap frontend events** - Create `FrontendEvent` enum and wrap:
+  - `Event::LaunchEditor` → `Event::Frontend(FrontendEvent::LaunchEditor(...))`
+  - `Event::ExitAndReplace` → `Event::Frontend(FrontendEvent::ExitAndReplace(...))`
+  - `Event::Rerender` → `Event::Frontend(FrontendEvent::Rerender)`
 
-#### Solution
+🔲 **Add non-blocking API** - Implement `app.poll_event()` for callback-based frontends (Helix/Neovim)
+  - Should multiplex main + background channels like `event_recv()` does
 
-**Split events:** Internal events (handled by core) vs Frontend events (handled by frontends), unified into a single channel.
+#### Target Event Structure
 
 ```rust
-// Top-level event enum - wraps both types in single channel
 pub enum Event {
-    Internal(InternalEvent),
-    Frontend(FrontendEvent),
+    Internal(InternalEvent),        // Core handles via app.handle_internal_event()
+    Frontend(FrontendEvent),        // Frontend handles directly
 }
 
-// Internal - handled by core, not directly exposed
-enum InternalEvent {
-    PerformSearch,
-    PerformReplacement,
+pub enum InternalEvent {
+    App(AppEvent),
+    Background(BackgroundProcessingEvent),
 }
 
-// Frontend - handled by frontends
-pub enum FrontendEvent {
-    LaunchEditor((PathBuf, usize)),      // Frontend-specific
-    ExitAndReplace(ExitAndReplaceState), // Exit for stdin mode
-    Rerender,                             // Returned after internal/bg events
-}
-```
-
-**Key simplification:** The old `AppEvent::Rerender` becomes `FrontendEvent::Rerender`. Core automatically returns `Rerender` after handling any internal or background event.
-
-**Unified channel approach:** Instead of separate channels for internal and frontend events, use a single `Event` channel. Background tasks (like debounce timers) send `Event::Internal(...)`, replacement threads send `Event::Frontend(FrontendEvent::Rerender)`, etc. Core's event handling methods automatically process internal events and return frontend events.
-
-**Event handling in frontends:**
-
-Frontends receive a single `UnboundedReceiver<Event>` and match on the variants. The frontend event loop handles `Event::Internal` by calling core methods and handles `Event::Frontend` directly.
-
-#### Detailed Implementation Steps
-
-**Step 1: Create new event types** in `scooter-core/src/app.rs`:
-
-```rust
-// Keep ExitAndReplaceState
-pub struct ExitAndReplaceState {
-    pub stdin: Arc<String>,
-    pub search_config: ParsedSearchConfig,
-    pub replace_results: Vec<SearchResultWithReplacement>,
-}
-
-// NEW: Top-level unified event enum
-pub enum Event {
-    Internal(InternalEvent),
-    Frontend(FrontendEvent),
-}
-
-// NEW: Internal events (not pub) - core handles these
-enum InternalEvent {
-    PerformSearch,
-    PerformReplacement,
-}
-
-// NEW: Frontend events (pub) - frontends handle these
 pub enum FrontendEvent {
     LaunchEditor((PathBuf, usize)),
     ExitAndReplace(ExitAndReplaceState),
     Rerender,
 }
-
-// OLD: Remove these after migration
-pub enum AppEvent {
-    Rerender,           // Becomes FrontendEvent::Rerender
-    PerformSearch,      // Becomes InternalEvent::PerformSearch
-}
-
-pub enum OldEvent {
-    LaunchEditor((PathBuf, usize)),
-    App(AppEvent),
-    PerformReplacement,
-    ExitAndReplace(ExitAndReplaceState),
-}
 ```
-
-**Step 2: Update App struct** to use unified event channel:
-
-```rust
-pub struct App {
-    // ... existing fields ...
-
-    // Single event sender for both internal and frontend events
-    event_sender: UnboundedSender<Event>,
-}
-```
-
-**Step 3: Update all event sends** throughout `app.rs` and `replace.rs`:
-
-```rust
-// Internal events - wrapped in Event::Internal:
-// OLD: self.event_sender.send(Event::PerformReplacement)
-// NEW: self.event_sender.send(Event::Internal(InternalEvent::PerformReplacement))
-
-// OLD: event_sender.send(Event::App(AppEvent::PerformSearch))
-// NEW: event_sender.send(Event::Internal(InternalEvent::PerformSearch))
-
-// Frontend events - wrapped in Event::Frontend:
-// OLD: event_sender.send(Event::App(AppEvent::Rerender))
-// NEW: event_sender.send(Event::Frontend(FrontendEvent::Rerender))
-
-// OLD: self.event_sender.send(Event::LaunchEditor((file, line)))
-// NEW: self.event_sender.send(Event::Frontend(FrontendEvent::LaunchEditor((file, line))))
-
-// OLD: self.event_sender.send(Event::ExitAndReplace(state))
-// NEW: self.event_sender.send(Event::Frontend(FrontendEvent::ExitAndReplace(state)))
-```
-
-**Locations to update:**
-- `app.rs:762` - `Event::PerformReplacement` → `Event::Internal(InternalEvent::PerformReplacement)`
-- `app.rs:1052` - `Event::App(AppEvent::PerformSearch)` → `Event::Internal(InternalEvent::PerformSearch)` (in debounce timer)
-- `app.rs:1100` - `Event::App(AppEvent::Rerender)` → `Event::Frontend(FrontendEvent::Rerender)`
-- `app.rs:1396` - `Event::App(AppEvent::Rerender)` → `Event::Frontend(FrontendEvent::Rerender)`
-- `replace.rs:212` - `Event::App(AppEvent::Rerender)` → `Event::Frontend(FrontendEvent::Rerender)`
-- `replace.rs:217` - `Event::App(AppEvent::Rerender)` → `Event::Frontend(FrontendEvent::Rerender)`
-- Search for `Event::LaunchEditor` and `Event::ExitAndReplace` - update to `Event::Frontend(FrontendEvent::...)`
-
-**Step 4: Update `App::new_with_receiver()`**:
-
-```rust
-pub fn new_with_receiver(
-    input_source: InputSource,
-    search_field_values: &SearchFieldValues<'a>,
-    app_run_config: &AppRunConfig,
-    config: Config,
-) -> anyhow::Result<(Self, UnboundedReceiver<Event>)> {
-    let (event_sender, event_receiver) = mpsc::unbounded_channel();
-
-    let app = Self::new(
-        input_source,
-        search_field_values,
-        event_sender,
-        app_run_config,
-        config,
-    )?;
-
-    Ok((app, event_receiver))
-}
-```
-
-**Step 5: Add internal event handler to App**:
-
-Since frontends will match on `Event` variants, we need a method to handle internal events:
-
-```rust
-impl App {
-    // Public method for frontends to call when they receive Event::Internal
-    pub fn handle_internal_event(&mut self, event: InternalEvent) -> EventHandlingResult {
-        match event {
-            InternalEvent::PerformSearch => {
-                self.perform_search_if_valid();
-                EventHandlingResult::Rerender
-            }
-            InternalEvent::PerformReplacement => {
-                self.perform_replacement();
-                EventHandlingResult::Rerender
-            }
-        }
-    }
-}
-```
-
-**Note:** This follows the same pattern as `handle_key_event()` and `handle_background_processing_event()` - returns `EventHandlingResult` so frontends can handle all events uniformly.
-
-**Step 6: Update `scooter/src/app_runner.rs`**:
-
-The key is to maintain the existing clean pattern where each `tokio::select!` branch produces an `EventHandlingResult`, then a single match at the end handles all cases.
-
-```rust
-// In run_event_loop (lines 216-279):
-loop {
-    let event_handling_result = tokio::select! {
-        Some(Ok(event)) = self.event_stream.next() => {
-            // Unchanged - handles crossterm events
-            match event {
-                CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                    let mut key_event: KeyEvent = key.into();
-                    key_event.canonicalize();
-                    self.app.handle_key_event(key_event)
-                },
-                CrosstermEvent::Resize(_, _) => EventHandlingResult::Rerender,
-                _ => EventHandlingResult::None,
-            }
-        }
-        Some(event) = self.event_receiver.recv() => {
-            match event {
-                Event::Internal(internal_event) => {
-                    self.app.handle_internal_event(internal_event)
-                }
-                Event::Frontend(FrontendEvent::LaunchEditor((file_path, line))) => {
-                    // Keep existing LaunchEditor implementation (lines 232-253)
-                    // Just change Event::LaunchEditor to Event::Frontend(FrontendEvent::LaunchEditor)
-                    let mut res = EventHandlingResult::Rerender;
-                    self.tui.show_cursor()?;
-                    match self.open_editor(file_path, line) {
-                        // ... existing code ...
-                    }
-                    self.tui.init()?;
-                    res
-                }
-                Event::Frontend(FrontendEvent::ExitAndReplace(state)) => {
-                    // Keep existing ExitAndReplace implementation (line 254-256)
-                    return Ok(Some(ExitState::StdinState(state)));
-                }
-                Event::Frontend(FrontendEvent::Rerender) => {
-                    // Keep existing Rerender implementation (line 257-259)
-                    EventHandlingResult::Rerender
-                }
-            }
-        }
-        Some(event) = self.app.background_processing_recv() => {
-            // Keep existing background processing implementation (line 265-267)
-            self.app.handle_background_processing_event(event)
-        }
-        else => {
-            // Keep existing else implementation (line 268-270)
-            return Ok(None);
-        }
-    };
-
-    // Keep existing EventHandlingResult match (lines 273-277)
-    match event_handling_result {
-        EventHandlingResult::Rerender => self.draw()?,
-        EventHandlingResult::Exit(results) => return Ok(results.map(|t| *t)),
-        EventHandlingResult::None => {}
-    }
-}
-```
-
-**Changes:**
-- Add new match arm for `Event::Internal(internal_event)` → calls `app.handle_internal_event()`
-- Change `Event::App(app_event)` → removed (replaced by Internal)
-- Change `Event::LaunchEditor` → `Event::Frontend(FrontendEvent::LaunchEditor)` (keep existing impl)
-- Change `Event::ExitAndReplace` → `Event::Frontend(FrontendEvent::ExitAndReplace)` (keep existing impl)
-- Change `Event::Rerender` → `Event::Frontend(FrontendEvent::Rerender)` (keep existing impl)
-- **Pattern preserved**: each branch produces `EventHandlingResult`, single match at end (minimal changes to existing structure)
-
-**Step 7: Remove old enums** after all migrations complete:
-- Remove old `Event` enum variants (App, LaunchEditor, ExitAndReplace, Rerender)
-- Remove `pub enum AppEvent`
-- Remove or rename `handle_event()` method (was `handle_app_event()`)
 
 **Breaking Changes:** Major
 
@@ -536,179 +310,83 @@ pub struct Config {
 
 ---
 
-## Frontend Implementation Examples
+## Frontend Implementation Patterns
 
-### Pattern 1: Event Loop Mode (Ratatui, standalone TUI)
+### Event Loop Mode (Ratatui, standalone TUI)
 
 ```rust
-use scooter_core::{App, Event, InternalEvent, FrontendEvent, KeyEvent, EventHandlingResult};
-
-async fn run_event_loop(
-    app: &mut App,
-    event_receiver: &mut UnboundedReceiver<Event>
-) -> Result<()> {
-    let mut input_stream = crossterm::event::EventStream::new();
-
-    loop {
-        let event_handling_result = tokio::select! {
-            // User input
-            Some(Ok(crossterm_event)) = input_stream.next() => {
-                let key_event: KeyEvent = crossterm_event.into();
-                app.handle_key_event(key_event)
-            }
-
-            // Events from core (internal + frontend)
-            Some(event) = event_receiver.recv() => {
-                match event {
-                    Event::Internal(internal_event) => {
-                        app.handle_internal_event(internal_event)
-                    }
-                    Event::Frontend(FrontendEvent::LaunchEditor((file, line))) => {
-                        // Handle editor launch - suspend TUI, open editor, resume
-                        // (frontend-specific implementation)
-                        EventHandlingResult::Rerender
-                    }
-                    Event::Frontend(FrontendEvent::ExitAndReplace(state)) => {
-                        return Ok(Some(state));
-                    }
-                    Event::Frontend(FrontendEvent::Rerender) => {
-                        EventHandlingResult::Rerender
-                    }
-                }
-            }
-
-            // Background processing events
-            Some(bg_event) = app.background_processing_recv() => {
-                app.handle_background_processing_event(bg_event)
-            }
-        };
-
-        match event_handling_result {
-            EventHandlingResult::Rerender => render(app)?,
-            EventHandlingResult::Exit(results) => return Ok(results),
-            EventHandlingResult::None => {}
+loop {
+    let result = tokio::select! {
+        Some(Ok(event)) = input_stream.next() => {
+            app.handle_key_event(event.into())
         }
-    }
-}
+        Some(event) = app.event_recv() => {
+            match event {
+                Event::Internal(e) => app.handle_internal_event(e),
+                Event::Frontend(FrontendEvent::LaunchEditor((f, l))) => { /* ... */ }
+                Event::Frontend(FrontendEvent::ExitAndReplace(s)) => return Ok(Some(s)),
+                Event::Frontend(FrontendEvent::Rerender) => EventHandlingResult::Rerender,
+            }
+        }
+    };
 
-fn render(app: &App) -> Result<()> {
-    let view = app.view();
-    // Render based on view.view (ViewKind)
-    Ok(())
+    match result {
+        EventHandlingResult::Rerender => render(app)?,
+        EventHandlingResult::Exit(r) => return Ok(r),
+        EventHandlingResult::None => {}
+    }
 }
 ```
 
-### Pattern 2: Callback Mode (Helix, Neovim plugins)
+### Callback Mode (Helix, Neovim plugins)
 
 ```rust
-use scooter_core::{App, Event, InternalEvent, FrontendEvent, KeyEvent, EventHandlingResult};
-
-struct HelixScooterPlugin {
-    app: App,
-    event_receiver: UnboundedReceiver<Event>,
-}
-
-impl HelixScooterPlugin {
-    // Called by Helix on key press
-    pub fn on_key(&mut self, helix_key: HelixKey) {
-        let key_event = translate_key(helix_key);
-        match self.app.handle_key_event(key_event) {
-            EventHandlingResult::Exit(_) => self.close(),
+impl HelixPlugin {
+    pub fn on_key(&mut self, key: HelixKey) {
+        match self.app.handle_key_event(key.into()) {
             EventHandlingResult::Rerender => self.render(),
-            EventHandlingResult::None => {}
+            // ...
         }
     }
 
-    // Called by Helix event loop every tick
     pub fn on_tick(&mut self) {
-        let mut needs_render = false;
-
-        // Process all pending events (non-blocking)
-        while let Ok(event) = self.event_receiver.try_recv() {
-            let result = match event {
-                Event::Internal(internal_event) => {
-                    self.app.handle_internal_event(internal_event)
-                }
-                Event::Frontend(FrontendEvent::LaunchEditor((file, line))) => {
-                    // Native Helix - just jump to location
-                    helix_goto(file, line);
-                    EventHandlingResult::None
-                }
-                Event::Frontend(FrontendEvent::ExitAndReplace(state)) => {
-                    self.close();
-                    return;
-                }
-                Event::Frontend(FrontendEvent::Rerender) => {
-                    EventHandlingResult::Rerender
-                }
-            };
-
-            if matches!(result, EventHandlingResult::Rerender) {
-                needs_render = true;
-            } else if matches!(result, EventHandlingResult::Exit(_)) {
-                self.close();
-                return;
+        while let Some(event) = self.app.poll_event() {  // Non-blocking
+            match event {
+                Event::Internal(e) => self.app.handle_internal_event(e),
+                Event::Frontend(FrontendEvent::Rerender) => self.render(),
+                // ...
             }
         }
-
-        // Check background processing (non-blocking)
-        while let Some(bg_event) = self.app.try_recv_background_processing() {
-            let result = self.app.handle_background_processing_event(bg_event);
-            if matches!(result, EventHandlingResult::Rerender) {
-                needs_render = true;
-            }
-        }
-
-        if needs_render {
-            self.render();
-        }
-    }
-
-    fn render(&mut self) {
-        let view = self.app.view();
-        // Render using Helix UI system
     }
 }
 ```
 
-**Key differences:**
-- Event loop: Uses `.recv()` (async/blocking) in `tokio::select!`
-- Callback: Uses `.try_recv()` (non-blocking) in host event loop
-- Callback: Batches rendering for efficiency (single render per tick)
-- Both: Same `EventHandlingResult` pattern, same view API, same key handling
+**Key difference:** `event_recv()` is async/blocking, `poll_event()` is non-blocking.
 
 ---
 
 ## Success Criteria
 
-A new frontend implementation should:
-
-✅ **Only need to:**
-- Translate input to `KeyEvent` and call `app.handle_key_event()`
-- Receive events from `event_receiver` and match on `Event::Internal` vs `Event::Frontend`
-- Call `app.handle_internal_event()` for internal events
-- Handle frontend events (`LaunchEditor`, `ExitAndReplace`, `Rerender`)
-- Match on `EventHandlingResult` (Rerender/Exit/None) for all event handling
+**Frontend responsibilities:**
+- Translate input to `KeyEvent` → call `app.handle_key_event()`
+- Receive events via `app.event_recv()` or `app.poll_event()`
+- Call `app.handle_internal_event()` for `Event::Internal`
+- Handle `Event::Frontend` variants directly
 - Call `app.view()` to get render state
-- Render the view with their UI framework
+- Render using their UI framework
 
-✅ **Never need to:**
-- Understand `App` internal state
-- Manage screen transitions
-- Handle search/replace orchestration
-- Know difference between internal vs frontend events (just call appropriate handler)
+**What frontends never touch:**
+- Event receivers (owned by App)
+- Internal state (`current_screen`, `search_fields`, etc.)
+- Search/replace orchestration
+- Background processing channels
 
-✅ **All frontends share:**
-- Configuration (key bindings, search settings)
-- Search/replace logic
-- Field validation
-- Diff generation
+**Shared across all frontends:**
+- Key bindings and search config
+- Search/replace logic and diff generation
 
-✅ **Frontends control:**
-- Rendering and layout
-- Syntax highlighting
-- Color schemes
-- Editor integration
+**Frontend-specific:**
+- Rendering, layout, syntax highlighting, editor integration
 
 ---
 
