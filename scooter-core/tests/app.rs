@@ -58,7 +58,7 @@ async fn test_replace_state() {
 
 #[tokio::test]
 async fn test_app_reset() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -79,7 +79,7 @@ async fn test_app_reset() {
 
 #[tokio::test]
 async fn test_back_from_results() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -124,7 +124,7 @@ async fn test_back_from_results() {
 }
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         search_fields,
         &AppRunConfig::default(),
@@ -198,7 +198,7 @@ async fn test_error_popup_invalid_exclude_files() {
 }
 
 fn test_help_popup_on_screen(initial_screen: Screen) {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -272,7 +272,7 @@ async fn test_help_popup_on_results() {
 
 #[tokio::test]
 async fn test_keymaps_search_fields() {
-    let (app, _app_event_receiver) = App::new_with_receiver(
+    let app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -288,7 +288,7 @@ async fn test_keymaps_search_fields() {
 
 #[tokio::test]
 async fn test_keymaps_search_complete() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -313,7 +313,7 @@ async fn test_keymaps_search_complete() {
 
 #[tokio::test]
 async fn test_keymaps_search_progressing() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -337,7 +337,7 @@ async fn test_keymaps_search_progressing() {
 
 #[tokio::test]
 async fn test_keymaps_performing_replacement() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -363,7 +363,7 @@ async fn test_keymaps_performing_replacement() {
 
 #[tokio::test]
 async fn test_keymaps_results() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -409,7 +409,7 @@ async fn test_keymaps_results() {
 
 #[tokio::test]
 async fn test_keymaps_popup() {
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -437,7 +437,7 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
         exclude_files: FieldValue::new("", false),
     };
 
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
@@ -477,7 +477,7 @@ async fn test_keybinding_integration_with_disabled_fields() {
         exclude_files: FieldValue::new("", false),
     };
 
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
@@ -524,7 +524,7 @@ async fn test_alt_u_unlocks_all_fields() {
         exclude_files: FieldValue::new("*.txt", true),
     };
 
-    let (mut app, _app_event_receiver) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
         &AppRunConfig::default(),
@@ -560,7 +560,7 @@ async fn test_alt_u_unlocks_all_fields() {
 
 #[tokio::test]
 async fn test_handle_key_event_quit_with_ctrl_c_takes_precedence_over_popup() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -584,7 +584,7 @@ async fn test_handle_key_event_quit_with_ctrl_c_takes_precedence_over_popup() {
 
 #[tokio::test]
 async fn test_handle_key_event_unmapped_key_closes_popup() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -610,7 +610,7 @@ async fn test_handle_key_event_unmapped_key_closes_popup() {
 
 #[tokio::test]
 async fn test_handle_key_event_unmapped_key_in_search_fields_focus_enters_chars() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues {
             search: FieldValue::new("test", false),
@@ -646,7 +646,7 @@ async fn test_handle_key_event_unmapped_key_in_search_fields_focus_enters_chars(
 
 #[tokio::test]
 async fn test_handle_key_event_reset_command() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues {
             search: FieldValue::new("test", false),
@@ -672,7 +672,7 @@ async fn test_handle_key_event_reset_command() {
 
 #[tokio::test]
 async fn test_handle_key_event_toggle_preview_wrapping() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -693,7 +693,7 @@ async fn test_handle_key_event_toggle_preview_wrapping() {
 
 #[tokio::test]
 async fn test_handle_key_event_show_help_menu() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
         &AppRunConfig::default(),
@@ -714,7 +714,7 @@ async fn test_handle_key_event_show_help_menu() {
 
 #[tokio::test]
 async fn test_handle_key_event_enter_triggers_search_from_fields() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues {
             search: FieldValue::new("test", false),
@@ -744,7 +744,7 @@ async fn test_handle_key_event_enter_triggers_search_from_fields() {
 
 #[tokio::test]
 async fn test_handle_key_event_backspace_in_search_fields() {
-    let (mut app, _) = App::new_with_receiver(
+    let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues {
             search: FieldValue::new("test", false),

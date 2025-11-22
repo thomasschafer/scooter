@@ -30,7 +30,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{logging::DEFAULT_LOG_LEVEL, tui::Tui};
 
@@ -66,7 +66,6 @@ pub type CrosstermEventStream = event::EventStream;
 
 pub struct AppRunner<B: Backend, E: EventStream, S: SnapshotProvider<B>> {
     app: App,
-    event_receiver: UnboundedReceiver<Event>,
     tui: Tui<B>,
     event_stream: E,
     snapshot_provider: S,
@@ -181,7 +180,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
             InputSource::Directory(app_config.directory.clone())
         };
 
-        let (app, event_receiver) = App::new_with_receiver(
+        let app = App::new(
             input_source,
             &app_config.search_field_values,
             &app_config.app_run_config,
@@ -193,7 +192,6 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
 
         Ok(Self {
             app,
-            event_receiver,
             tui,
             event_stream,
             snapshot_provider,
@@ -227,7 +225,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         _ => EventHandlingResult::None,
                     }
                 }
-                Some(event) = self.event_receiver.recv() => {
+                Some(event) = self.app.event_recv() => {
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
                             let mut res = EventHandlingResult::Rerender;
@@ -260,10 +258,10 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         Event::App(app_event) => {
                             self.app.handle_event(app_event)
                         }
+                        Event::Background(event) => {
+                            self.app.handle_background_processing_event(event)
+                        }
                     }
-                }
-                Some(event) = self.app.background_processing_recv() => {
-                    self.app.handle_background_processing_event(event)
                 }
                 else => {
                     return Ok(None);

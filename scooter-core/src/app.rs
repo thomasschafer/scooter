@@ -104,6 +104,7 @@ pub enum Event {
     ExitAndReplace(ExitAndReplaceState),
     Rerender,
     App(AppEvent),
+    Background(BackgroundProcessingEvent),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -469,6 +470,7 @@ pub struct App {
     pub searcher: Option<Searcher>,
     pub input_source: InputSource,
     pub event_sender: UnboundedSender<Event>,
+    event_receiver: UnboundedReceiver<Event>,
     errors: Vec<AppError>,
     include_hidden: bool,
     immediate_replace: bool,
@@ -507,14 +509,43 @@ fn generate_escape_deprecation_message(quit_keymap: Option<KeyEvent>) -> String 
     )
 }
 
+// Macro to get the background processing receiver from current_screen, needed because
+// methods can't express split borrows but macros can
+macro_rules! get_bg_receiver {
+    ($self:expr) => {
+        match &mut $self.current_screen {
+            Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
+                search_state.as_mut().map(|s| &mut s.processing_receiver)
+            }
+            Screen::PerformingReplacement(PerformingReplacementState {
+                processing_receiver,
+                ..
+            }) => Some(processing_receiver),
+            Screen::Results(_) => None,
+        }
+    };
+}
+
+macro_rules! recv_optional {
+    ($opt_receiver:expr) => {
+        async {
+            match $opt_receiver {
+                Some(r) => r.recv().await,
+                None => None,
+            }
+        }
+    };
+}
+
 impl<'a> App {
-    fn new(
+    pub fn new(
         input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
-        event_sender: UnboundedSender<Event>,
         app_run_config: &AppRunConfig,
         config: Config,
     ) -> anyhow::Result<Self> {
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+
         let search_fields = SearchFields::with_values(
             search_field_values,
             config.search.disable_prepopulated_fields,
@@ -538,6 +569,7 @@ impl<'a> App {
             errors: vec![],
             popup: None,
             event_sender,
+            event_receiver,
             immediate_replace: app_run_config.immediate_replace,
             print_results: app_run_config.print_results,
             print_on_exit: app_run_config.print_on_exit,
@@ -549,23 +581,6 @@ impl<'a> App {
         }
 
         Ok(app)
-    }
-
-    pub fn new_with_receiver(
-        input_source: InputSource,
-        search_field_values: &SearchFieldValues<'a>,
-        app_run_config: &AppRunConfig,
-        config: Config,
-    ) -> anyhow::Result<(Self, UnboundedReceiver<Event>)> {
-        let (event_sender, app_event_receiver) = mpsc::unbounded_channel();
-        let app = Self::new(
-            input_source,
-            search_field_values,
-            event_sender,
-            app_run_config,
-            config,
-        )?;
-        Ok((app, app_event_receiver))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -606,7 +621,6 @@ impl<'a> App {
         *self = Self::new(
             self.input_source.clone(), // TODO: avoid cloning
             &SearchFieldValues::default(),
-            self.event_sender.clone(), // TODO: avoid cloning
             &AppRunConfig {
                 include_hidden: self.include_hidden,
                 advanced_regex: self.advanced_regex,
@@ -620,30 +634,17 @@ impl<'a> App {
         .expect("App initialisation errors should have been detected on initial construction");
     }
 
-    pub async fn background_processing_recv(&mut self) -> Option<BackgroundProcessingEvent> {
-        match self.background_processing_reciever() {
-            Some(r) => r.recv().await,
-            None => None,
+    pub async fn event_recv(&mut self) -> Option<Event> {
+        tokio::select! {
+            Some(event) = self.event_receiver.recv() => Some(event),
+            Some(bg_event) = recv_optional!(get_bg_receiver!(self)) => Some(Event::Background(bg_event)),
         }
     }
 
     pub fn background_processing_reciever(
         &mut self,
     ) -> Option<&mut UnboundedReceiver<BackgroundProcessingEvent>> {
-        match &mut self.current_screen {
-            Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
-                if let Some(search_state) = search_state {
-                    Some(&mut search_state.processing_receiver)
-                } else {
-                    None
-                }
-            }
-            Screen::PerformingReplacement(PerformingReplacementState {
-                processing_receiver,
-                ..
-            }) => Some(processing_receiver),
-            Screen::Results(_) => None,
-        }
+        get_bg_receiver!(self)
     }
 
     // Called when searching explicitly: shows error popup if validation fails
@@ -2273,7 +2274,7 @@ mod tests {
 
     #[test]
     fn test_key_handling_quit_takes_precedent() {
-        let (mut app, _app_event_receiver) = App::new_with_receiver(
+        let mut app = App::new(
             InputSource::Directory(std::env::current_dir().unwrap()),
             &SearchFieldValues::default(),
             &AppRunConfig::default(),
@@ -2290,7 +2291,7 @@ mod tests {
 
     #[test]
     fn test_key_handling_unmapped_key_closes_popup() {
-        let (mut app, _app_event_receiver) = App::new_with_receiver(
+        let mut app = App::new(
             InputSource::Directory(std::env::current_dir().unwrap()),
             &SearchFieldValues::default(),
             &AppRunConfig::default(),
