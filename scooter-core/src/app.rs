@@ -92,6 +92,12 @@ pub enum AppEvent {
 }
 
 #[derive(Debug)]
+pub enum InternalEvent {
+    App(AppEvent),
+    Background(BackgroundProcessingEvent),
+}
+
+#[derive(Debug)]
 pub struct ExitAndReplaceState {
     pub stdin: Arc<String>,
     pub search_config: ParsedSearchConfig,
@@ -103,8 +109,7 @@ pub enum Event {
     LaunchEditor((PathBuf, usize)),
     ExitAndReplace(ExitAndReplaceState),
     Rerender,
-    App(AppEvent),
-    Background(BackgroundProcessingEvent),
+    Internal(InternalEvent),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -583,8 +588,15 @@ impl<'a> App {
         Ok(app)
     }
 
+    pub fn handle_internal_event(&mut self, event: InternalEvent) -> EventHandlingResult {
+        match event {
+            InternalEvent::App(app_event) => self.handle_app_event(app_event),
+            InternalEvent::Background(bg_event) => self.handle_background_processing_event(bg_event),
+        }
+    }
+
     #[allow(clippy::needless_pass_by_value)]
-    pub fn handle_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
+    fn handle_app_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
         match app_event {
             AppEvent::PerformSearch => {
                 self.perform_search_unwrap();
@@ -637,7 +649,9 @@ impl<'a> App {
     pub async fn event_recv(&mut self) -> Option<Event> {
         tokio::select! {
             Some(event) = self.event_receiver.recv() => Some(event),
-            Some(bg_event) = recv_optional!(get_bg_receiver!(self)) => Some(Event::Background(bg_event)),
+            Some(bg_event) = recv_optional!(get_bg_receiver!(self)) => {
+                Some(Event::Internal(InternalEvent::Background(bg_event)))
+            }
         }
     }
 
@@ -1073,7 +1087,7 @@ impl<'a> App {
             let event_sender = self.event_sender.clone();
             search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(300)).await;
-                let _ = event_sender.send(Event::App(AppEvent::PerformSearch));
+                let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
             }));
         }
         EventHandlingResult::Rerender

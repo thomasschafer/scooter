@@ -255,11 +255,8 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         Event::Rerender => {
                             EventHandlingResult::Rerender
                         }
-                        Event::App(app_event) => {
-                            self.app.handle_event(app_event)
-                        }
-                        Event::Background(event) => {
-                            self.app.handle_background_processing_event(event)
+                        Event::Internal(internal_event) => {
+                            self.app.handle_internal_event(internal_event)
                         }
                     }
                 }
