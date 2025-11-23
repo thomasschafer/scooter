@@ -18,9 +18,8 @@ Make `scooter-core` a truly frontend-agnostic library with a minimal public API 
 ### Current problems
 
 1. `App` exposes internal state - fields like `current_screen`, `search_fields`, `searcher` are public, forcing frontends to understand internal structure
-2. Event passthrough required - frontends receive `Event::App` and `Event::PerformReplacement` and must call methods back on `App`
-3. No view abstraction - frontends pattern match on `Screen` enum and access nested state directly
-4. UI mutates core state - frontend updates `view_offset` and `num_displayed` based on viewport size
+2. No view abstraction - frontends pattern match on `Screen` enum and access nested state directly
+3. UI mutates core state - frontend updates `view_offset` and `num_displayed` based on viewport size
 
 ## Architecture vision
 
@@ -275,12 +274,12 @@ loop {
         Some(Ok(event)) = input_stream.next() => {
             app.handle_key_event(event.into())
         }
-        Some(event) = app.event_recv() => {
+        event = app.event_recv() => {
             match event {
-                Event::Internal(e) => app.handle_internal_event(e),
-                Event::Frontend(FrontendEvent::LaunchEditor((f, l))) => { /* ... */ }
-                Event::Frontend(FrontendEvent::ExitAndReplace(s)) => return Ok(Some(s)),
-                Event::Frontend(FrontendEvent::Rerender) => EventHandlingResult::Rerender,
+                Event::Internal(internal_event) => app.handle_internal_event(internal_event),
+                Event::LaunchEditor((file_path, line)) => { /* launch editor */ }
+                Event::ExitAndReplace(state) => return Ok(Some(state)),
+                Event::Rerender => EventHandlingResult::Rerender,
             }
         }
     };
@@ -306,8 +305,8 @@ Frontend responsibilities:
 - Translate input to `KeyEvent` → call `app.handle_key_event()`
 - Receive events via `app.event_recv()`
 - Call `app.handle_internal_event()` for `Event::Internal`
-- Handle `Event::Frontend` variants directly
-- Call `app.view()` to get immutable render state
+- Handle frontend events (`LaunchEditor`, `ExitAndReplace`, `Rerender`) directly
+- Call `app.view()` to get immutable render state (once Phase 1 is complete)
 - Render using their UI framework
 
 What frontends never touch:
