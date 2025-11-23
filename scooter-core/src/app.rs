@@ -648,11 +648,11 @@ impl<'a> App {
         .expect("App initialisation errors should have been detected on initial construction");
     }
 
-    pub async fn event_recv(&mut self) -> Option<Event> {
+    pub async fn event_recv(&mut self) -> Event {
         tokio::select! {
-            Some(event) = self.event_receiver.recv() => Some(event),
+            Some(event) = self.event_receiver.recv() => event,
             Some(bg_event) = recv_optional!(get_bg_receiver!(self)) => {
-                Some(Event::Internal(InternalEvent::Background(bg_event)))
+                Event::Internal(InternalEvent::Background(bg_event))
             }
         }
     }

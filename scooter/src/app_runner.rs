@@ -225,7 +225,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
                         _ => EventHandlingResult::None,
                     }
                 }
-                Some(event) = self.app.event_recv() => {
+                event = self.app.event_recv() => {
                     match event {
                         Event::LaunchEditor((file_path, line)) => {
                             let mut res = EventHandlingResult::Rerender;
