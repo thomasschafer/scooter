@@ -1,100 +1,56 @@
-# Frontend Abstraction Plan
+# Frontend abstraction plan
 
 ## Status
 
-**Phase 0 in progress** - Event system partially refactored. See Phase 0 section for remaining work.
+Ready to begin Phase 1 - view state abstraction.
 
 ## Goal
 
 Make `scooter-core` a truly frontend-agnostic library with a minimal public API that allows easy implementation of new frontends (Helix plugin, Neovim plugin, web UI, etc.).
 
-## Current State
+## Current state
 
-### What's Working Well
+### What's working well
 - Core business logic (search, replace, diff) is independent of UI frameworks
 - `App` orchestrates all operations cleanly
 - Keyboard abstraction exists to share config across implementations
 
-### Current Problems
+### Current problems
 
-1. **`App` exposes internal state** - Fields like `current_screen`, `search_fields`, `searcher` are public, forcing frontends to understand internal structure
-2. **Event passthrough required** - Frontends receive `Event::App` and `Event::PerformReplacement` and must call methods back on `App`
-3. **No view abstraction** - Frontends pattern match on `Screen` enum and access nested state directly
-4. **Rendering utilities in core** - `read_lines_range_highlighted()` uses syntect in core
-5. **Single event pattern** - No support for callback-based frontends (Helix, Neovim)
+1. `App` exposes internal state - fields like `current_screen`, `search_fields`, `searcher` are public, forcing frontends to understand internal structure
+2. Event passthrough required - frontends receive `Event::App` and `Event::PerformReplacement` and must call methods back on `App`
+3. No view abstraction - frontends pattern match on `Screen` enum and access nested state directly
+4. UI mutates core state - frontend updates `view_offset` and `num_displayed` based on viewport size
 
-## Architecture Vision
+## Architecture vision
 
-**scooter-core should expose:**
+scooter-core should expose:
 - Key event handling (shared config across frontends)
 - View state objects (read-only snapshots for rendering)
-- Two event consumption patterns (event loop and callback modes)
+- Event consumption via async `event_recv()`
 - Pure business logic functions
 
-**Frontends should:**
+Frontends should:
 - Translate input to `KeyEvent` and call `app.handle_key_event()`
 - Get view state via `app.view()` and render it
-- Handle async events via `event_recv()` or `poll_event()`
-- Own syntax highlighting and styling
+- Handle async events via `event_recv()`
+- Use syntax highlighting from core (syntect, for now)
 
 ---
 
-## Implementation Plan
+## Implementation plan
 
-### Phase 0: Event System Cleanup
+### Phase 1: View state abstraction
 
-**Goal:** Remove event passthrough and support both event-loop and callback-based frontends.
-
-#### Current State
-
-✅ Core owns event channels, frontends call `app.event_recv()`
-✅ Internal events unified under `Event::Internal(InternalEvent)`
-✅ Frontend calls `app.handle_internal_event()` - no passthrough
-
-#### Remaining Work
-
-🔲 **Wrap frontend events** - Create `FrontendEvent` enum and wrap:
-  - `Event::LaunchEditor` → `Event::Frontend(FrontendEvent::LaunchEditor(...))`
-  - `Event::ExitAndReplace` → `Event::Frontend(FrontendEvent::ExitAndReplace(...))`
-  - `Event::Rerender` → `Event::Frontend(FrontendEvent::Rerender)`
-
-🔲 **Add non-blocking API** - Implement `app.poll_event()` for callback-based frontends (Helix/Neovim)
-  - Should multiplex main + background channels like `event_recv()` does
-
-#### Target Event Structure
-
-```rust
-pub enum Event {
-    Internal(InternalEvent),        // Core handles via app.handle_internal_event()
-    Frontend(FrontendEvent),        // Frontend handles directly
-}
-
-pub enum InternalEvent {
-    App(AppEvent),
-    Background(BackgroundProcessingEvent),
-}
-
-pub enum FrontendEvent {
-    LaunchEditor((PathBuf, usize)),
-    ExitAndReplace(ExitAndReplaceState),
-    Rerender,
-}
-```
-
-**Breaking Changes:** Major
-
----
-
-### Phase 1: View State Abstraction
-
-**Goal:** Hide internal state and expose immutable view snapshots.
+Goal: Hide internal state and expose immutable view snapshots.
 
 #### Changes
 
-**1. Create view state structs** in `scooter-core/src/view.rs`:
+1. Create view state structs in `scooter-core/src/view.rs`:
 
 ```rust
 pub struct AppView<'a> {
+    pub input_source: &'a InputSource,
     pub view: ViewKind<'a>,
     pub popup: Option<PopupView<'a>>,
     pub config: &'a Config,
@@ -129,11 +85,10 @@ pub struct SearchFieldsView<'a> {
 }
 
 pub struct SearchResultsView<'a> {
-    pub input_source: &'a InputSource,
     pub results: &'a [SearchResultWithReplacement],
     pub primary_selected_idx: usize,
     pub selected_indices: SelectedIndices<'a>,  // Helper for is_selected()
-    pub view_offset: usize,
+    pub view_offset: usize,  // TODO: Consider computed visible_window() approach
     pub search_started: Instant,
     pub search_completed: Option<Instant>,
     pub replacements_in_progress: Option<(usize, usize)>,
@@ -157,7 +112,7 @@ impl SelectedIndices<'_> {
 pub struct PerformingReplacementView<'a> {
     pub num_completed: usize,
     pub total: usize,
-    pub elapsed: Duration,
+    pub started_at: Instant,
 }
 
 pub struct ResultsView<'a> {
@@ -168,7 +123,7 @@ pub struct ResultsView<'a> {
 }
 ```
 
-**2. Add view accessor:**
+2. Add view accessor:
 
 ```rust
 impl App {
@@ -176,143 +131,143 @@ impl App {
 }
 ```
 
-**3. Make fields private:**
+3. Make internal types private/`pub(crate)`:
+
+All types should be private by default. Explicitly make these currently-public types private:
 
 ```rust
 pub struct App {
-    config: Config,              // Access via view
-    current_screen: Screen,      // Access via view
-    search_fields: SearchFields, // Access via view
-    // ... rest private
+    config: Config,                       // Private - access via view.config
+    current_screen: Screen,               // Private - access via view.view
+    search_fields: SearchFields,          // Private - access via view
+    searcher: Option<Searcher>,           // Private
+    input_source: InputSource,            // Private - access via view.input_source
+    event_sender: UnboundedSender<Event>, // Keep public (for syntax highlighting)
+    event_receiver: UnboundedReceiver<Event>, // Private
+    // ... all other fields private
 }
+
+// Hide internal types from frontends
+pub(crate) enum Screen { ... }
+pub(crate) struct SearchState { ... }
+pub(crate) struct SearchFields { ... }
+pub(crate) enum Selected { ... }
+// ... etc
+
+// Only expose what's needed in view
+pub struct TextField { ... }
+pub struct CheckboxField { ... }
+pub enum FocussedSection { ... }
 ```
 
-**4. Update `scooter/src/ui/view.rs`:**
+4. Remove `num_displayed` from core state:
+
+`SearchState::num_displayed` is purely a UI concern and shouldn't be in core. Remove it and pass viewport dimensions as needed when rendering.
+
+5. Update `scooter/src/ui/view.rs`:
 
 Replace `app.current_screen` and `app.search_fields` with `app.view()`.
 
-**Breaking Changes:** Major
+Breaking changes: Major
 
 ---
 
-### Phase 2: Extract Rendering Utilities
+### Phase 2: Documentation
 
-**Goal:** Move syntax highlighting to frontends.
+Goal: Make it trivial to implement a new frontend.
 
-#### Changes
+#### Deliverables
 
-**1. In `scooter-core/src/utils.rs`:**
-- Keep `read_lines_range()` (pure file I/O)
-- Remove `read_lines_range_highlighted()`
+1. `scooter-core/FRONTEND_GUIDE.md`:
+   - Architecture overview
+   - Step-by-step implementation guide
+   - Event loop vs callback mode patterns
+   - View rendering examples
+2. `examples/minimal_frontend.rs`:
+   - Bare-bones frontend (no ratatui)
+   - Shows complete event loop
+   - Demonstrates view rendering
+3. API documentation:
+   - Document all public items in scooter-core
+   - Add examples to key types
+   - Clarify frontend vs core responsibilities
+4. `scooter-core/README.md`:
+   - Explain crate purpose
+   - Link to frontend guide
+   - List example frontends
 
-**2. In `scooter/src/syntax.rs` (new file):**
-- Move `read_lines_range_highlighted()` here
-- Use `scooter_core::utils::read_lines_range()` + syntect
-
-**3. Make `syntect` optional in scooter-core:**
-- Only keep if needed for theme loading in `Config`
-- Otherwise move entirely to frontends
-
-**4. Update `scooter/src/ui/view.rs`:**
-- Use local `syntax::read_lines_range_highlighted()`
-
-**Breaking Changes:** Minor (remove public function)
+Breaking changes: None
 
 ---
 
-### Phase 3: Field State Cleanup
+## Optional future phases
 
-**Goal:** Ensure text field logic is clean (low priority).
+These are deferred until needed (e.g., when implementing editor plugins):
 
-#### Review Areas
+### Extract rendering utilities
+
+Goal: Move syntax highlighting to frontends.
+
+Status: Keeping syntax highlighting in `scooter-core` for now. Revisit when implementing editor plugins.
+
+Changes would include:
+- Move `read_lines_range_highlighted()` to frontend
+- Make `syntect` optional in scooter-core
+- Move highlighting cache to frontend
+
+Breaking changes: Minor
+
+---
+
+### Field state cleanup
+
+Goal: Ensure text field logic is clean.
+
+#### Review areas
 
 1. `TextField` - verify keyboard handling is minimal
 2. `CheckboxField` - verify no rendering logic
 3. `SearchFields` - verify no UI-specific code
 
-**Breaking Changes:** Minor or none
+Breaking changes: Minor or none
 
 ---
 
-### Phase 4: Config Review
+### Config documentation
 
-**Goal:** Clarify what config is core vs frontend-specific.
+Goal: Document which config fields are core vs frontend-specific.
 
-#### Current Config Structure
+#### Current config structure
 
 ```rust
 pub struct Config {
     pub editor_open: EditorOpenConfig,  // Core ✅
     pub search: SearchConfig,           // Core ✅
     pub keys: KeysConfig,               // Core ✅
-    pub preview: PreviewConfig,         // Theme, syntax - frontend?
-    pub style: StyleConfig,             // True color - frontend?
+    pub preview: PreviewConfig,         // Default TUI settings
+    pub style: StyleConfig,             // Default TUI settings
 }
 ```
 
-#### Options
+#### Decision
 
-**A. Keep all in core** - Document which fields frontends should use
-**B. Split config** - Move UI config to frontends
-**C. Make UI config optional** - Keep in core but mark as frontend-specific
+Keep all config in core for now. Document which fields are core vs TUI-specific:
+- `preview` (syntax theme, wrap text) - useful to share, but frontends can ignore
+- `style` (true_color) - potentially useful for non-TUI frontends too
+- Config is currently mutable at runtime (e.g., toggling `wrap_text`)
 
-**Decision needed**
+Future consideration: Potential fields to extract when implementing editor plugins:
+- Syntax highlighting theme (if highlighting moves to frontends)
+- Text wrapping default (editor plugins may have their own config)
+- True color setting (may vary by frontend)
 
-**Breaking Changes:** Depends on approach
-
----
-
-### Phase 5: Documentation
-
-**Goal:** Make it trivial to implement a new frontend.
-
-#### Deliverables
-
-1. **`scooter-core/FRONTEND_GUIDE.md`:**
-   - Architecture overview
-   - Step-by-step implementation guide
-   - Event loop vs callback mode patterns
-   - View rendering examples
-
-2. **`examples/minimal_frontend.rs`:**
-   - Bare-bones frontend (no ratatui)
-   - Shows complete event loop
-   - Demonstrates view rendering
-
-3. **API documentation:**
-   - Document all public items in scooter-core
-   - Add examples to key types
-   - Clarify frontend vs core responsibilities
-
-4. **`scooter-core/README.md`:**
-   - Explain crate purpose
-   - Link to frontend guide
-   - List example frontends
-
-**Breaking Changes:** None
+Breaking changes: None (documentation only)
 
 ---
 
-## Implementation Order
+## Frontend implementation patterns
 
-**Recommended:**
-1. Phase 0 (Events) - Critical API fix
-2. Phase 1 (View) - Core abstraction
-3. Phase 2 (Rendering) - Can parallel with Phase 1
-4. Phase 5 (Docs) - Make usable
-5. Phase 3 (Fields) - Polish
-6. Phase 4 (Config) - Evaluate and decide
-
-**Minimal viable:**
-1. Phase 0 + Phase 1 (Events + View)
-2. Phase 5 (Basic docs)
-3. Rest as needed
-
----
-
-## Frontend Implementation Patterns
-
-### Event Loop Mode (Ratatui, standalone TUI)
+### Event loop mode (Ratatui TUI)
 
 ```rust
 loop {
@@ -331,72 +286,50 @@ loop {
     };
 
     match result {
-        EventHandlingResult::Rerender => render(app)?,
+        EventHandlingResult::Rerender => {
+            let view = app.view();
+            render(&view)?;
+        }
         EventHandlingResult::Exit(r) => return Ok(r),
         EventHandlingResult::None => {}
     }
 }
 ```
 
-### Callback Mode (Helix, Neovim plugins)
-
-```rust
-impl HelixPlugin {
-    pub fn on_key(&mut self, key: HelixKey) {
-        match self.app.handle_key_event(key.into()) {
-            EventHandlingResult::Rerender => self.render(),
-            // ...
-        }
-    }
-
-    pub fn on_tick(&mut self) {
-        while let Some(event) = self.app.poll_event() {  // Non-blocking
-            match event {
-                Event::Internal(e) => self.app.handle_internal_event(e),
-                Event::Frontend(FrontendEvent::Rerender) => self.render(),
-                // ...
-            }
-        }
-    }
-}
-```
-
-**Key difference:** `event_recv()` is async/blocking, `poll_event()` is non-blocking.
+Note: Editor plugin patterns will be determined when implementing Helix/Neovim support.
 
 ---
 
-## Success Criteria
+## Success criteria
 
-**Frontend responsibilities:**
+Frontend responsibilities:
 - Translate input to `KeyEvent` → call `app.handle_key_event()`
-- Receive events via `app.event_recv()` or `app.poll_event()`
+- Receive events via `app.event_recv()`
 - Call `app.handle_internal_event()` for `Event::Internal`
 - Handle `Event::Frontend` variants directly
-- Call `app.view()` to get render state
+- Call `app.view()` to get immutable render state
 - Render using their UI framework
 
-**What frontends never touch:**
+What frontends never touch:
 - Event receivers (owned by App)
-- Internal state (`current_screen`, `search_fields`, etc.)
+- Internal state (`Screen`, `SearchState`, `SearchFields`, etc. - all private/`pub(crate)`)
 - Search/replace orchestration
 - Background processing channels
 
-**Shared across all frontends:**
+Shared across all frontends:
 - Key bindings and search config
 - Search/replace logic and diff generation
+- Syntax highlighting (via core, for now)
 
-**Frontend-specific:**
-- Rendering, layout, syntax highlighting, editor integration
+Frontend-specific:
+- Rendering, layout, viewport management, editor integration
 
 ---
 
-## Open Questions
+## Decisions made
 
-1. **Config ownership:** Should `PreviewConfig` (themes) and `StyleConfig` stay in core?
-   - **Lean toward:** Keep in core for consistency, mark as optional for frontends
-
-2. **LaunchEditor event:** Should this be optional/configurable?
-   - **Lean toward:** Yes, editor plugins can disable it
-
-3. **Syntect dependency:** Keep in core or move entirely to frontends?
-   - **Depends on:** Config decision above
+1. Config ownership: All config stays in core. `PreviewConfig` and `StyleConfig` are marked as "default TUI settings" that frontends can ignore. Config remains mutable at runtime.
+2. Syntax highlighting: Stays in core for now using syntect. Revisit when implementing editor plugins (Phase 2 deferred).
+3. Non-blocking events: No `poll_event()` for now. Defer until implementing Helix/Neovim plugins and determine actual needs.
+4. Viewport concerns: `num_displayed` removed from core. `view_offset` stays for now but marked for potential refactoring to computed approach.
+5. Event sender: Remains public for now (needed for syntax highlighting cache spawning background tasks).
