@@ -110,6 +110,10 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
+
+    /// Override the editor command for opening files (overrides config file setting). Use %file and %line as placeholders.
+    #[arg(long)]
+    editor_command: Option<String>,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
@@ -221,6 +225,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 print_on_exit: args.print_on_exit,
             },
             stdin_content,
+            editor_command_override: args.editor_command.clone(),
         })
     }
 }
@@ -331,6 +336,7 @@ mod tests {
             files_to_include: None,
             files_to_exclude: None,
             config_dir: None,
+            editor_command: None,
         }
     }
 
@@ -659,5 +665,26 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not a directory"));
+    }
+
+    #[test]
+    fn test_editor_command_override() {
+        let args = Args {
+            editor_command: Some("my_editor_override %file +%line".to_string()),
+            ..default_args()
+        };
+
+        let config = AppConfig::try_from(&args).unwrap();
+        assert_eq!(
+            config.editor_command_override,
+            Some("my_editor_override %file +%line".to_string())
+        );
+    }
+
+    #[test]
+    fn test_editor_command_override_none() {
+        let args = default_args();
+        let config = AppConfig::try_from(&args).unwrap();
+        assert_eq!(config.editor_command_override, None);
     }
 }
