@@ -249,6 +249,8 @@ command = "vi %file +%line"
 ```
 If not set explicitly, scooter will attempt to use the editor set by the `$EDITOR` environment variable.
 
+This can be overridden using the `--editor-command` flag, for example: `scooter --editor-command "vi %file +%line"`.
+
 #### `exit`
 
 Whether to exit scooter after running the command defined by `editor_open.command`. Defaults to `false`.

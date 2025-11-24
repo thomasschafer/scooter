@@ -42,6 +42,7 @@ pub struct AppConfig<'a> {
     pub search_field_values: SearchFieldValues<'a>,
     pub app_run_config: AppRunConfig,
     pub stdin_content: Option<String>,
+    pub editor_command_override: Option<String>,
 }
 
 impl Default for AppConfig<'_> {
@@ -52,6 +53,7 @@ impl Default for AppConfig<'_> {
             search_field_values: SearchFieldValues::default(),
             app_run_config: AppRunConfig::default(),
             stdin_content: None,
+            editor_command_override: None,
         }
     }
 }
@@ -121,7 +123,13 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
-        let user_config = config::load_config().context("Failed to read config file")?;
+        let mut user_config = config::load_config().context("Failed to read config file")?;
+
+        // Apply CLI override for editor command if provided
+        if let Some(ref editor_command) = app_config.editor_command_override {
+            user_config.editor_open.command = Some(editor_command.clone());
+        }
+
         Self::new(
             app_config,
             user_config,
