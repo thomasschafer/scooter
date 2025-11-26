@@ -295,7 +295,7 @@ fn render_search_results(
     );
     let search_results_list = search_results
         .iter()
-        .map(|SearchResultLines { file_path, .. }| ListItem::new(file_path.clone()));
+        .map(|SearchResultListItem { file_path, .. }| ListItem::new(file_path.clone()));
     frame.render_widget(List::new(search_results_list), list_area);
 
     if !search_results.is_empty() {
@@ -305,10 +305,13 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
+        let preview = build_search_result_preview(selected.result, list_area.width);
+
         match build_preview_list(
             input_source,
             lines_to_show,
-            selected,
+            selected.result,
+            &preview,
             theme,
             true_colour,
             event_sender,
@@ -395,7 +398,7 @@ fn build_search_results<'a>(
     width: u16,
     num_to_render: usize,
     area_is_focussed: bool,
-) -> Vec<SearchResultLines<'a>> {
+) -> Vec<SearchResultListItem<'a>> {
     search_state
         .results
         .iter()
@@ -549,10 +552,12 @@ enum WrapText {
     Width { width: u16, num_lines: u16 },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_preview_list<'a>(
     input_source: &InputSource,
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
@@ -561,14 +566,15 @@ fn build_preview_list<'a>(
     match input_source {
         InputSource::Directory(_) => build_preview_from_file(
             num_lines_to_show,
-            selected,
+            result,
+            preview,
             syntax_highlighting_theme,
             true_colour,
             event_sender,
             wrap,
         ),
         InputSource::Stdin(stdin) => {
-            build_preview_from_str(stdin, num_lines_to_show, selected, wrap)
+            build_preview_from_str(stdin, num_lines_to_show, result, preview, wrap)
         }
     }
 }
@@ -576,11 +582,12 @@ fn build_preview_list<'a>(
 fn build_preview_from_str<'a>(
     stdin: &Arc<String>,
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
-    let line_idx = selected.result.search_result.line_number - 1;
+    let line_idx = result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -591,15 +598,12 @@ fn build_preview_from_str<'a>(
     let (before, cur, after) =
         utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
     assert!(
-        *cur.1 == selected.result.search_result.line,
+        *cur.1 == result.search_result.line,
         "Expected line didn't match actual",
     );
 
     let before = before.iter().map(|(_, l)| to_line_plain(l));
-    let diff = [
-        selected.old_line_diff.clone(),
-        selected.new_line_diff.clone(),
-    ];
+    let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
     let after = after.iter().map(|(_, l)| to_line_plain(l));
     line_list(before, diff, after, num_lines_to_show, wrap)
         .map_err(|e| anyhow!("failed to combine lines: {e}"))
@@ -809,21 +813,21 @@ fn line_list(
 
 fn build_preview_from_file<'a>(
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     syntax_highlighting_theme: Option<&Theme>,
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
-    let path = selected
-        .result
+    let path = result
         .search_result
         .path
         .as_ref()
         .expect("attempted to build preview list from file with no path");
 
     // Line numbers are 1-indexed
-    let line_idx = selected.result.search_result.line_number - 1;
+    let line_idx = result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -835,15 +839,12 @@ fn build_preview_from_file<'a>(
         else {
             bail!("File has changed since search (lines have changed)");
         };
-        if *cur.1.iter().map(|(_, s)| s).join("") != selected.result.search_result.line {
+        if *cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
 
         let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
-        let diff = [
-            selected.old_line_diff.clone(),
-            selected.new_line_diff.clone(),
-        ];
+        let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
         let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
         let list = line_list(before, diff, after, num_lines_to_show, wrap)
             .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
@@ -864,27 +865,40 @@ fn build_preview_from_file<'a>(
         else {
             bail!("File has changed since search (lines have changed)");
         };
-        if *cur.1 != selected.result.search_result.line {
+        if *cur.1 != result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
 
         let before = before.iter().map(|(_, l)| to_line_plain(l));
-        let diff = [
-            selected.old_line_diff.clone(),
-            selected.new_line_diff.clone(),
-        ];
+        let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
         let after = after.iter().map(|(_, l)| to_line_plain(l));
         line_list(before, diff, after, num_lines_to_show, wrap)
             .map_err(|e| anyhow!("failed to combine lines: {e}"))
     }
 }
 
-struct SearchResultLines<'a> {
+struct SearchResultListItem<'a> {
     file_path: Line<'a>,
+    result: &'a SearchResultWithReplacement,
+    is_primary_selected: bool,
+}
+
+struct SearchResultPreview {
     old_line_diff: StyledLine,
     new_line_diff: StyledLine,
-    is_primary_selected: bool,
-    result: &'a SearchResultWithReplacement,
+}
+
+fn build_search_result_preview(
+    result: &SearchResultWithReplacement,
+    list_area_width: u16,
+) -> SearchResultPreview {
+    let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
+    let old_line = old_line.iter().take(list_area_width as usize);
+    let new_line = new_line.iter().take(list_area_width as usize);
+    SearchResultPreview {
+        old_line_diff: diff_to_line(old_line),
+        new_line_diff: diff_to_line(new_line),
+    }
 }
 
 fn search_result<'a>(
@@ -895,12 +909,8 @@ fn search_result<'a>(
     base_path: &Path,
     list_area_width: u16,
     area_is_focussed: bool,
-) -> SearchResultLines<'a> {
-    let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
-    let old_line = old_line.iter().take(list_area_width as usize);
-    let new_line = new_line.iter().take(list_area_width as usize);
-
-    SearchResultLines {
+) -> SearchResultListItem<'a> {
+    SearchResultListItem {
         file_path: file_path_line(
             idx,
             result,
@@ -910,10 +920,8 @@ fn search_result<'a>(
             list_area_width,
             area_is_focussed,
         ),
-        old_line_diff: diff_to_line(old_line),
-        new_line_diff: diff_to_line(new_line),
-        is_primary_selected,
         result,
+        is_primary_selected,
     }
 }
 
