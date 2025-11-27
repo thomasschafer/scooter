@@ -305,7 +305,7 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
-        let preview = build_search_result_preview(selected.result, list_area.width);
+        let preview = build_search_result_preview(selected.result, event_sender.clone());
 
         match build_preview_list(
             input_source,
@@ -477,6 +477,17 @@ pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
     })
 }
 
+type DiffCache = Mutex<LruCache<(String, String), (Vec<Diff>, Vec<Diff>)>>;
+
+static DIFF_CACHE: OnceLock<DiffCache> = OnceLock::new();
+
+pub(crate) fn diff_cache() -> &'static DiffCache {
+    DIFF_CACHE.get_or_init(|| {
+        let cache_capacity = NonZeroUsize::new(200).unwrap();
+        Mutex::new(LruCache::new(cache_capacity))
+    })
+}
+
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
     tokio::spawn(async move {
         match fs::metadata(&path) {
@@ -509,6 +520,23 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
         let mut cache_guard = cache.lock().unwrap();
         cache_guard.put(path, full);
 
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::Rerender);
+    });
+}
+
+fn spawn_compute_diff(old_line: String, new_line: String, event_sender: UnboundedSender<Event>) {
+    tokio::spawn(async move {
+        // Compute the detailed character-level diff
+        let (old_diffs, new_diffs) = line_diff(&old_line, &new_line);
+
+        // Cache the result
+        let cache = diff_cache();
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.put((old_line, new_line), (old_diffs, new_diffs));
+        drop(cache_guard);
+
+        // Trigger re-render to show the detailed diff
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::Rerender);
     });
@@ -598,7 +626,7 @@ fn build_preview_from_str<'a>(
     let (before, cur, after) =
         utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
     assert!(
-        *cur.1 == result.search_result.line,
+        cur.1 == result.search_result.line,
         "Expected line didn't match actual",
     );
 
@@ -839,7 +867,7 @@ fn build_preview_from_file<'a>(
         else {
             bail!("File has changed since search (lines have changed)");
         };
-        if *cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
+        if cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
 
@@ -865,7 +893,7 @@ fn build_preview_from_file<'a>(
         else {
             bail!("File has changed since search (lines have changed)");
         };
-        if *cur.1 != result.search_result.line {
+        if cur.1 != result.search_result.line {
             bail!("File has changed since search (lines don't match)");
         }
 
@@ -888,16 +916,66 @@ struct SearchResultPreview {
     new_line_diff: StyledLine,
 }
 
+/// Creates a simple diff without character-level granularity - just shows entire lines as red/green
+fn simple_diff(old_line: &str, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
+    let old_diffs = vec![
+        Diff {
+            text: "- ".to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        },
+        Diff {
+            text: old_line.to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        },
+    ];
+    let new_diffs = vec![
+        Diff {
+            text: "+ ".to_owned(),
+            fg_colour: DiffColour::Green,
+            bg_colour: None,
+        },
+        Diff {
+            text: new_line.to_owned(),
+            fg_colour: DiffColour::Green,
+            bg_colour: None,
+        },
+    ];
+    (old_diffs, new_diffs)
+}
+
 fn build_search_result_preview(
     result: &SearchResultWithReplacement,
-    list_area_width: u16,
+    event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
-    let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
-    let old_line = old_line.iter().take(list_area_width as usize);
-    let new_line = new_line.iter().take(list_area_width as usize);
+    let old_line = &result.search_result.line;
+    let new_line = &result.replacement;
+    let cache_key = (old_line.clone(), new_line.clone());
+
+    // Check cache first
+    let cache = diff_cache();
+    let mut cache_guard = cache.lock().unwrap();
+
+    if let Some((cached_old, cached_new)) = cache_guard.get(&cache_key) {
+        let preview = SearchResultPreview {
+            old_line_diff: diff_to_line(cached_old.iter()),
+            new_line_diff: diff_to_line(cached_new.iter()),
+        };
+        drop(cache_guard);
+        return preview;
+    }
+
+    drop(cache_guard);
+
+    // Cache miss - spawn background task to compute detailed diff
+    spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
+
+    // Return simple diff immediately
+    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
     SearchResultPreview {
-        old_line_diff: diff_to_line(old_line),
-        new_line_diff: diff_to_line(new_line),
+        old_line_diff: diff_to_line(old_diffs.iter()),
+        new_line_diff: diff_to_line(new_diffs.iter()),
     }
 }
 
