@@ -1866,6 +1866,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "lru 0.16.2",
+ "paste",
  "rand 0.9.2",
  "ratatui",
  "regex",
