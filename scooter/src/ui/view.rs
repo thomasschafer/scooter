@@ -936,19 +936,21 @@ fn line_list(
 }
 
 /// Returns a loading preview message for long lines
-// TODO: doesn't apply fg and bg correctly
 fn loading_lines<'a>(syntax_highlighting_theme: Option<&Theme>, true_colour: bool) -> List<'a> {
-    let mut style = Style::default();
-    if let Some(theme) = syntax_highlighting_theme {
-        if let Some(bg) = theme.settings.background {
-            style = style.bg(to_ratatui_colour(bg, true_colour));
-        }
-        if let Some(fg) = theme.settings.foreground {
-            style = style.fg(to_ratatui_colour(fg, true_colour));
-        }
+    let mut text_style = Style::default();
+    if let Some(theme) = syntax_highlighting_theme
+        && let Some(fg) = theme.settings.foreground
+    {
+        text_style = text_style.fg(to_ratatui_colour(fg, true_colour));
     }
-    let loading_line = vec![(Cow::Borrowed("Loading preview..."), Some(style))];
-    List::new(vec![styled_line_to_ratatui_line(loading_line)])
+    let loading_line = vec![(Cow::Borrowed("Loading preview..."), Some(text_style))];
+    let mut list = List::new(vec![styled_line_to_ratatui_line(loading_line)]);
+    if let Some(theme) = syntax_highlighting_theme
+        && let Some(bg) = theme.settings.background
+    {
+        list = list.bg(to_ratatui_colour(bg, true_colour));
+    }
+    list
 }
 
 const LONG_LINE_THRESHOLD: usize = 5_000;
