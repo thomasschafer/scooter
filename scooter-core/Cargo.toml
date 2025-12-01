@@ -45,6 +45,6 @@ toml = "0.9.8"
 ignore = "0.4.25"
 
 [dev-dependencies]
-insta = "1.44.1"
+insta = "1.44.3"
 rand = "0.9.2"
 tempfile = "3.23.0"
