@@ -74,6 +74,7 @@
           version = "dev";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
+          meta.mainProgram = "scooter";
         };
 
         devShells.default = pkgs.mkShell {
