@@ -1,6 +1,5 @@
 use anyhow::{anyhow, bail};
 use itertools::Itertools;
-use lru::LruCache;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Flex, Layout, Position, Rect},
@@ -25,10 +24,9 @@ use std::{
     fs,
     io::Cursor,
     iter,
-    num::NonZeroUsize,
     ops::Div,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
+    sync::{Arc, OnceLock, atomic::Ordering},
     time::Duration,
 };
 use syntect::{
@@ -41,6 +39,8 @@ use unicode_width::UnicodeWidthStr;
 
 use frep_core::search::SearchResultWithReplacement;
 use scooter_core::{config::Config, utils::read_lines_range};
+
+use crate::ui::cache::{self, FileWindow};
 
 use super::colour::to_ratatui_colour;
 
@@ -295,7 +295,7 @@ fn render_search_results(
     );
     let search_results_list = search_results
         .iter()
-        .map(|SearchResultLines { file_path, .. }| ListItem::new(file_path.clone()));
+        .map(|SearchResultListItem { file_path, .. }| ListItem::new(file_path.clone()));
     frame.render_widget(List::new(search_results_list), list_area);
 
     if !search_results.is_empty() {
@@ -305,10 +305,13 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
+        let preview = build_search_result_preview(selected.result, event_sender.clone());
+
         match build_preview_list(
             input_source,
             lines_to_show,
-            selected,
+            selected.result,
+            &preview,
             theme,
             true_colour,
             event_sender,
@@ -395,7 +398,7 @@ fn build_search_results<'a>(
     width: u16,
     num_to_render: usize,
     area_is_focussed: bool,
-) -> Vec<SearchResultLines<'a>> {
+) -> Vec<SearchResultListItem<'a>> {
     search_state
         .results
         .iter()
@@ -463,17 +466,6 @@ fn to_line_plain(line: &str) -> StyledLine {
     )]
 }
 
-type HighlightedLinesCache = Mutex<LruCache<PathBuf, Vec<(usize, HighlightedLine)>>>;
-
-static HIGHLIGHTED_LINES_CACHE: OnceLock<HighlightedLinesCache> = OnceLock::new();
-
-pub(crate) fn highlighted_lines_cache() -> &'static HighlightedLinesCache {
-    HIGHLIGHTED_LINES_CACHE.get_or_init(|| {
-        let cache_capacity = NonZeroUsize::new(200).unwrap();
-        Mutex::new(LruCache::new(cache_capacity))
-    })
-}
-
 fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
     tokio::spawn(async move {
         match fs::metadata(&path) {
@@ -502,8 +494,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
             }
         };
 
-        let cache = highlighted_lines_cache();
-        let mut cache_guard = cache.lock().unwrap();
+        let mut cache_guard = cache::highlighted_file_cache().lock().unwrap();
         cache_guard.put(path, full);
 
         // Ignore error - likely app has closed
@@ -511,16 +502,38 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
     });
 }
 
+fn spawn_compute_diff(old_line: String, new_line: String, event_sender: UnboundedSender<Event>) {
+    tokio::spawn(async move {
+        // Compute the detailed character-level diff
+        let (old_diffs, new_diffs) = line_diff(&old_line, &new_line);
+
+        // Cache the result
+        let mut cache_guard = cache::diff_cache().lock().unwrap();
+        cache_guard.put((old_line, new_line), (old_diffs, new_diffs));
+        drop(cache_guard);
+
+        // Trigger re-render to show the detailed diff
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::Rerender);
+    });
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LinesOrLoading<T> {
+    Lines(Vec<(usize, T)>),
+    Loading,
+}
+
 fn read_lines_range_highlighted_with_cache(
     path: &Path,
     start: usize,
     end: usize,
     theme: &Theme,
+    long_lines: bool,
     event_sender: UnboundedSender<Event>,
-) -> anyhow::Result<Vec<(usize, HighlightedLine)>> {
-    let cache = highlighted_lines_cache();
-    let mut cache_guard = cache.lock().unwrap();
-
+) -> anyhow::Result<LinesOrLoading<HighlightedLine>> {
+    // Check highlighted file cache
+    let mut cache_guard = cache::highlighted_file_cache().lock().unwrap();
     if let Some(cached_lines) = cache_guard.get(path) {
         let lines = cached_lines
             .iter()
@@ -528,19 +541,133 @@ fn read_lines_range_highlighted_with_cache(
             .take(end - start + 1)
             .cloned()
             .collect::<Vec<_>>();
-        Ok(lines)
-    } else {
-        drop(cache_guard);
+        return Ok(LinesOrLoading::Lines(lines));
+    }
+    drop(cache_guard);
 
+    // Not in cache, so kick off background job to populate
+    spawn_highlight_full_file(path.to_path_buf(), theme.clone(), event_sender.clone());
+
+    // Check highlighted window cache
+    let window = FileWindow {
+        path: path.to_path_buf(),
+        start,
+        end,
+    };
+    let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
+    if let Some(cached_window) = cache_guard.get(&window) {
+        return Ok(LinesOrLoading::Lines(cached_window.clone()));
+    }
+    drop(cache_guard);
+
+    if long_lines {
+        // Kick off job to populate, and render loading
+        spawn_highlight_window(path.to_path_buf(), start, end, theme.clone(), event_sender);
+        Ok(LinesOrLoading::Loading)
+    } else {
+        // Read highlighted window synchronously
         let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
         let lines =
             read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
-                .collect();
+                .collect::<Vec<_>>();
 
-        spawn_highlight_full_file(path.to_path_buf(), theme.clone(), event_sender);
+        let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
+        cache_guard.put(window, lines.clone());
+        drop(cache_guard);
 
-        Ok(lines)
+        Ok(LinesOrLoading::Lines(lines))
     }
+}
+
+fn read_lines_range_plain_with_cache(
+    path: &Path,
+    start: usize,
+    end: usize,
+    long_lines: bool,
+    event_sender: UnboundedSender<Event>,
+) -> anyhow::Result<LinesOrLoading<String>> {
+    let window = FileWindow {
+        path: path.to_path_buf(),
+        start,
+        end,
+    };
+
+    // Check plain window cache
+    let mut cache_guard = cache::plain_window_cache().lock().unwrap();
+    if let Some(cached_window) = cache_guard.get(&window) {
+        return Ok(LinesOrLoading::Lines(cached_window.clone()));
+    }
+    drop(cache_guard);
+
+    if long_lines {
+        // Kick off job to populate, and render loading
+        spawn_read_plain_window(path.to_path_buf(), start, end, event_sender);
+        Ok(LinesOrLoading::Loading)
+    } else {
+        // Read plain window synchronously
+        let lines: Vec<(usize, String)> = read_lines_range(path, start, end)?.collect();
+
+        // Cache it for future navigation
+        let mut cache_guard = cache::plain_window_cache().lock().unwrap();
+        cache_guard.put(window, lines.clone());
+
+        Ok(LinesOrLoading::Lines(lines))
+    }
+}
+
+fn spawn_highlight_window(
+    path: PathBuf,
+    start: usize,
+    end: usize,
+    theme: Theme,
+    event_sender: UnboundedSender<Event>,
+) {
+    tokio::spawn(async move {
+        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let lines = match read_lines_range_highlighted(
+            &path,
+            Some(start),
+            Some(end),
+            &theme,
+            syntax_set,
+            false,
+        ) {
+            Ok(lines) => lines.collect(),
+            Err(e) => {
+                log::error!("Error reading highlighted window: {e}");
+                return;
+            }
+        };
+
+        let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
+        cache_guard.put(FileWindow { path, start, end }, lines);
+
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::Rerender);
+    });
+}
+
+fn spawn_read_plain_window(
+    path: PathBuf,
+    start: usize,
+    end: usize,
+    event_sender: UnboundedSender<Event>,
+) {
+    tokio::spawn(async move {
+        let lines = match read_lines_range(&path, start, end) {
+            Ok(lines) => lines.collect(),
+            Err(e) => {
+                log::error!("Error reading plain window: {e}");
+                return;
+            }
+        };
+
+        let mut cache_guard = cache::plain_window_cache().lock().unwrap();
+        cache_guard.put(FileWindow { path, start, end }, lines);
+
+        // Ignore error - likely app has closed
+        let _ = event_sender.send(Event::Rerender);
+    });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -549,10 +676,12 @@ enum WrapText {
     Width { width: u16, num_lines: u16 },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_preview_list<'a>(
     input_source: &InputSource,
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     syntax_highlighting_theme: Option<&Theme>, // None means no syntax higlighting
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
@@ -561,14 +690,15 @@ fn build_preview_list<'a>(
     match input_source {
         InputSource::Directory(_) => build_preview_from_file(
             num_lines_to_show,
-            selected,
+            result,
+            preview,
             syntax_highlighting_theme,
             true_colour,
             event_sender,
             wrap,
         ),
         InputSource::Stdin(stdin) => {
-            build_preview_from_str(stdin, num_lines_to_show, selected, wrap)
+            build_preview_from_str(stdin, num_lines_to_show, result, preview, wrap)
         }
     }
 }
@@ -576,11 +706,12 @@ fn build_preview_list<'a>(
 fn build_preview_from_str<'a>(
     stdin: &Arc<String>,
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
-    let line_idx = selected.result.search_result.line_number - 1;
+    let line_idx = result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -591,15 +722,12 @@ fn build_preview_from_str<'a>(
     let (before, cur, after) =
         utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
     assert!(
-        *cur.1 == selected.result.search_result.line,
+        cur.1 == result.search_result.line,
         "Expected line didn't match actual",
     );
 
     let before = before.iter().map(|(_, l)| to_line_plain(l));
-    let diff = [
-        selected.old_line_diff.clone(),
-        selected.new_line_diff.clone(),
-    ];
+    let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
     let after = after.iter().map(|(_, l)| to_line_plain(l));
     line_list(before, diff, after, num_lines_to_show, wrap)
         .map_err(|e| anyhow!("failed to combine lines: {e}"))
@@ -807,84 +935,197 @@ fn line_list(
     Ok(List::new(lines.map(styled_line_to_ratatui_line)))
 }
 
+/// Returns a loading preview message for long lines
+fn loading_lines<'a>(syntax_highlighting_theme: Option<&Theme>, true_colour: bool) -> List<'a> {
+    let mut text_style = Style::default();
+    if let Some(theme) = syntax_highlighting_theme
+        && let Some(fg) = theme.settings.foreground
+    {
+        text_style = text_style.fg(to_ratatui_colour(fg, true_colour));
+    }
+    let loading_line = vec![(Cow::Borrowed("Loading preview..."), Some(text_style))];
+    let mut list = List::new(vec![styled_line_to_ratatui_line(loading_line)]);
+    if let Some(theme) = syntax_highlighting_theme
+        && let Some(bg) = theme.settings.background
+    {
+        list = list.bg(to_ratatui_colour(bg, true_colour));
+    }
+    list
+}
+
+const LONG_LINE_THRESHOLD: usize = 5_000;
+
+fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
+    result
+        .search_result
+        .line
+        .len()
+        .max(result.replacement.len())
+        > LONG_LINE_THRESHOLD
+}
+
 fn build_preview_from_file<'a>(
     num_lines_to_show: u16,
-    selected: &SearchResultLines<'_>,
+    result: &SearchResultWithReplacement,
+    preview: &SearchResultPreview,
     syntax_highlighting_theme: Option<&Theme>,
     true_colour: bool,
     event_sender: UnboundedSender<Event>,
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
-    let path = selected
-        .result
+    let path = result
         .search_result
         .path
         .as_ref()
         .expect("attempted to build preview list from file with no path");
 
     // Line numbers are 1-indexed
-    let line_idx = selected.result.search_result.line_number - 1;
+    let line_idx = result.search_result.line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
     if let Some(theme) = syntax_highlighting_theme {
-        let lines = read_lines_range_highlighted_with_cache(path, start, end, theme, event_sender)?;
-        // `num_lines_to_show - 1` because diff takes up 2 lines
-        let Ok((before, cur, after)) =
-            utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
-        else {
-            bail!("File has changed since search (lines have changed)");
-        };
-        if *cur.1.iter().map(|(_, s)| s).join("") != selected.result.search_result.line {
-            bail!("File has changed since search (lines don't match)");
-        }
+        match read_lines_range_highlighted_with_cache(
+            path,
+            start,
+            end,
+            theme,
+            has_long_lines(result),
+            event_sender,
+        )? {
+            LinesOrLoading::Loading => Ok(loading_lines(Some(theme), true_colour)),
+            LinesOrLoading::Lines(lines) => {
+                // `num_lines_to_show - 1` because diff takes up 2 lines
+                let Ok((before, cur, after)) = utils::split_indexed_lines(
+                    lines,
+                    line_idx,
+                    num_lines_to_show.saturating_sub(1),
+                ) else {
+                    bail!("File has changed since search (lines have changed)");
+                };
+                if cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
+                    bail!("File has changed since search (lines don't match)");
+                }
 
-        let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
-        let diff = [
-            selected.old_line_diff.clone(),
-            selected.new_line_diff.clone(),
-        ];
-        let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
-        let list = line_list(before, diff, after, num_lines_to_show, wrap)
-            .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
-        if let Some(bg) = theme
-            .settings
-            .background
-            .map(|c| to_ratatui_colour(c, true_colour))
-        {
-            Ok(list.bg(bg))
-        } else {
-            Ok(list)
+                let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
+                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
+                let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
+
+                let mut list = line_list(before, diff, after, num_lines_to_show, wrap)
+                    .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
+                if let Some(bg) = theme
+                    .settings
+                    .background
+                    .map(|c| to_ratatui_colour(c, true_colour))
+                {
+                    list = list.bg(bg);
+                }
+                Ok(list)
+            }
         }
     } else {
-        let lines = read_lines_range(path, start, end)?.collect();
-        // `num_lines_to_show - 1` because diff takes up 2 lines
-        let Ok((before, cur, after)) =
-            utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))
-        else {
-            bail!("File has changed since search (lines have changed)");
-        };
-        if *cur.1 != selected.result.search_result.line {
-            bail!("File has changed since search (lines don't match)");
-        }
+        match read_lines_range_plain_with_cache(
+            path,
+            start,
+            end,
+            has_long_lines(result),
+            event_sender,
+        )? {
+            LinesOrLoading::Loading => Ok(loading_lines(None, true_colour)),
+            LinesOrLoading::Lines(lines) => {
+                // `num_lines_to_show - 1` because diff takes up 2 lines
+                let Ok((before, cur, after)) = utils::split_indexed_lines(
+                    lines,
+                    line_idx,
+                    num_lines_to_show.saturating_sub(1),
+                ) else {
+                    bail!("File has changed since search (lines have changed)");
+                };
+                if cur.1 != result.search_result.line {
+                    bail!("File has changed since search (lines don't match)");
+                }
 
-        let before = before.iter().map(|(_, l)| to_line_plain(l));
-        let diff = [
-            selected.old_line_diff.clone(),
-            selected.new_line_diff.clone(),
-        ];
-        let after = after.iter().map(|(_, l)| to_line_plain(l));
-        line_list(before, diff, after, num_lines_to_show, wrap)
-            .map_err(|e| anyhow!("failed to combine lines: {e}"))
+                let before = before.iter().map(|(_, l)| to_line_plain(l));
+                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
+                let after = after.iter().map(|(_, l)| to_line_plain(l));
+                line_list(before, diff, after, num_lines_to_show, wrap)
+                    .map_err(|e| anyhow!("failed to combine lines: {e}"))
+            }
+        }
     }
 }
 
-struct SearchResultLines<'a> {
+struct SearchResultListItem<'a> {
     file_path: Line<'a>,
+    result: &'a SearchResultWithReplacement,
+    is_primary_selected: bool,
+}
+
+struct SearchResultPreview {
     old_line_diff: StyledLine,
     new_line_diff: StyledLine,
-    is_primary_selected: bool,
-    result: &'a SearchResultWithReplacement,
+}
+
+/// Creates a simple diff without character-level granularity - just shows entire lines as red/green
+fn simple_diff(old_line: &str, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
+    let old_diffs = vec![
+        Diff {
+            text: "- ".to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        },
+        Diff {
+            text: old_line.to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        },
+    ];
+    let new_diffs = vec![
+        Diff {
+            text: "+ ".to_owned(),
+            fg_colour: DiffColour::Green,
+            bg_colour: None,
+        },
+        Diff {
+            text: new_line.to_owned(),
+            fg_colour: DiffColour::Green,
+            bg_colour: None,
+        },
+    ];
+    (old_diffs, new_diffs)
+}
+
+fn build_search_result_preview(
+    result: &SearchResultWithReplacement,
+    event_sender: UnboundedSender<Event>,
+) -> SearchResultPreview {
+    let old_line = &result.search_result.line;
+    let new_line = &result.replacement;
+    let cache_key = (old_line.clone(), new_line.clone());
+
+    // Check cache first
+    let mut cache_guard = cache::diff_cache().lock().unwrap();
+
+    if let Some((cached_old, cached_new)) = cache_guard.get(&cache_key) {
+        let preview = SearchResultPreview {
+            old_line_diff: diff_to_line(cached_old.iter()),
+            new_line_diff: diff_to_line(cached_new.iter()),
+        };
+        drop(cache_guard);
+        return preview;
+    }
+
+    drop(cache_guard);
+
+    // Cache miss - spawn background task to compute detailed diff
+    spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
+
+    // Return simple diff immediately
+    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
+    SearchResultPreview {
+        old_line_diff: diff_to_line(old_diffs.iter()),
+        new_line_diff: diff_to_line(new_diffs.iter()),
+    }
 }
 
 fn search_result<'a>(
@@ -895,12 +1136,8 @@ fn search_result<'a>(
     base_path: &Path,
     list_area_width: u16,
     area_is_focussed: bool,
-) -> SearchResultLines<'a> {
-    let (old_line, new_line) = line_diff(&result.search_result.line, &result.replacement);
-    let old_line = old_line.iter().take(list_area_width as usize);
-    let new_line = new_line.iter().take(list_area_width as usize);
-
-    SearchResultLines {
+) -> SearchResultListItem<'a> {
+    SearchResultListItem {
         file_path: file_path_line(
             idx,
             result,
@@ -910,10 +1147,8 @@ fn search_result<'a>(
             list_area_width,
             area_is_focussed,
         ),
-        old_line_diff: diff_to_line(old_line),
-        new_line_diff: diff_to_line(new_line),
-        is_primary_selected,
         result,
+        is_primary_selected,
     }
 }
 
