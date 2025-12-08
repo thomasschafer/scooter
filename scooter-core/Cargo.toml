@@ -28,7 +28,7 @@ bitflags = "2.10.0"
 crossterm = { version = "0.28.1", optional = true }
 etcetera = "0.11.0"
 frep-core = "0.1.7"
-log = "0.4.28"
+log = "0.4.29"
 rayon = "1.11.0"
 similar = "2.7.0"
 unicode-width = "0.2.0"
