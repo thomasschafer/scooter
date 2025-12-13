@@ -1,8 +1,3 @@
-use frep_core::{
-    line_reader::LineEnding,
-    replace::ReplaceResult,
-    search::{SearchResult, SearchResultWithReplacement},
-};
 use insta::assert_debug_snapshot;
 use scooter_core::{
     app::{EventHandlingResult, InputSource},
@@ -10,6 +5,11 @@ use scooter_core::{
     fields::{FieldValue, SearchFieldValues, SearchFields},
     keyboard::KeyEvent,
     replace::{PerformingReplacementState, ReplaceState},
+};
+use scooter_core::{
+    line_reader::LineEnding,
+    replace::ReplaceResult,
+    search::{SearchResult, SearchResultWithReplacement},
 };
 use std::{
     env::current_dir,

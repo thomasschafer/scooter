@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use frep_core::{
+use crate::{
     line_reader::{BufReadExt, LineEnding},
     replace::{add_replacement, replacement_if_match},
     search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
@@ -1779,7 +1779,7 @@ impl ValidationErrorHandler for AppErrorHandler {
 
 #[cfg(test)]
 mod tests {
-    use frep_core::{
+    use crate::{
         line_reader::LineEnding,
         replace::{ReplaceResult, ReplaceStats},
         search::{SearchResult, SearchResultWithReplacement},
@@ -1963,7 +1963,7 @@ mod tests {
 
         let (results, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
-        let stats = frep_core::replace::calculate_statistics(results);
+        let stats = crate::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1987,7 +1987,7 @@ mod tests {
 
         let (results, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
-        let stats = frep_core::replace::calculate_statistics(results);
+        let stats = crate::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,

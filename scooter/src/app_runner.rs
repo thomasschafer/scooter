@@ -3,7 +3,6 @@ use crossterm::{
     event::{self, Event as CrosstermEvent},
     style::Stylize as _,
 };
-use frep_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use futures::{Stream, StreamExt};
 use log::{LevelFilter, error};
 use ratatui::{
@@ -21,6 +20,7 @@ use scooter_core::{
     keyboard::KeyEvent,
     replace::ReplaceState,
 };
+use scooter_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use std::{
     collections::HashMap,
     env,
@@ -522,7 +522,7 @@ fn write_results_to_stderr_impl(
 
 #[cfg(test)]
 mod tests {
-    use frep_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
+    use scooter_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
 
     use super::*;
 

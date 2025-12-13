@@ -37,7 +37,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use frep_core::search::SearchResultWithReplacement;
+use scooter_core::search::SearchResultWithReplacement;
 use scooter_core::{config::Config, utils::read_lines_range};
 
 use crate::ui::cache::{self, FileWindow};

@@ -6,14 +6,15 @@ use std::{
     path::Path,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{Context, Error, bail};
+use ignore::overrides::OverrideBuilder;
 use syntect::{
     easy::HighlightLines,
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
 };
 
-use frep_core::line_reader::{BufReadExt, LinesSplitEndings};
+use crate::line_reader::{BufReadExt, LinesSplitEndings};
 
 pub fn relative_path(base: &Path, target: &Path) -> String {
     match target.strip_prefix(base) {
@@ -371,6 +372,24 @@ pub fn last_n_chars(s: &str, n: usize) -> &str {
 pub enum Either<T, S> {
     Left(T),
     Right(S),
+}
+
+pub fn is_regex_error(e: &Error) -> bool {
+    e.downcast_ref::<regex::Error>().is_some() || e.downcast_ref::<fancy_regex::Error>().is_some()
+}
+
+pub fn add_overrides(
+    overrides: &mut OverrideBuilder,
+    files: &str,
+    prefix: &str,
+) -> anyhow::Result<()> {
+    for file in files.split(',') {
+        let file = file.trim();
+        if !file.is_empty() {
+            overrides.add(&format!("{prefix}{file}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
