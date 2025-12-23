@@ -81,6 +81,10 @@ struct Args {
     #[arg(long)]
     print_on_exit: bool,
 
+    /// Override the editor command for opening files (overrides config file setting). Use %file and %line as placeholders.
+    #[arg(long)]
+    editor_command: Option<String>,
+
     // --- Initial values for fields ---
     //
     /// Text to search with
@@ -110,10 +114,6 @@ struct Args {
     /// Glob patterns, separated by commas (,), that file paths must not match
     #[arg(short = 'E', long)]
     files_to_exclude: Option<String>,
-
-    /// Override the editor command for opening files (overrides config file setting). Use %file and %line as placeholders.
-    #[arg(long)]
-    editor_command: Option<String>,
 }
 
 fn parse_log_level(s: &str) -> Result<LevelFilter, String> {
