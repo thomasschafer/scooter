@@ -1,7 +1,3 @@
-use crate::{
-    line_reader::BufReadExt,
-    search::{self, FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
-};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
     collections::HashMap,
@@ -25,6 +21,8 @@ use tokio::{
 use crate::{
     app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
+    line_reader::BufReadExt,
+    search::{self, FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
 };
 
 pub fn split_results(

@@ -4,8 +4,10 @@ use ignore::overrides::OverrideBuilder;
 use regex::Regex;
 use std::path::PathBuf;
 
-use crate::search::{ParsedDirConfig, ParsedSearchConfig, SearchType};
-use crate::utils;
+use crate::{
+    search::{ParsedDirConfig, ParsedSearchConfig, SearchType},
+    utils,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]

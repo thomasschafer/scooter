@@ -11,15 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    line_reader::{BufReadExt, LineEnding},
-    replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
-    validation::{
-        DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
-        validate_search_configuration,
-    },
-};
 use ignore::WalkState;
 use log::{debug, warn};
 use tokio::{
@@ -36,9 +27,16 @@ use crate::{
     errors::AppError,
     fields::{FieldName, SearchFieldValues, SearchFields},
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
+    line_reader::{BufReadExt, LineEnding},
     replace::{self, PerformingReplacementState, ReplaceState},
+    replace::{add_replacement, replacement_if_match},
     search::Searcher,
+    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     utils::{Either, Either::Left, Either::Right, ceil_div},
+    validation::{
+        DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
+        validate_search_configuration,
+    },
 };
 
 #[derive(Debug, Clone)]
