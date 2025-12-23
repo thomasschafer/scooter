@@ -1,7 +1,7 @@
 use anyhow::bail;
 use clap::Parser;
-use frep_core::validation::{DirConfig, SearchConfig};
 use log::LevelFilter;
+use scooter_core::validation::{DirConfig, SearchConfig};
 use std::{
     io::{self, IsTerminal, Read},
     path::PathBuf,

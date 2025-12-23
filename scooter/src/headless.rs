@@ -1,4 +1,4 @@
-use frep_core::{
+use scooter_core::{
     run,
     validation::{DirConfig, SearchConfig},
 };

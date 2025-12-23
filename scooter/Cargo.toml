@@ -13,13 +13,12 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.100"
-scooter-core = { version = "0.2.2", path = "../scooter-core", features = [
+scooter-core = { version = "0.3.0", path = "../scooter-core", features = [
   "term",
 ] }
 clap = { version = "4.5.53", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.11.0"
-frep-core = "0.1.7"
 futures = "0.3.31"
 ignore = "0.4.25"
 itertools = "0.14.0"
@@ -35,7 +34,7 @@ unicode-segmentation = "1.12.0"
 unicode-width = "0.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-crossterm = { version = "0.28", features = [
+crossterm = { version = "0.28.1", features = [
   "event-stream",
   "use-dev-tty",
   "libc",

@@ -11,15 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use frep_core::{
-    line_reader::{BufReadExt, LineEnding},
-    replace::{add_replacement, replacement_if_match},
-    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
-    validation::{
-        DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
-        validate_search_configuration,
-    },
-};
 use ignore::WalkState;
 use log::{debug, warn};
 use tokio::{
@@ -36,9 +27,16 @@ use crate::{
     errors::AppError,
     fields::{FieldName, SearchFieldValues, SearchFields},
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
+    line_reader::{BufReadExt, LineEnding},
     replace::{self, PerformingReplacementState, ReplaceState},
+    replace::{add_replacement, replacement_if_match},
     search::Searcher,
+    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
     utils::{Either, Either::Left, Either::Right, ceil_div},
+    validation::{
+        DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
+        validate_search_configuration,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -1779,7 +1777,7 @@ impl ValidationErrorHandler for AppErrorHandler {
 
 #[cfg(test)]
 mod tests {
-    use frep_core::{
+    use crate::{
         line_reader::LineEnding,
         replace::{ReplaceResult, ReplaceStats},
         search::{SearchResult, SearchResultWithReplacement},
@@ -1963,7 +1961,7 @@ mod tests {
 
         let (results, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
-        let stats = frep_core::replace::calculate_statistics(results);
+        let stats = crate::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,
@@ -1987,7 +1985,7 @@ mod tests {
 
         let (results, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
-        let stats = frep_core::replace::calculate_statistics(results);
+        let stats = crate::replace::calculate_statistics(results);
 
         assert_eq!(
             stats,

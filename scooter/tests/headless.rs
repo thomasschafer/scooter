@@ -1,6 +1,6 @@
-use frep_core::validation::{DirConfig, SearchConfig};
 use indoc::indoc;
 use scooter::headless::{run_headless, run_headless_with_stdin};
+use scooter_core::validation::{DirConfig, SearchConfig};
 
 mod utils;
 
