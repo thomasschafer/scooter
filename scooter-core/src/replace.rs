@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{BufReader, BufWriter, Write},
+    num::NonZero,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -61,8 +62,12 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     thread::spawn(move || {
         let path_groups = group_results(included);
 
+        let num_threads = thread::available_parallelism()
+            .map(NonZero::get)
+            .unwrap_or(4)
+            .min(12);
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(8)
+            .num_threads(num_threads)
             .build()
             .unwrap();
 
@@ -421,7 +426,7 @@ where
     let mut num_successes = 0;
     let mut errors = vec![];
 
-    results.into_iter().for_each(|res| {
+    results.into_iter().for_each(|mut res| {
         assert!(
             res.search_result.included,
             "Expected only included results, found {res:?}"
@@ -431,14 +436,13 @@ where
                 num_successes += 1;
             }
             None => {
-                let mut res = res.clone();
                 res.replace_result = Some(ReplaceResult::Error(
                     "Failed to find search result in file".to_owned(),
                 ));
                 errors.push(res);
             }
             Some(ReplaceResult::Error(_)) => {
-                errors.push(res.clone());
+                errors.push(res);
             }
         }
     });
