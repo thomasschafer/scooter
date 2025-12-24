@@ -1,3 +1,4 @@
+#[cfg(feature = "term")]
 use crossterm::style::Stylize;
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::OverrideBuilder;
@@ -52,8 +53,12 @@ impl SimpleErrorHandler {
     }
 
     fn push_error(&mut self, err_msg: &str, detail: &str) {
-        self.errors
-            .push(format!("\n{title}:\n{detail}", title = err_msg.red()));
+        #[cfg(feature = "term")]
+        let title = err_msg.red();
+        #[cfg(not(feature = "term"))]
+        let title = err_msg;
+
+        self.errors.push(format!("\n{title}:\n{detail}"));
     }
 }
 

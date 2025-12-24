@@ -14,6 +14,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +22,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -33,6 +37,20 @@ jobs:
 
       - name: Run cargo check
         run: cargo check
+
+      - name: Check README
+        id: check-readme
+        run: cargo xtask readme --check
+
+      - name: Show diff (if outdated)
+        if: steps.check-readme.outcome == 'failure'
+        run: |
+          cargo xtask readme
+          git diff README.md
+          echo "Run \`cargo xtask readme\` to regenerate"
+
+      - name: Check scooter-core feature combinations
+        run: cargo hack check --each-feature --package scooter-core
 
   test:
     name: Test (${{ matrix.os }})

@@ -14,6 +14,7 @@ jobs:
   prepare-publish:
     name: Prepare scooter-core publish
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.get-package-info.outputs.version }}
       should_publish: ${{ steps.check-version.outputs.exists == 'false' }}
@@ -45,6 +46,7 @@ jobs:
     needs: [prepare-publish]
     if: needs.prepare-publish.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
