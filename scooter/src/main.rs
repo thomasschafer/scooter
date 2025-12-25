@@ -49,6 +49,10 @@ struct Args {
     #[arg(short = 'a', long, action = clap::ArgAction::SetTrue)]
     advanced_regex: bool,
 
+    /// Enable searching across multiple lines.
+    #[arg(short = 'U', long)]
+    multiline: bool,
+
     /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
     #[arg(short = 'S', long)]
     immediate_search: bool,
@@ -219,6 +223,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
                 advanced_regex: args.advanced_regex,
+                multiline: args.multiline,
                 immediate_search: args.immediate_search || immediate,
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
@@ -321,6 +326,7 @@ mod tests {
             hidden: false,
             log_level: LevelFilter::Info,
             advanced_regex: false,
+            multiline: false,
             immediate_search: false,
             immediate_replace: false,
             print_results: false,

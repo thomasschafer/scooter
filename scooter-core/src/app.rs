@@ -443,6 +443,7 @@ pub enum Popup {
 pub struct AppRunConfig {
     pub include_hidden: bool,
     pub advanced_regex: bool,
+    pub multiline: bool,
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
@@ -455,6 +456,7 @@ impl Default for AppRunConfig {
         Self {
             include_hidden: false,
             advanced_regex: false,
+            multiline: false,
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
@@ -481,6 +483,7 @@ pub struct App {
     pub print_on_exit: bool,
     popup: Option<Popup>,
     advanced_regex: bool,
+    multiline: bool,
 }
 
 #[derive(Debug)]
@@ -577,6 +580,7 @@ impl<'a> App {
             print_results: app_run_config.print_results,
             print_on_exit: app_run_config.print_on_exit,
             advanced_regex: app_run_config.advanced_regex,
+            multiline: app_run_config.multiline,
         };
 
         if app_run_config.immediate_search || !search_field_values.search.value.is_empty() {
@@ -636,6 +640,7 @@ impl<'a> App {
             &AppRunConfig {
                 include_hidden: self.include_hidden,
                 advanced_regex: self.advanced_regex,
+                multiline: self.multiline,
                 immediate_search: false,
                 immediate_replace: self.immediate_replace,
                 print_results: self.print_results,
