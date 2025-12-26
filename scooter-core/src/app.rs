@@ -443,6 +443,7 @@ pub enum Popup {
 pub struct AppRunConfig {
     pub include_hidden: bool,
     pub advanced_regex: bool,
+    pub multiline: bool,
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
@@ -455,6 +456,7 @@ impl Default for AppRunConfig {
         Self {
             include_hidden: false,
             advanced_regex: false,
+            multiline: false,
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
