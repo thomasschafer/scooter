@@ -1388,7 +1388,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
     render_key_hints(app, frame, footer_area);
 
     let show_popup = app.show_popup();
-    match &mut app.current_screen {
+    match &mut app.ui_state.current_screen {
         Screen::SearchFields(search_fields_state) => {
             let num_search_fields_to_render = match search_fields_state.focussed_section {
                 FocussedSection::SearchFields => NUM_SEARCH_FIELDS,
@@ -1429,7 +1429,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     results,
                     app.config.get_theme(),
                     app.config.style.true_color,
-                    app.event_sender.clone(),
+                    app.event_channels.sender.clone(),
                     search_fields_state.focussed_section == FocussedSection::SearchResults,
                     replacements_in_progress,
                     app.config.preview.wrap_text,
