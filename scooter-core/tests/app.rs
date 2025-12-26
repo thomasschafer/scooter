@@ -61,11 +61,11 @@ async fn test_app_reset() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
-    app.current_screen = Screen::Results(ReplaceState {
+    app.ui_state.current_screen = Screen::Results(ReplaceState {
         num_successes: 5,
         num_ignored: 2,
         errors: vec![],
@@ -74,7 +74,10 @@ async fn test_app_reset() {
 
     app.reset();
 
-    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
+    assert!(matches!(
+        app.ui_state.current_screen,
+        Screen::SearchFields(_)
+    ));
 }
 
 #[tokio::test]
@@ -82,12 +85,12 @@ async fn test_back_from_results() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.current_screen = Screen::SearchFields(SearchFieldsState {
+    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
         focussed_section: FocussedSection::SearchResults,
         search_state: Some(SearchState::new(
             sender,
@@ -120,14 +123,17 @@ async fn test_back_from_results() {
     assert!(app.search_fields.fixed_strings().checked);
     assert_eq!(app.search_fields.include_files().text(), "pattern");
     assert_eq!(app.search_fields.exclude_files().text(), "");
-    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
+    assert!(matches!(
+        app.ui_state.current_screen,
+        Screen::SearchFields(_)
+    ));
 }
 
 fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         search_fields,
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -141,7 +147,10 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
         ScooterKeyCode::Enter,
         ScooterKeyModifiers::NONE,
     ));
-    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
+    assert!(matches!(
+        app.ui_state.current_screen,
+        Screen::SearchFields(_)
+    ));
     assert!(matches!(app.popup(), Some(Popup::Error)));
 
     let res = app.handle_key_event(KeyEvent::new(
@@ -201,15 +210,18 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
     let screen_variant = std::mem::discriminant(&initial_screen);
-    app.current_screen = initial_screen;
+    app.ui_state.current_screen = initial_screen;
 
     assert!(app.popup().is_none());
-    assert_eq!(mem::discriminant(&app.current_screen), screen_variant);
+    assert_eq!(
+        mem::discriminant(&app.ui_state.current_screen),
+        screen_variant
+    );
 
     let res_open = app.handle_key_event(KeyEvent::new(
         ScooterKeyCode::Char('h'),
@@ -217,7 +229,10 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
     ));
     assert!(matches!(res_open, EventHandlingResult::Rerender));
     assert!(matches!(app.popup(), Some(Popup::Help)));
-    assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
+    assert_eq!(
+        std::mem::discriminant(&app.ui_state.current_screen),
+        screen_variant
+    );
 
     let res_close = app.handle_key_event(KeyEvent::new(
         ScooterKeyCode::Esc,
@@ -225,7 +240,10 @@ fn test_help_popup_on_screen(initial_screen: Screen) {
     ));
     assert!(matches!(res_close, EventHandlingResult::Rerender));
     assert!(app.popup().is_none());
-    assert_eq!(std::mem::discriminant(&app.current_screen), screen_variant);
+    assert_eq!(
+        std::mem::discriminant(&app.ui_state.current_screen),
+        screen_variant
+    );
 }
 
 #[tokio::test]
@@ -275,12 +293,15 @@ async fn test_keymaps_search_fields() {
     let app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
 
-    assert!(matches!(app.current_screen, Screen::SearchFields(_)));
+    assert!(matches!(
+        app.ui_state.current_screen,
+        Screen::SearchFields(_)
+    ));
 
     assert_debug_snapshot!("search_fields_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_fields_all_keymaps", app.keymaps_all());
@@ -291,7 +312,7 @@ async fn test_keymaps_search_complete() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -300,7 +321,7 @@ async fn test_keymaps_search_complete() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let mut search_state = SearchState::new(sender, receiver, cancelled);
     search_state.set_search_completed_now();
-    app.current_screen = Screen::SearchFields(SearchFieldsState {
+    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
         search_debounce_timer: None,
@@ -316,7 +337,7 @@ async fn test_keymaps_search_progressing() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -324,7 +345,7 @@ async fn test_keymaps_search_progressing() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
     let search_state = SearchState::new(sender, receiver, cancelled);
-    app.current_screen = Screen::SearchFields(SearchFieldsState {
+    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
         search_state: Some(search_state),
         focussed_section: FocussedSection::SearchResults,
         search_debounce_timer: None,
@@ -340,14 +361,14 @@ async fn test_keymaps_performing_replacement() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
 
     let (_sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    app.current_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
+    app.ui_state.current_screen = Screen::PerformingReplacement(PerformingReplacementState::new(
         receiver,
         cancelled,
         Arc::new(AtomicUsize::new(0)),
@@ -366,7 +387,7 @@ async fn test_keymaps_results() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -387,7 +408,7 @@ async fn test_keymaps_results() {
         }],
         replacement_errors_pos: 0,
     };
-    app.current_screen = Screen::Results(replace_state_with_errors);
+    app.ui_state.current_screen = Screen::Results(replace_state_with_errors);
 
     assert_debug_snapshot!("results_with_errors_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("results_with_errors_all_keymaps", app.keymaps_all());
@@ -398,7 +419,7 @@ async fn test_keymaps_results() {
         errors: vec![],
         replacement_errors_pos: 0,
     };
-    app.current_screen = Screen::Results(replace_state_without_errors);
+    app.ui_state.current_screen = Screen::Results(replace_state_without_errors);
 
     assert_debug_snapshot!(
         "results_without_errors_compact_keymaps",
@@ -412,7 +433,7 @@ async fn test_keymaps_popup() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -440,7 +461,7 @@ async fn test_unlock_prepopulated_fields_via_alt_u() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -480,7 +501,7 @@ async fn test_keybinding_integration_with_disabled_fields() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -527,7 +548,7 @@ async fn test_alt_u_unlocks_all_fields() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &search_field_values,
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -563,7 +584,7 @@ async fn test_handle_key_event_quit_with_ctrl_c_takes_precedence_over_popup() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -587,7 +608,7 @@ async fn test_handle_key_event_unmapped_key_closes_popup() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -616,15 +637,15 @@ async fn test_handle_key_event_unmapped_key_in_search_fields_focus_enters_chars(
             search: FieldValue::new("test", false),
             ..Default::default()
         },
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
 
-    let Screen::SearchFields(ref state) = app.current_screen else {
+    let Screen::SearchFields(ref state) = app.ui_state.current_screen else {
         panic!(
             "Expected Screen::SearchFields, found {:?}",
-            app.current_screen
+            app.ui_state.current_screen
         );
     };
     assert_eq!(state.focussed_section, FocussedSection::SearchFields);
@@ -653,7 +674,7 @@ async fn test_handle_key_event_reset_command() {
             replace: FieldValue::new("replacement", false),
             ..Default::default()
         },
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -675,7 +696,7 @@ async fn test_handle_key_event_toggle_preview_wrapping() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -696,7 +717,7 @@ async fn test_handle_key_event_show_help_menu() {
     let mut app = App::new(
         InputSource::Directory(current_dir().unwrap()),
         &SearchFieldValues::default(),
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
@@ -720,12 +741,12 @@ async fn test_handle_key_event_enter_triggers_search_from_fields() {
             search: FieldValue::new("test", false),
             ..Default::default()
         },
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();
 
-    let Screen::SearchFields(ref state) = app.current_screen else {
+    let Screen::SearchFields(ref state) = app.ui_state.current_screen else {
         panic!("Expected SearchFields screen");
     };
     assert_eq!(state.focussed_section, FocussedSection::SearchFields);
@@ -736,7 +757,7 @@ async fn test_handle_key_event_enter_triggers_search_from_fields() {
     ));
 
     assert!(matches!(result, EventHandlingResult::Rerender));
-    let Screen::SearchFields(ref state) = app.current_screen else {
+    let Screen::SearchFields(ref state) = app.ui_state.current_screen else {
         panic!("Expected SearchFields screen");
     };
     assert_eq!(state.focussed_section, FocussedSection::SearchResults);
@@ -750,7 +771,7 @@ async fn test_handle_key_event_backspace_in_search_fields() {
             search: FieldValue::new("test", false),
             ..Default::default()
         },
-        &AppRunConfig::default(),
+        AppRunConfig::default(),
         Config::default(),
     )
     .unwrap();

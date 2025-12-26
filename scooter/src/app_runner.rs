@@ -191,7 +191,7 @@ impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, 
         let app = App::new(
             input_source,
             &app_config.search_field_values,
-            &app_config.app_run_config,
+            app_config.app_run_config,
             config,
         )?;
 
@@ -431,7 +431,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
     let stats = match exit_state {
         Some(ExitState::Stats(stats)) => Some(stats),
         Some(ExitState::StdinState(ref mut state)) => {
-            if runner.app.print_results {
+            if runner.app.run_config.print_results {
                 let res = write_results_to_stderr_with_stats(state)?;
                 Some(res)
             } else {
@@ -440,7 +440,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
             }
         }
         None => {
-            if runner.app.print_on_exit {
+            if runner.app.run_config.print_on_exit {
                 match runner.app.input_source {
                     InputSource::Stdin(stdin) => write!(io::stderr(), "{stdin}")?,
                     InputSource::Directory(_) => unreachable!(),

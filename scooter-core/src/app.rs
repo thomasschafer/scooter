@@ -464,23 +464,67 @@ impl Default for AppRunConfig {
 }
 
 #[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)]
+pub struct EventChannels {
+    pub sender: UnboundedSender<Event>,
+    receiver: UnboundedReceiver<Event>,
+}
+
+impl EventChannels {
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self { sender, receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<Event> {
+        self.receiver.recv().await
+    }
+}
+
+impl Default for EventChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct UIState {
+    pub current_screen: Screen,
+    pub popup: Option<Popup>,
+    errors: Vec<AppError>,
+}
+
+impl UIState {
+    pub fn new(current_screen: Screen) -> Self {
+        Self {
+            current_screen,
+            popup: None,
+            errors: Vec::new(),
+        }
+    }
+
+    pub fn add_error(&mut self, error: AppError) {
+        self.errors.push(error);
+    }
+
+    pub fn errors(&self) -> &[AppError] {
+        &self.errors
+    }
+
+    pub fn clear_errors(&mut self) {
+        self.errors.clear();
+    }
+}
+
+#[derive(Debug)]
 pub struct App {
     pub config: Config,
     key_map: KeyMap,
-    pub current_screen: Screen,
     pub search_fields: SearchFields,
     pub searcher: Option<Searcher>,
     pub input_source: InputSource,
-    pub event_sender: UnboundedSender<Event>,
-    event_receiver: UnboundedReceiver<Event>,
-    errors: Vec<AppError>,
-    include_hidden: bool,
-    immediate_replace: bool,
-    pub print_results: bool,
-    pub print_on_exit: bool,
-    popup: Option<Popup>,
-    advanced_regex: bool,
+    pub run_config: AppRunConfig,
+    pub event_channels: EventChannels,
+    pub ui_state: UIState,
 }
 
 #[derive(Debug)]
@@ -516,7 +560,7 @@ fn generate_escape_deprecation_message(quit_keymap: Option<KeyEvent>) -> String 
 // methods can't express split borrows but macros can
 macro_rules! get_bg_receiver {
     ($self:expr) => {
-        match &mut $self.current_screen {
+        match &mut $self.ui_state.current_screen {
             Screen::SearchFields(SearchFieldsState { search_state, .. }) => {
                 search_state.as_mut().map(|s| &mut s.processing_receiver)
             }
@@ -544,11 +588,9 @@ impl<'a> App {
     pub fn new(
         input_source: InputSource,
         search_field_values: &SearchFieldValues<'a>,
-        app_run_config: &AppRunConfig,
+        app_run_config: AppRunConfig,
         config: Config,
     ) -> anyhow::Result<Self> {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
-
         let search_fields = SearchFields::with_values(
             search_field_values,
             config.search.disable_prepopulated_fields,
@@ -561,25 +603,21 @@ impl<'a> App {
 
         let key_map = KeyMap::from_config(&config.keys).map_err(display_conflict_errors)?;
 
+        let search_immediately =
+            app_run_config.immediate_search || !search_field_values.search.value.is_empty();
+
         let mut app = Self {
             config,
             key_map,
-            current_screen: Screen::SearchFields(search_fields_state),
             search_fields,
             searcher: None,
             input_source,
-            include_hidden: app_run_config.include_hidden,
-            errors: vec![],
-            popup: None,
-            event_sender,
-            event_receiver,
-            immediate_replace: app_run_config.immediate_replace,
-            print_results: app_run_config.print_results,
-            print_on_exit: app_run_config.print_on_exit,
-            advanced_regex: app_run_config.advanced_regex,
+            run_config: app_run_config,
+            event_channels: EventChannels::new(),
+            ui_state: UIState::new(Screen::SearchFields(search_fields_state)),
         };
 
-        if app_run_config.immediate_search || !search_field_values.search.value.is_empty() {
+        if search_immediately {
             app.perform_search_if_valid();
         }
 
@@ -609,7 +647,7 @@ impl<'a> App {
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(SearchState { cancelled, .. }),
             ..
-        }) = &mut self.current_screen
+        }) = &mut self.ui_state.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
         }
@@ -617,7 +655,7 @@ impl<'a> App {
 
     fn cancel_replacement(&mut self) {
         if let Screen::PerformingReplacement(PerformingReplacementState { cancelled, .. }) =
-            &mut self.current_screen
+            &mut self.ui_state.current_screen
         {
             cancelled.store(true, Ordering::Relaxed);
         }
@@ -630,17 +668,13 @@ impl<'a> App {
 
     pub fn reset(&mut self) {
         self.cancel_in_progress_tasks();
+        let mut run_config = self.run_config.clone();
+        run_config.immediate_search = false;
+
         *self = Self::new(
             self.input_source.clone(), // TODO: avoid cloning
             &SearchFieldValues::default(),
-            &AppRunConfig {
-                include_hidden: self.include_hidden,
-                advanced_regex: self.advanced_regex,
-                immediate_search: false,
-                immediate_replace: self.immediate_replace,
-                print_results: self.print_results,
-                print_on_exit: self.print_on_exit,
-            },
+            run_config,
             std::mem::take(&mut self.config),
         )
         .expect("App initialisation errors should have been detected on initial construction");
@@ -648,7 +682,7 @@ impl<'a> App {
 
     pub async fn event_recv(&mut self) -> Event {
         tokio::select! {
-            Some(event) = self.event_receiver.recv() => event,
+            Some(event) = self.event_channels.recv() => event,
             Some(bg_event) = recv_optional!(get_bg_receiver!(self)) => {
                 Event::Internal(InternalEvent::Background(bg_event))
             }
@@ -673,7 +707,7 @@ impl<'a> App {
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
     // TODO: how can we enforce validation by type system - e.g. pass in searcher?
     fn perform_search_unwrap(&mut self) {
-        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return;
         };
         if self.search_fields.search().text().is_empty() {
@@ -710,7 +744,7 @@ impl<'a> App {
         Self::spawn_search_task(
             strategy,
             background_processing_sender.clone(),
-            self.event_sender.clone(),
+            self.event_channels.sender.clone(),
             cancelled,
         );
 
@@ -726,7 +760,7 @@ impl<'a> App {
             search_state: Some(search_state),
             preview_update_state: Some(preview_update_state),
             ..
-        }) = &mut self.current_screen
+        }) = &mut self.ui_state.current_screen
         else {
             return EventHandlingResult::None;
         };
@@ -765,7 +799,7 @@ impl<'a> App {
             search_state: Some(search_state),
             preview_update_state: Some(preview_update_state),
             ..
-        }) = &mut self.current_screen
+        }) = &mut self.ui_state.current_screen
         else {
             return EventHandlingResult::None;
         };
@@ -795,7 +829,7 @@ impl<'a> App {
 
         let temp_placeholder = Screen::SearchFields(SearchFieldsState::default());
         match mem::replace(
-            &mut self.current_screen,
+            &mut self.ui_state.current_screen,
             temp_placeholder, // Will get reset if we are not on `SearchComplete` screen
         ) {
             Screen::SearchFields(SearchFieldsState {
@@ -822,7 +856,7 @@ impl<'a> App {
                             background_processing_sender.clone(),
                             cancelled.clone(),
                             replacements_completed.clone(),
-                            self.event_sender.clone(),
+                            self.event_channels.sender.clone(),
                             Some(file_searcher),
                         );
                     }
@@ -830,7 +864,8 @@ impl<'a> App {
                         let InputSource::Stdin(ref stdin) = self.input_source else {
                             panic!("Expected stdin input source, found {:?}", self.input_source)
                         };
-                        self.event_sender
+                        self.event_channels
+                            .sender
                             .send(Event::ExitAndReplace(ExitAndReplaceState {
                                 stdin: Arc::clone(stdin),
                                 replace_results: state.results,
@@ -840,7 +875,7 @@ impl<'a> App {
                     }
                 }
 
-                self.current_screen =
+                self.ui_state.current_screen =
                     Screen::PerformingReplacement(PerformingReplacementState::new(
                         background_processing_receiver,
                         cancelled,
@@ -848,7 +883,7 @@ impl<'a> App {
                         total_replacements,
                     ));
             }
-            screen => self.current_screen = screen,
+            screen => self.ui_state.current_screen = screen,
         }
     }
 
@@ -894,10 +929,11 @@ impl<'a> App {
                     search_state: Some(state),
                     focussed_section,
                     ..
-                }) = &mut self.current_screen
+                }) = &mut self.ui_state.current_screen
                 {
                     state.set_search_completed_now();
-                    if self.immediate_replace && *focussed_section == FocussedSection::SearchResults
+                    if self.run_config.immediate_replace
+                        && *focussed_section == FocussedSection::SearchResults
                     {
                         self.perform_replacement();
                     }
@@ -905,10 +941,10 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             BackgroundProcessingEvent::ReplacementCompleted(replace_state) => {
-                if self.print_results {
+                if self.run_config.print_results {
                     EventHandlingResult::new_exit_stats(replace_state)
                 } else {
-                    self.current_screen = Screen::Results(replace_state);
+                    self.ui_state.current_screen = Screen::Results(replace_state);
                     EventHandlingResult::Rerender
                 }
             }
@@ -931,7 +967,7 @@ impl<'a> App {
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(search_in_progress_state),
             ..
-        }) = &mut self.current_screen
+        }) = &mut self.ui_state.current_screen
         {
             let mut results_with_replacements = Vec::new();
             let searcher = self
@@ -981,17 +1017,18 @@ impl<'a> App {
                         long: "Please enter some search text".to_string(),
                     });
                 } else {
-                    let Screen::SearchFields(ref mut search_fields_state) = self.current_screen
+                    let Screen::SearchFields(ref mut search_fields_state) =
+                        self.ui_state.current_screen
                     else {
                         panic!(
                             "Expected SearchFields, found {:?}",
-                            self.current_screen.name()
+                            self.ui_state.current_screen.name()
                         );
                     };
                     search_fields_state.focussed_section = FocussedSection::SearchResults;
                     // Check if search has been performed
                     if search_fields_state.search_state.is_some() {
-                        if self.immediate_replace && self.search_has_completed() {
+                        if self.run_config.immediate_replace && self.search_has_completed() {
                             self.perform_replacement();
                         }
                     } else {
@@ -1024,7 +1061,7 @@ impl<'a> App {
         key_code: KeyCode,
         key_modifiers: KeyModifiers,
     ) -> EventHandlingResult {
-        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return EventHandlingResult::None;
         };
         if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
@@ -1044,7 +1081,7 @@ impl<'a> App {
         } else {
             return EventHandlingResult::Rerender;
         }
-        let Screen::SearchFields(ref mut search_fields_state) = self.current_screen else {
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return EventHandlingResult::None;
         };
         let file_searcher = self
@@ -1084,7 +1121,7 @@ impl<'a> App {
             if let Some(timer) = search_fields_state.search_debounce_timer.take() {
                 timer.abort();
             }
-            let event_sender = self.event_sender.clone();
+            let event_sender = self.event_channels.sender.clone();
             search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let _ =
@@ -1095,7 +1132,8 @@ impl<'a> App {
     }
 
     fn get_search_state_unwrap(&mut self) -> &mut SearchState {
-        self.current_screen
+        self.ui_state
+            .current_screen
             .unwrap_search_fields_state_mut()
             .search_state
             .as_mut()
@@ -1109,9 +1147,9 @@ impl<'a> App {
         event: CommandSearchFocusResults,
     ) -> EventHandlingResult {
         assert!(
-            matches!(self.current_screen, Screen::SearchFields(_)),
+            matches!(self.ui_state.current_screen, Screen::SearchFields(_)),
             "Expected current_screen to be SearchFields, found {}",
-            self.current_screen.name()
+            self.ui_state.current_screen.name()
         );
 
         match event {
@@ -1121,18 +1159,25 @@ impl<'a> App {
             }
             CommandSearchFocusResults::BackToFields => {
                 self.cancel_search();
-                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                let search_fields_state = self
+                    .ui_state
+                    .current_screen
+                    .unwrap_search_fields_state_mut();
                 search_fields_state.focussed_section = FocussedSection::SearchFields;
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusResults::OpenInEditor => {
-                let search_fields_state = self.current_screen.unwrap_search_fields_state_mut();
+                let search_fields_state = self
+                    .ui_state
+                    .current_screen
+                    .unwrap_search_fields_state_mut();
                 if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
                     let selected = search_in_progress_state
                         .primary_selected_field_mut()
                         .expect("Expected to find selected field");
                     if let Some(ref path) = selected.search_result.path {
-                        self.event_sender
+                        self.event_channels
+                            .sender
                             .send(Event::LaunchEditor((
                                 path.clone(),
                                 selected.search_result.line_number,
@@ -1220,7 +1265,7 @@ impl<'a> App {
             }
         }
 
-        match &mut self.current_screen {
+        match &mut self.ui_state.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 let Command::SearchFields(command) = command else {
                     panic!("Expected SearchFields command, found {command:?}");
@@ -1271,11 +1316,13 @@ impl<'a> App {
         &mut self,
         key_event: KeyEvent,
     ) -> Either<Command, EventHandlingResult> {
-        let maybe_event = self.key_map.lookup(&self.current_screen, key_event);
+        let maybe_event = self
+            .key_map
+            .lookup(&self.ui_state.current_screen, key_event);
 
         // Quit should take precedent over closing popup etc.
         if !matches!(maybe_event, Some(Command::General(CommandGeneral::Quit))) {
-            if self.popup.is_some() {
+            if self.ui_state.popup.is_some() {
                 self.clear_popup();
                 return Right(EventHandlingResult::Rerender);
             }
@@ -1298,7 +1345,7 @@ impl<'a> App {
             }
 
             // If we're in SearchFields focus, treat unmatched keys as text input
-            if let Screen::SearchFields(state) = &self.current_screen {
+            if let Screen::SearchFields(state) = &self.ui_state.current_screen {
                 if state.focussed_section == FocussedSection::SearchFields {
                     Command::SearchFields(CommandSearchFields::SearchFocusFields(
                         CommandSearchFocusFields::EnterChars(key_event.code, key_event.modifiers),
@@ -1318,7 +1365,7 @@ impl<'a> App {
             search_text: self.search_fields.search().text(),
             replacement_text: self.search_fields.replace().text(),
             fixed_strings: self.search_fields.fixed_strings().checked,
-            advanced_regex: self.advanced_regex,
+            advanced_regex: self.run_config.advanced_regex,
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
         };
@@ -1326,7 +1373,7 @@ impl<'a> App {
             InputSource::Directory(directory) => Some(DirConfig {
                 include_globs: Some(self.search_fields.include_files().text()),
                 exclude_globs: Some(self.search_fields.exclude_files().text()),
-                include_hidden: self.include_hidden,
+                include_hidden: self.run_config.include_hidden,
                 directory: directory.clone(),
             }),
             InputSource::Stdin(_) => None,
@@ -1433,31 +1480,31 @@ impl<'a> App {
     }
 
     pub fn show_popup(&self) -> bool {
-        self.popup.is_some()
+        self.ui_state.popup.is_some()
     }
 
     pub fn popup(&self) -> Option<&Popup> {
-        self.popup.as_ref()
+        self.ui_state.popup.as_ref()
     }
 
     pub fn errors(&self) -> Vec<AppError> {
-        let app_errors = self.errors.clone().into_iter();
+        let app_errors = self.ui_state.errors().iter().cloned();
         let field_errors = self.search_fields.errors().into_iter();
         app_errors.chain(field_errors).collect()
     }
 
     pub fn add_error(&mut self, error: AppError) {
-        self.popup = Some(Popup::Error);
-        self.errors.push(error);
+        self.ui_state.popup = Some(Popup::Error);
+        self.ui_state.add_error(error);
     }
 
     fn clear_popup(&mut self) {
-        self.popup = None;
-        self.errors.clear();
+        self.ui_state.popup = None;
+        self.ui_state.clear_errors();
     }
 
     fn set_popup(&mut self, popup: Popup) {
-        self.popup = Some(popup);
+        self.ui_state.popup = Some(popup);
     }
 
     pub fn keymaps_all(&self) -> Vec<(String, String)> {
@@ -1488,7 +1535,7 @@ impl<'a> App {
             };
         }
 
-        let current_screen_keys = match &self.current_screen {
+        let current_screen_keys = match &self.ui_state.current_screen {
             Screen::SearchFields(search_fields_state) => {
                 let mut keys = vec![];
                 match search_fields_state.focussed_section {
@@ -1601,7 +1648,7 @@ impl<'a> App {
             }
         };
 
-        let on_search_results = if let Screen::SearchFields(ref s) = self.current_screen {
+        let on_search_results = if let Screen::SearchFields(ref s) = self.ui_state.current_screen {
             s.focussed_section == FocussedSection::SearchResults
         } else {
             false
@@ -1650,7 +1697,7 @@ impl<'a> App {
     }
 
     fn multiselect_enabled(&self) -> bool {
-        match &self.current_screen {
+        match &self.ui_state.current_screen {
             Screen::SearchFields(SearchFieldsState {
                 search_state: Some(state),
                 ..
@@ -1660,14 +1707,14 @@ impl<'a> App {
     }
 
     fn toggle_multiselect_mode(&mut self) {
-        match &mut self.current_screen {
+        match &mut self.ui_state.current_screen {
             Screen::SearchFields(SearchFieldsState {
                 search_state: Some(state),
                 ..
             }) => state.toggle_multiselect_mode(),
             _ => panic!(
                 "Tried to disable multi-select on {:?}",
-                self.current_screen.name()
+                self.ui_state.current_screen.name()
             ),
         }
     }
@@ -1683,7 +1730,7 @@ impl<'a> App {
             search_state: Some(state),
             search_debounce_timer,
             ..
-        }) = &self.current_screen
+        }) = &self.ui_state.current_screen
         {
             state.search_completed.is_some()
                 && search_debounce_timer
@@ -1703,7 +1750,7 @@ impl<'a> App {
                 }),
             preview_update_state,
             ..
-        }) = &self.current_screen
+        }) = &self.ui_state.current_screen
         {
             processing_receiver.is_empty()
                 && preview_update_state
@@ -2292,7 +2339,7 @@ mod tests {
         let mut app = App::new(
             InputSource::Directory(std::env::current_dir().unwrap()),
             &SearchFieldValues::default(),
-            &AppRunConfig::default(),
+            AppRunConfig::default(),
             Config::default(),
         )
         .unwrap();
@@ -2309,7 +2356,7 @@ mod tests {
         let mut app = App::new(
             InputSource::Directory(std::env::current_dir().unwrap()),
             &SearchFieldValues::default(),
-            &AppRunConfig::default(),
+            AppRunConfig::default(),
             Config::default(),
         )
         .unwrap();
