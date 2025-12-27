@@ -34,7 +34,8 @@ async fn test_replace_state() {
             .map(|n| SearchResultWithReplacement {
                 search_result: SearchResult {
                     path: Some(PathBuf::from(format!("error-{n}.txt"))),
-                    line_number: 1,
+                    start_line_number: 1,
+                    end_line_number: 1,
                     line: format!("line {n}"),
                     line_ending: LineEnding::Lf,
                     included: true,
@@ -376,7 +377,7 @@ async fn test_keymaps_performing_replacement() {
     ));
 
     assert_debug_snapshot!(
-        "performing_replacement_compact_keymaps",
+        "performstart_line_numberment_compact_keymaps",
         app.keymaps_compact()
     );
     assert_debug_snapshot!("performing_replacement_all_keymaps", app.keymaps_all());
@@ -399,6 +400,7 @@ async fn test_keymaps_results() {
             search_result: SearchResult {
                 path: Some(PathBuf::from("error.txt")),
                 line_number: 1,
+                end_line_number: 1,
                 line: "test line".to_string(),
                 line_ending: LineEnding::Lf,
                 included: true,
