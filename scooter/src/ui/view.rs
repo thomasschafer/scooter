@@ -711,7 +711,7 @@ fn build_preview_from_str<'a>(
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.line_number - 1;
+    let line_idx = result.search_result.start_line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -980,7 +980,7 @@ fn build_preview_from_file<'a>(
         .expect("attempted to build preview list from file with no path");
 
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.line_number - 1;
+    let line_idx = result.search_result.start_line_number - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -1190,7 +1190,7 @@ fn file_path_line<'a>(
         Some(path) => relative_path(base_path, path),
         None => "stdin".to_string(),
     };
-    let line_num = format!(":{}", result.search_result.line_number);
+    let line_num = format!(":{}", result.search_result.start_line_number);
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);

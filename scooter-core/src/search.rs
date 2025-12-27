@@ -41,8 +41,10 @@ impl Searcher {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
     pub path: Option<PathBuf>,
-    /// 1-indexed
-    pub line_number: usize,
+    /// 1-indexed line number where the match starts
+    pub start_line_number: usize,
+    /// 1-indexed line number where the match ends (same as `start_line_number` for single-line matches)
+    pub end_line_number: usize,
     pub line: String,
     pub line_ending: LineEnding,
     pub included: bool,
@@ -72,7 +74,7 @@ impl SearchResultWithReplacement {
                 .clone()
                 .unwrap_or_default()
                 .display(),
-            self.search_result.line_number
+            self.search_result.start_line_number
         );
 
         (path_display, error)
@@ -383,7 +385,8 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
         {
             let result = SearchResult {
                 path: Some(path.to_path_buf()),
-                line_number,
+                start_line_number: line_number,
+                end_line_number: line_number,
                 line,
                 line_ending,
                 included: true,
@@ -410,7 +413,8 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult {
                     path: Some(PathBuf::from(path)),
-                    line_number,
+                    start_line_number: line_number,
+                    end_line_number: line_number,
                     line: "test line".to_string(),
                     line_ending: LineEnding::Lf,
                     included: true,
