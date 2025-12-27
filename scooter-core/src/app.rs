@@ -1232,7 +1232,7 @@ impl<'a> App {
                             .sender
                             .send(Event::LaunchEditor((
                                 path.clone(),
-                                selected.search_result.line_number,
+                                selected.search_result.start_line_number,
                             )))
                             .expect("Failed to send event");
                     }
@@ -1500,9 +1500,11 @@ impl<'a> App {
                             if replacement_if_match(&line, &config.search, &config.replace)
                                 .is_some()
                             {
+                                let line_number = idx + 1;
                                 let result = SearchResult {
                                     path: None,
-                                    line_number: idx + 1,
+                                    start_line_number: line_number,
+                                    end_line_number: line_number,
                                     line,
                                     line_ending,
                                     included: true,
@@ -1944,10 +1946,12 @@ mod tests {
     }
 
     fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
+                start_line_number: line_num,
+                end_line_number: line_num,
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
                 included,
@@ -1962,7 +1966,8 @@ mod tests {
             .map(|i| SearchResultWithReplacement {
                 search_result: SearchResult {
                     path: Some(PathBuf::from(format!("test{i}.txt"))),
-                    line_number: 1,
+                    start_line_number: 1,
+                    end_line_number: 1,
                     line: format!("test line {i}").to_string(),
                     line_ending: LineEnding::Lf,
                     included: true,
@@ -2065,10 +2070,12 @@ mod tests {
     }
 
     fn success_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
+                start_line_number: line_num,
+                end_line_number: line_num,
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
                 included: true,
@@ -2079,10 +2086,12 @@ mod tests {
     }
 
     fn ignored_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
+                start_line_number: line_num,
+                end_line_number: line_num,
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
                 included: false,
@@ -2093,10 +2102,12 @@ mod tests {
     }
 
     fn error_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
+                start_line_number: line_num,
+                end_line_number: line_num,
                 line: "foo".to_owned(),
                 line_ending: LineEnding::Lf,
                 included: true,

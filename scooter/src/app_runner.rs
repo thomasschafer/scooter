@@ -589,7 +589,7 @@ fn write_results_to_stderr_impl(
     let mut line_map = state
         .replace_results
         .iter_mut()
-        .map(|res| (res.search_result.line_number, res))
+        .map(|res| (res.search_result.start_line_number, res))
         .collect::<HashMap<_, _>>();
 
     for (idx, line) in state.stdin.lines().enumerate() {
@@ -647,7 +647,8 @@ mod tests {
         let error_result = SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from("file.txt")),
-                line_number: 10,
+                start_line_number: 10,
+                end_line_number: 10,
                 line: "line".to_string(),
                 line_ending: LineEnding::Lf,
                 included: true,

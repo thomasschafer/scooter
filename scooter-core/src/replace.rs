@@ -269,7 +269,7 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
 
     let mut line_map = results
         .iter_mut()
-        .map(|res| (res.search_result.line_number, res))
+        .map(|res| (res.search_result.start_line_number, res))
         .collect::<HashMap<_, _>>();
 
     let file_path = file_path.expect("File path must be present when searching in files");
@@ -504,7 +504,8 @@ mod tests {
         SearchResultWithReplacement {
             search_result: SearchResult {
                 path: Some(PathBuf::from(path)),
-                line_number,
+                start_line_number: line_number,
+                end_line_number: line_number,
                 line: line.to_string(),
                 line_ending: LineEnding::Lf,
                 included,
@@ -1276,7 +1277,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 1);
-            assert_eq!(results[0].search_result.line_number, 2);
+            assert_eq!(results[0].search_result.start_line_number, 2);
             assert_eq!(results[0].search_result.line, "search target");
             assert_eq!(results[0].replacement, "replace target");
             assert!(results[0].search_result.included);
@@ -1300,11 +1301,11 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 3);
-            assert_eq!(results[0].search_result.line_number, 1);
+            assert_eq!(results[0].search_result.start_line_number, 1);
             assert_eq!(results[0].replacement, "replaced line 1");
-            assert_eq!(results[1].search_result.line_number, 2);
+            assert_eq!(results[1].search_result.start_line_number, 2);
             assert_eq!(results[1].replacement, "replaced line 2");
-            assert_eq!(results[2].search_result.line_number, 4);
+            assert_eq!(results[2].search_result.start_line_number, 4);
             assert_eq!(results[2].replacement, "replaced line 4");
         }
 
@@ -1369,7 +1370,7 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].replacement, "123REPLACED456");
-            assert_eq!(results[0].search_result.line_number, 1);
+            assert_eq!(results[0].search_result.start_line_number, 1);
         }
 
         #[test]
@@ -1479,9 +1480,9 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 10); // Lines 0, 100, 200, ..., 900
-            assert_eq!(results[0].search_result.line_number, 1); // 1-indexed
-            assert_eq!(results[1].search_result.line_number, 101);
-            assert_eq!(results[9].search_result.line_number, 901);
+            assert_eq!(results[0].search_result.start_line_number, 1); // 1-indexed
+            assert_eq!(results[1].search_result.start_line_number, 101);
+            assert_eq!(results[9].search_result.start_line_number, 901);
         }
     }
 
