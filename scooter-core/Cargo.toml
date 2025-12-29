@@ -28,7 +28,7 @@ bitflags = "2.10.0"
 content_inspector = "0.2.4"
 crossterm = { version = "0.28.1", optional = true }
 etcetera = "0.11.0"
-fancy-regex = "0.15.0"
+fancy-regex = "0.17.0"
 ignore = "0.4.25"
 log = "0.4.29"
 rayon = "1.11.0"
