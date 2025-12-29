@@ -1430,6 +1430,7 @@ impl<'a> App {
             advanced_regex: self.run_config.advanced_regex,
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
+            multiline: self.run_config.multiline,
         };
         let dir_config = match &self.input_source {
             InputSource::Directory(directory) => Some(DirConfig {
