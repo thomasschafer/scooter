@@ -127,6 +127,8 @@ pub struct ParsedSearchConfig {
     pub search: SearchType,
     /// The text to replace matches with
     pub replace: String,
+    /// Whether to search and replace across multiple lines
+    pub multiline: bool,
 }
 
 #[derive(Clone, Debug)]
