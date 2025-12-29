@@ -318,16 +318,15 @@ fn should_replace_in_memory(path: &Path) -> Result<bool, std::io::Error> {
 /// Performs search and replace operations in a file
 ///
 /// This function implements a hybrid approach to file replacements:
-/// 1. For files under the `MAX_FILE_SIZE` threshold, it attempts an in-memory replacement
-/// 2. If the file is large or in-memory replacement fails, it falls back to line-by-line chunked replacement
-///
-/// This approach optimizes for performance while maintaining reasonable memory usage limits.
+/// 1. For small files (under `MAX_FILE_SIZE`) or when multiline is enabled: reads into memory for performance and multiline support
+/// 2. Otherwise (or if in-memory replacement fails): uses line-by-line chunked replacement for memory efficiency
 ///
 /// # Arguments
 ///
 /// * `file_path` - Path to the file to process
 /// * `search` - The search pattern (fixed string, regex, or advanced regex)
 /// * `replace` - The replacement string
+/// * `multiline` - Whether to force in-memory replacement (enables multiline patterns for large files)
 ///
 /// # Returns
 ///
@@ -338,9 +337,10 @@ pub fn replace_all_in_file(
     file_path: &Path,
     search: &SearchType,
     replace: &str,
+    multiline: bool,
 ) -> anyhow::Result<bool> {
-    // Try to read into memory if not too large - if this fails, or if too large, fall back to line-by-line replacement
-    if matches!(should_replace_in_memory(file_path), Ok(true)) {
+    // Try to read into memory if not too large OR if multiline mode is enabled
+    if multiline || matches!(should_replace_in_memory(file_path), Ok(true)) {
         match replace_in_memory(file_path, search, replace) {
             Ok(replaced) => return Ok(replaced),
             Err(e) => {
@@ -352,6 +352,7 @@ pub fn replace_all_in_file(
         }
     }
 
+    // Fall back to line-by-line chunked replacement
     replace_chunked(file_path, search, replace)
 }
 
@@ -1211,7 +1212,7 @@ mod tests {
             "This is a test file.\nIt has some content to replace.\nThe word replace should be replaced.",
         );
 
-        let result = replace_all_in_file(&file_path, &fixed_search("replace"), "modify");
+        let result = replace_all_in_file(&file_path, &fixed_search("replace"), "modify", false);
         assert!(result.is_ok());
         assert!(result.unwrap());
 

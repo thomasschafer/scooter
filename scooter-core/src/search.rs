@@ -110,6 +110,10 @@ impl FileSearcher {
     pub fn replace(&self) -> &String {
         &self.search_config.replace
     }
+
+    pub fn multiline(&self) -> bool {
+        self.search_config.multiline
+    }
 }
 
 /// Options for regex pattern conversion
@@ -196,6 +200,7 @@ impl FileSearcher {
     /// let search_config = ParsedSearchConfig {
     ///     search: SearchType::Pattern(Regex::new("pattern").unwrap()),
     ///     replace: "replacement".to_string(),
+    ///     multiline: false,
     /// };
     /// let dir_config = ParsedDirConfig {
     ///     overrides: Override::empty(),
@@ -292,8 +297,12 @@ impl FileSearcher {
                 };
 
                 if is_searchable(&entry) {
-                    match replace::replace_all_in_file(entry.path(), self.search(), self.replace())
-                    {
+                    match replace::replace_all_in_file(
+                        entry.path(),
+                        self.search(),
+                        self.replace(),
+                        self.multiline(),
+                    ) {
                         Ok(replaced_in_file) => {
                             if replaced_in_file {
                                 counter.fetch_add(1, Ordering::Relaxed);
