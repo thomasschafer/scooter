@@ -319,6 +319,7 @@ fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
         advanced_regex: args.advanced_regex,
         match_whole_word: args.match_whole_word,
         match_case: !args.case_insensitive,
+        multiline: args.multiline,
     }
 }
 

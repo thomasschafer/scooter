@@ -34,8 +34,20 @@ pub fn find_and_replace_text(
     search_config: SearchConfig<'_>,
 ) -> anyhow::Result<String> {
     let (parsed_search_config, _) = parse_config(search_config, None)?;
-    let mut result = String::with_capacity(content.len());
 
+    // When multiline mode is enabled, perform replacement on the entire content
+    if parsed_search_config.multiline {
+        let result = replacement_if_match(
+            content,
+            &parsed_search_config.search,
+            &parsed_search_config.replace,
+        )
+        .unwrap_or_else(|| content.to_string());
+        return Ok(result);
+    }
+
+    // Default line-by-line processing
+    let mut result = String::with_capacity(content.len());
     let cursor = Cursor::new(content);
 
     for line_result in cursor.lines_with_endings() {
