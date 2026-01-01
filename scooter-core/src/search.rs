@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::num::NonZero;
@@ -15,6 +16,12 @@ use crate::{
     line_reader::{BufReadExt, LineEnding},
     replace::{self, ReplaceResult},
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Line {
+    pub content: String,
+    pub line_ending: LineEnding,
+}
 
 #[derive(Clone, Debug)]
 pub enum Searcher {
@@ -45,9 +52,45 @@ pub struct SearchResult {
     pub start_line_number: usize,
     /// 1-indexed line number where the match ends (same as `start_line_number` for single-line matches)
     pub end_line_number: usize,
-    pub line: String,
-    pub line_ending: LineEnding,
+    pub lines: Vec<Line>,
     pub included: bool,
+}
+
+impl SearchResult {
+    pub fn new(
+        path: Option<PathBuf>,
+        start_line_number: usize,
+        end_line_number: usize,
+        lines: Vec<Line>,
+        included: bool,
+    ) -> Self {
+        let expected_lines = end_line_number - start_line_number + 1;
+        assert_eq!(
+            lines.len(),
+            expected_lines,
+            "line length doesn't match line numbers: lines.len() ({}) != end_line_number ({}) - start_line_number ({}) + 1 ({})",
+            lines.len(),
+            end_line_number,
+            start_line_number,
+            expected_lines
+        );
+        Self {
+            path,
+            start_line_number,
+            end_line_number,
+            lines,
+            included,
+        }
+    }
+
+    /// Reconstructs the full text from the lines vector, including all line endings.
+    pub fn content(&self) -> String {
+        self.lines.iter().fold(String::new(), |mut output, line| {
+            write!(output, "{}{}", line.content, line.line_ending.as_str())
+                .expect("failed to write to output string");
+            output
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,7 +287,11 @@ impl FileSearcher {
                 };
 
                 if is_searchable(&entry) {
-                    let results = match search_file(entry.path(), &self.search_config.search) {
+                    let results = match search_file(
+                        entry.path(),
+                        &self.search_config.search,
+                        self.search_config.multiline,
+                    ) {
                         Ok(r) => r,
                         Err(e) => {
                             log::warn!(
@@ -351,7 +398,11 @@ pub fn contains_search(line: &str, search: &SearchType) -> bool {
     }
 }
 
-pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<SearchResult>> {
+pub fn search_file(
+    path: &Path,
+    search: &SearchType,
+    multiline: bool,
+) -> anyhow::Result<Vec<SearchResult>> {
     if search.is_empty() {
         return Ok(vec![]);
     }
@@ -365,6 +416,12 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
     }
     file.seek(SeekFrom::Start(0))?;
 
+    if multiline {
+        let content = std::fs::read_to_string(path)?;
+        return Ok(search_multiline(&content, search, Some(path)));
+    }
+
+    // Line-by-line search for non-multiline mode
     let reader = BufReader::with_capacity(16384, file);
     let mut results = Vec::new();
 
@@ -391,22 +448,160 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
             }
         };
 
-        if let Ok(line) = String::from_utf8(line_bytes)
-            && contains_search(&line, search)
+        if let Ok(line_content) = String::from_utf8(line_bytes)
+            && contains_search(&line_content, search)
         {
-            let result = SearchResult {
-                path: Some(path.to_path_buf()),
-                start_line_number: line_number,
-                end_line_number: line_number,
-                line,
-                line_ending,
-                included: true,
-            };
+            let result = SearchResult::new(
+                Some(path.to_path_buf()),
+                line_number,
+                line_number,
+                vec![Line {
+                    content: line_content,
+                    line_ending,
+                }],
+                true,
+            );
             results.push(result);
         }
     }
 
     Ok(results)
+}
+
+/// Search content for multiline patterns and return `SearchResults`
+pub(crate) fn search_multiline(
+    content: &str,
+    search: &SearchType,
+    path: Option<&Path>,
+) -> Vec<SearchResult> {
+    // Pre-compute newline positions for efficient line number lookups
+    let line_index = LineIndex::new(content);
+
+    let matches: Box<dyn Iterator<Item = (usize, usize)>> = match search {
+        SearchType::Fixed(pattern) => Box::new(
+            content
+                .match_indices(pattern.as_str())
+                .map(|(byte_offset, _)| (byte_offset, byte_offset + pattern.len())),
+        ),
+        SearchType::Pattern(regex) => {
+            Box::new(regex.find_iter(content).map(|mat| (mat.start(), mat.end())))
+        }
+        SearchType::PatternAdvanced(regex) => Box::new(
+            regex
+                .find_iter(content)
+                .flatten()
+                .map(|mat| (mat.start(), mat.end())),
+        ),
+    };
+
+    matches
+        .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
+        .collect()
+}
+
+/// Helper struct to efficiently convert byte offsets to line numbers and extract lines
+pub(crate) struct LineIndex<'a> {
+    content: &'a str,
+    /// Byte positions of newline characters
+    newline_positions: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(content: &'a str) -> Self {
+        let newline_positions: Vec<usize> = content
+            .char_indices()
+            .filter_map(|(i, c)| if c == '\n' { Some(i) } else { None })
+            .collect();
+        Self {
+            content,
+            newline_positions,
+        }
+    }
+
+    /// Get line number (1-indexed) for a byte offset
+    pub(crate) fn line_number_at(&self, byte_offset: usize) -> usize {
+        // Binary search to find how many newlines come before this offset
+        // Both Ok and Err return the same value: the number of newlines before/at this position + 1
+        match self.newline_positions.binary_search(&byte_offset) {
+            Ok(idx) | Err(idx) => idx + 1,
+        }
+    }
+
+    /// Get the complete content and line ending for a specific line number (1-indexed)
+    ///
+    /// Returns an error if `line_number` is 0 or exceeds the number of lines in the content.
+    pub(crate) fn get_line(&self, line_number: usize) -> Result<Line, String> {
+        if line_number == 0 {
+            return Err("Line number must be >= 1 (1-indexed)".to_string());
+        }
+
+        let total_lines = self.newline_positions.len() + 1;
+        if line_number > total_lines {
+            return Err(format!(
+                "Line number {line_number} exceeds total lines {total_lines}"
+            ));
+        }
+
+        // Line N starts after the (N-1)th newline
+        // For line 1, starts at 0 (no newline before it)
+        // For line N >= 2, starts after newline_positions[N-2]
+        let line_start = if line_number == 1 {
+            0
+        } else {
+            let newline_pos = self.newline_positions[line_number - 2];
+            newline_pos + 1
+        };
+
+        // Line N ends at the (N)th newline (or EOF)
+        let (line_end, line_ending) =
+            if let Some(&newline_pos) = self.newline_positions.get(line_number - 1) {
+                // Check if it's \r\n or just \n
+                let is_crlf = newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r';
+                if is_crlf {
+                    (newline_pos - 1, LineEnding::CrLf)
+                } else {
+                    (newline_pos, LineEnding::Lf)
+                }
+            } else {
+                assert_eq!(line_number, total_lines);
+                // Last line without newline
+                (self.content.len(), LineEnding::None)
+            };
+
+        let content = self.content[line_start..line_end].to_string();
+        Ok(Line {
+            content,
+            line_ending,
+        })
+    }
+}
+
+/// Create a `SearchResult` from byte offsets in the content
+fn create_search_result_from_bytes(
+    start_byte: usize,
+    end_byte: usize,
+    path: Option<&Path>,
+    line_index: &LineIndex<'_>,
+) -> SearchResult {
+    let start_line = line_index.line_number_at(start_byte);
+    let end_line = line_index.line_number_at(end_byte.saturating_sub(1));
+
+    // Extract all complete lines that the match touches
+    let lines: Vec<Line> = (start_line..=end_line)
+        .map(|line_num| {
+            line_index
+                .get_line(line_num)
+                .expect("failed to get line from line index")
+        })
+        .collect();
+
+    SearchResult::new(
+        path.map(Path::to_path_buf),
+        start_line,
+        end_line,
+        lines,
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -422,14 +617,16 @@ mod tests {
             replace_result: Option<ReplaceResult>,
         ) -> SearchResultWithReplacement {
             SearchResultWithReplacement {
-                search_result: SearchResult {
-                    path: Some(PathBuf::from(path)),
-                    start_line_number: line_number,
-                    end_line_number: line_number,
-                    line: "test line".to_string(),
-                    line_ending: LineEnding::Lf,
-                    included: true,
-                },
+                search_result: SearchResult::new(
+                    Some(PathBuf::from(path)),
+                    line_number,
+                    line_number,
+                    vec![Line {
+                        content: "test line".to_string(),
+                        line_ending: LineEnding::Lf,
+                    }],
+                    true,
+                ),
                 replacement: "replacement".to_string(),
                 replace_result,
             }
@@ -916,6 +1113,347 @@ mod tests {
         fn test_is_likely_binary_hidden_files() {
             assert!(is_likely_binary(Path::new(".hidden.png")));
             assert!(!is_likely_binary(Path::new(".hidden.txt")));
+        }
+    }
+
+    mod multiline_tests {
+        use super::*;
+
+        #[test]
+        fn test_line_index_single_line() {
+            let content = "single line";
+            let index = LineIndex::new(content);
+            assert_eq!(index.line_number_at(0), 1);
+            assert_eq!(index.line_number_at(6), 1);
+            assert_eq!(index.line_number_at(11), 1);
+        }
+
+        #[test]
+        fn test_line_index_multiple_lines() {
+            let content = "line 1\nline 2\nline 3";
+            let index = LineIndex::new(content);
+
+            // Line 1 (bytes 0-5)
+            assert_eq!(index.line_number_at(0), 1);
+            assert_eq!(index.line_number_at(5), 1);
+
+            // Newline at byte 6
+            assert_eq!(index.line_number_at(6), 1);
+
+            // Line 2 (bytes 7-12)
+            assert_eq!(index.line_number_at(7), 2);
+            assert_eq!(index.line_number_at(12), 2);
+
+            // Newline at byte 13
+            assert_eq!(index.line_number_at(13), 2);
+
+            // Line 3 (bytes 14-19)
+            assert_eq!(index.line_number_at(14), 3);
+            assert_eq!(index.line_number_at(19), 3);
+        }
+
+        #[test]
+        fn test_line_index_empty_lines() {
+            let content = "line 1\n\nline 3";
+            let index = LineIndex::new(content);
+
+            assert_eq!(index.line_number_at(0), 1); // "l" in line 1
+            assert_eq!(index.line_number_at(6), 1); // first newline
+            assert_eq!(index.line_number_at(7), 2); // second newline (empty line)
+            assert_eq!(index.line_number_at(8), 3); // "l" in line 3
+        }
+
+        #[test]
+        fn test_get_line_zero_returns_error() {
+            let content = "line1\nline2";
+            let index = LineIndex::new(content);
+
+            let result = index.get_line(0);
+            assert!(result.is_err());
+            assert_eq!(result.unwrap_err(), "Line number must be >= 1 (1-indexed)");
+        }
+
+        #[test]
+        fn test_get_line_exceeds_total_returns_error() {
+            let content = "line1\nline2";
+            let index = LineIndex::new(content);
+
+            let result = index.get_line(3);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("exceeds total lines"));
+        }
+
+        #[test]
+        fn test_get_line_valid_line_numbers() {
+            let content = "line1\nline2\nline3";
+            let index = LineIndex::new(content);
+
+            let line1 = index.get_line(1).unwrap();
+            assert_eq!(line1.content, "line1");
+            assert_eq!(line1.line_ending, LineEnding::Lf);
+
+            let line2 = index.get_line(2).unwrap();
+            assert_eq!(line2.content, "line2");
+            assert_eq!(line2.line_ending, LineEnding::Lf);
+
+            let line3 = index.get_line(3).unwrap();
+            assert_eq!(line3.content, "line3");
+            assert_eq!(line3.line_ending, LineEnding::None);
+        }
+
+        #[test]
+        fn test_get_line_crlf_endings() {
+            let content = "line1\r\nline2\r\n";
+            let index = LineIndex::new(content);
+
+            let line1 = index.get_line(1).unwrap();
+            assert_eq!(line1.content, "line1");
+            assert_eq!(line1.line_ending, LineEnding::CrLf);
+
+            let line2 = index.get_line(2).unwrap();
+            assert_eq!(line2.content, "line2");
+            assert_eq!(line2.line_ending, LineEnding::CrLf);
+        }
+
+        #[test]
+        fn test_get_line_mixed_endings() {
+            let content = "line1\nline2\r\nline3";
+            let index = LineIndex::new(content);
+
+            let line1 = index.get_line(1).unwrap();
+            assert_eq!(line1.content, "line1");
+            assert_eq!(line1.line_ending, LineEnding::Lf);
+
+            let line2 = index.get_line(2).unwrap();
+            assert_eq!(line2.content, "line2");
+            assert_eq!(line2.line_ending, LineEnding::CrLf);
+
+            let line3 = index.get_line(3).unwrap();
+            assert_eq!(line3.content, "line3");
+            assert_eq!(line3.line_ending, LineEnding::None);
+        }
+
+        #[test]
+        fn test_get_line_empty_line() {
+            let content = "line1\n\nline3";
+            let index = LineIndex::new(content);
+
+            let line2 = index.get_line(2).unwrap();
+            assert_eq!(line2.content, "");
+            assert_eq!(line2.line_ending, LineEnding::Lf);
+        }
+
+        #[test]
+        fn test_search_multiline_fixed_string() {
+            let content = "foo\nbar\nbaz";
+            let search = SearchType::Fixed("foo\nb".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number, 1);
+            assert_eq!(results[0].end_line_number, 2);
+            assert_eq!(results[0].path, None);
+            assert_eq!(
+                results[0].lines,
+                vec![
+                    Line {
+                        content: "foo".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                    Line {
+                        content: "bar".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_regex_pattern() {
+            let content = "start\nmiddle\nend\nother";
+            let search = SearchType::Pattern(regex::Regex::new(r"start.*\nmiddle").unwrap());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number, 1);
+            assert_eq!(results[0].end_line_number, 2);
+            assert_eq!(
+                results[0].lines,
+                vec![
+                    Line {
+                        content: "start".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                    Line {
+                        content: "middle".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_multiple_matches() {
+            let content = "foo\nbar\n\nfoo\nbar\nbaz";
+            let search = SearchType::Fixed("foo\nb".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].start_line_number, 1);
+            assert_eq!(results[0].end_line_number, 2);
+            assert_eq!(results[1].start_line_number, 4);
+            assert_eq!(results[1].end_line_number, 5);
+        }
+
+        #[test]
+        fn test_search_multiline_no_matches() {
+            let content = "foo\nbar\nbaz";
+            let search = SearchType::Fixed("not_found".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_search_multiline_with_path() {
+            let content = "test\ndata";
+            let path = Path::new("/test/file.txt");
+            let search = SearchType::Fixed("test".to_string());
+            let results = search_multiline(content, &search, Some(path));
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].path, Some(PathBuf::from("/test/file.txt")));
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_crlf() {
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results[0].lines,
+                vec![Line {
+                    content: "foo".to_string(),
+                    line_ending: LineEnding::CrLf,
+                },],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_lf() {
+            let content = "foo\nbar";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results[0].lines,
+                vec![Line {
+                    content: "foo".to_string(),
+                    line_ending: LineEnding::Lf,
+                },],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_none() {
+            let content = "foobar";
+            let search = SearchType::Fixed("foo".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results[0].lines,
+                vec![Line {
+                    content: "foobar".to_string(),
+                    line_ending: LineEnding::None,
+                },],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_spanning_three_lines() {
+            let content = "line1\nline2\nline3\nline4";
+            let search = SearchType::Fixed("ne1\nline2\nli".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number, 1);
+            assert_eq!(results[0].end_line_number, 3);
+            assert_eq!(results[0].path, None);
+            assert_eq!(results[0].included, true);
+            assert_eq!(
+                results[0].lines,
+                vec![
+                    Line {
+                        content: "line1".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                    Line {
+                        content: "line2".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                    Line {
+                        content: "line3".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ],
+            );
+        }
+
+        #[test]
+        fn test_search_multiline_pattern_at_end() {
+            let content = "start\npattern\nend";
+            let search = SearchType::Fixed("pattern\nend".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number, 2);
+            assert_eq!(results[0].end_line_number, 3);
+        }
+
+        #[test]
+        fn test_create_search_result_single_line_match() {
+            let content = "line1\nline2\nline3";
+            let line_index = LineIndex::new(content);
+
+            let result = create_search_result_from_bytes(6, 11, None, &line_index);
+
+            assert_eq!(result.start_line_number, 2);
+            assert_eq!(result.end_line_number, 2);
+            assert_eq!(
+                result.lines,
+                vec![Line {
+                    content: "line2".to_string(),
+                    line_ending: LineEnding::Lf,
+                }],
+            );
+        }
+
+        #[test]
+        fn test_create_search_result_multiline_match() {
+            let content = "line1\nline2\nline3";
+            let line_index = LineIndex::new(content);
+
+            let result = create_search_result_from_bytes(0, 11, None, &line_index);
+
+            assert_eq!(result.start_line_number, 1);
+            assert_eq!(result.end_line_number, 2);
+            assert_eq!(
+                result.lines,
+                vec![
+                    Line {
+                        content: "line1".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                    Line {
+                        content: "line2".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ],
+            );
         }
     }
 }

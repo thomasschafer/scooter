@@ -9,7 +9,7 @@ use scooter_core::{
 use scooter_core::{
     line_reader::LineEnding,
     replace::ReplaceResult,
-    search::{SearchResult, SearchResultWithReplacement},
+    search::{Line, SearchResult, SearchResultWithReplacement},
 };
 use std::{
     env::current_dir,
@@ -32,14 +32,16 @@ async fn test_replace_state() {
         num_ignored: 1,
         errors: (1..3)
             .map(|n| SearchResultWithReplacement {
-                search_result: SearchResult {
-                    path: Some(PathBuf::from(format!("error-{n}.txt"))),
-                    start_line_number: 1,
-                    end_line_number: 1,
-                    line: format!("line {n}"),
-                    line_ending: LineEnding::Lf,
-                    included: true,
-                },
+                search_result: SearchResult::new(
+                    Some(PathBuf::from(format!("error-{n}.txt"))),
+                    1,
+                    1,
+                    vec![Line {
+                        content: format!("line {n}"),
+                        line_ending: LineEnding::Lf,
+                    }],
+                    true,
+                ),
                 replacement: format!("error replacement {n}"),
                 replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
             })
@@ -397,14 +399,16 @@ async fn test_keymaps_results() {
         num_successes: 5,
         num_ignored: 2,
         errors: vec![SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("error.txt")),
-                start_line_number: 1,
-                end_line_number: 1,
-                line: "test line".to_string(),
-                line_ending: LineEnding::Lf,
-                included: true,
-            },
+            search_result: SearchResult::new(
+                Some(PathBuf::from("error.txt")),
+                1,
+                1,
+                vec![Line {
+                    content: "test line".to_string(),
+                    line_ending: LineEnding::Lf,
+                }],
+                true,
+            ),
             replacement: "replacement".to_string(),
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
         }],
