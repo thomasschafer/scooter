@@ -721,10 +721,9 @@ fn build_preview_from_str<'a>(
     // `num_lines_to_show - 1` because diff takes up 2 lines
     let (before, cur, after) =
         utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
-    assert!(
-        cur.1 == result.search_result.line,
-        "Expected line didn't match actual",
-    );
+    // TODO(multiline): update this for multiline
+    let expected_line = &result.search_result.content();
+    assert!(cur.1 == *expected_line, "Expected line didn't match actual",);
 
     let before = before.iter().map(|(_, l)| to_line_plain(l));
     let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
@@ -956,12 +955,15 @@ fn loading_lines<'a>(syntax_highlighting_theme: Option<&Theme>, true_colour: boo
 const LONG_LINE_THRESHOLD: usize = 5_000;
 
 fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
-    result
+    // Check if any line in the search result is long
+    let max_line_len = result
         .search_result
-        .line
-        .len()
-        .max(result.replacement.len())
-        > LONG_LINE_THRESHOLD
+        .lines
+        .iter()
+        .map(|l| l.content.len())
+        .max()
+        .unwrap_or(0);
+    max_line_len.max(result.replacement.len()) > LONG_LINE_THRESHOLD
 }
 
 fn build_preview_from_file<'a>(
@@ -1003,7 +1005,9 @@ fn build_preview_from_file<'a>(
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                if cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
+                // TODO(multiline): handle multiple lines correctly
+                let expected_line = &result.search_result.lines[0].content;
+                if cur.1.iter().map(|(_, s)| s).join("") != *expected_line {
                     bail!("File has changed since search (lines don't match)");
                 }
 
@@ -1041,7 +1045,9 @@ fn build_preview_from_file<'a>(
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                if cur.1 != result.search_result.line {
+                // TODO(multiline): handle multiple lines correctly
+                let expected_line = &result.search_result.lines[0].content;
+                if cur.1 != *expected_line {
                     bail!("File has changed since search (lines don't match)");
                 }
 
@@ -1099,7 +1105,8 @@ fn build_search_result_preview(
     result: &SearchResultWithReplacement,
     event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
-    let old_line = &result.search_result.line;
+    // TODO(multiline): handle mutliple lines correctly here
+    let old_line = result.search_result.content();
     let new_line = &result.replacement;
     let cache_key = (old_line.clone(), new_line.clone());
 
@@ -1121,7 +1128,7 @@ fn build_search_result_preview(
     spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
 
     // Return simple diff immediately
-    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
+    let (old_diffs, new_diffs) = simple_diff(&old_line, new_line);
     SearchResultPreview {
         old_line_diff: diff_to_line(old_diffs.iter()),
         new_line_diff: diff_to_line(new_diffs.iter()),
