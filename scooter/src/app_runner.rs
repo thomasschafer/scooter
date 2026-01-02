@@ -25,6 +25,7 @@ use scooter_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use std::{
     collections::HashMap,
     env,
+    fmt::Write as _,
     io::{self, Cursor, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -501,14 +502,11 @@ pub fn format_replacement_results(
     errors: Option<&[SearchResultWithReplacement]>,
 ) -> String {
     let errors_display = if let Some(errors) = errors {
-        #[allow(clippy::format_collect)]
-        errors
-            .iter()
-            .map(|error| {
-                let (path, error) = error.display_error();
-                format!("\n{path}:\n  {}", error.red())
-            })
-            .collect::<String>()
+        errors.iter().fold(String::new(), |mut acc, error| {
+            let (path, error) = error.display_error();
+            write!(acc, "\n{path}:\n  {}", error.red()).expect("failed to write error");
+            acc
+        })
     } else {
         String::new()
     };
