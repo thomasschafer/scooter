@@ -32,7 +32,7 @@ use crate::{
     replace::{add_replacement, replacement_if_match},
     search::Searcher,
     search::{
-        FileSearcher, Line, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
+        FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
         search_multiline,
     },
     utils::{Either, Either::Left, Either::Right, ceil_div},
@@ -1515,14 +1515,11 @@ impl<'a> App {
                                     .is_some()
                                 {
                                     let line_number = idx + 1;
-                                    let result = SearchResult::new(
+                                    let result = SearchResult::new_line(
                                         None,
                                         line_number,
-                                        line_number,
-                                        vec![Line {
-                                            content: line,
-                                            line_ending,
-                                        }],
+                                        line,
+                                        line_ending,
                                         true,
                                     );
                                     // Ignore error - likely state reset, thread about to be killed
@@ -1965,14 +1962,11 @@ mod tests {
     fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
         let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from("random/file")),
                 line_num,
-                line_num,
-                vec![Line {
-                    content: "foo".to_owned(),
-                    line_ending: LineEnding::Lf,
-                }],
+                "foo".to_owned(),
+                LineEnding::Lf,
                 included,
             ),
             replacement: "bar".to_owned(),
@@ -1983,14 +1977,11 @@ mod tests {
     fn build_test_results(num_results: usize) -> Vec<SearchResultWithReplacement> {
         (0..num_results)
             .map(|i| SearchResultWithReplacement {
-                search_result: SearchResult::new(
+                search_result: SearchResult::new_line(
                     Some(PathBuf::from(format!("test{i}.txt"))),
                     1,
-                    1,
-                    vec![Line {
-                        content: format!("test line {i}").to_string(),
-                        line_ending: LineEnding::Lf,
-                    }],
+                    format!("test line {i}").to_string(),
+                    LineEnding::Lf,
                     true,
                 ),
                 replacement: format!("replacement {i}").to_string(),
@@ -2093,14 +2084,11 @@ mod tests {
     fn success_result() -> SearchResultWithReplacement {
         let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from("random/file")),
                 line_num,
-                line_num,
-                vec![Line {
-                    content: "foo".to_owned(),
-                    line_ending: LineEnding::Lf,
-                }],
+                "foo".to_owned(),
+                LineEnding::Lf,
                 true,
             ),
             replacement: "bar".to_owned(),
@@ -2111,14 +2099,11 @@ mod tests {
     fn ignored_result() -> SearchResultWithReplacement {
         let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from("random/file")),
                 line_num,
-                line_num,
-                vec![Line {
-                    content: "foo".to_owned(),
-                    line_ending: LineEnding::Lf,
-                }],
+                "foo".to_owned(),
+                LineEnding::Lf,
                 false,
             ),
             replacement: "bar".to_owned(),
@@ -2129,14 +2114,11 @@ mod tests {
     fn error_result() -> SearchResultWithReplacement {
         let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from("random/file")),
                 line_num,
-                line_num,
-                vec![Line {
-                    content: "foo".to_owned(),
-                    line_ending: LineEnding::Lf,
-                }],
+                "foo".to_owned(),
+                LineEnding::Lf,
                 true,
             ),
             replacement: "bar".to_owned(),
