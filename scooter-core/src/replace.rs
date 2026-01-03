@@ -25,6 +25,25 @@ use crate::{
     search::{self, FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
 };
 
+#[cfg(unix)]
+fn create_temp_file_in_with_permissions(
+    parent_dir: &Path,
+    original_file_path: &Path,
+) -> anyhow::Result<NamedTempFile> {
+    let original_permissions = fs::metadata(original_file_path)?.permissions();
+    let temp_file = NamedTempFile::new_in(parent_dir)?;
+    fs::set_permissions(temp_file.path(), original_permissions)?;
+    Ok(temp_file)
+}
+
+#[cfg(not(unix))]
+fn create_temp_file_in_with_permissions(
+    parent_dir: &Path,
+    _original_file_path: &Path,
+) -> anyhow::Result<NamedTempFile> {
+    Ok(NamedTempFile::new_in(parent_dir)?)
+}
+
 pub fn split_results(
     results: Vec<SearchResultWithReplacement>,
 ) -> (Vec<SearchResultWithReplacement>, usize) {
@@ -257,7 +276,7 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
 
     let file_path = file_path.expect("File path must be present when searching in files");
     let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = NamedTempFile::new_in(parent_dir)?;
+    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, &file_path)?;
 
     // Scope the file operations so they're closed before rename
     {
@@ -373,7 +392,7 @@ fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> an
     let content = fs::read_to_string(file_path)?;
     if let Some(new_content) = replacement_if_match(&content, search, replace) {
         let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-        let mut temp_file = NamedTempFile::new_in(parent_dir)?;
+        let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
         temp_file.write_all(new_content.as_bytes())?;
         temp_file.persist(file_path)?;
         Ok(true)
@@ -2800,6 +2819,88 @@ mod tests {
                 replacement_if_match("calcλ123", &parsed.search, &parsed.replace),
                 None
             );
+        }
+    }
+
+    #[cfg(unix)]
+    mod permission_preservation_tests {
+        use std::os::unix::fs::PermissionsExt;
+
+        use super::*;
+
+        const MODE_PERMISSIONS_MASK: u32 = 0o777;
+
+        fn assert_permissions_preserved(file_path: &Path, expected_mode: u32) {
+            let final_perms = std::fs::metadata(file_path).unwrap().permissions();
+            assert_eq!(final_perms.mode() & MODE_PERMISSIONS_MASK, expected_mode);
+        }
+
+        #[test]
+        fn test_replace_in_file_preserves_permissions() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "old text\n");
+            std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+            let mut results = vec![create_search_result_with_replacement(
+                file_path.to_str().unwrap(),
+                1,
+                "old text",
+                "new text",
+                true,
+                None,
+            )];
+
+            replace_in_file(&mut results).unwrap();
+            assert_permissions_preserved(&file_path, 0o644);
+        }
+
+        #[test]
+        fn test_replace_in_memory_preserves_permissions() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "old text\n");
+            std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            let result = replace_in_memory(&file_path, &fixed_search("old"), "new").unwrap();
+            assert!(result);
+            assert_permissions_preserved(&file_path, 0o755);
+        }
+
+        #[test]
+        fn test_replace_preserves_restrictive_permissions() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "old text\n");
+            std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+            let mut results = vec![create_search_result_with_replacement(
+                file_path.to_str().unwrap(),
+                1,
+                "old text",
+                "new text",
+                true,
+                None,
+            )];
+
+            replace_in_file(&mut results).unwrap();
+            assert_permissions_preserved(&file_path, 0o600);
+        }
+
+        #[test]
+        fn test_replace_preserves_permissive_permissions() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "old text\n");
+            std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+            let mut results = vec![create_search_result_with_replacement(
+                file_path.to_str().unwrap(),
+                1,
+                "old text",
+                "new text",
+                true,
+                None,
+            )];
+
+            replace_in_file(&mut results).unwrap();
+            assert_permissions_preserved(&file_path, 0o777);
         }
     }
 }
