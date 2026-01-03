@@ -1,7 +1,7 @@
 # TUI Multiline Search & Replace Implementation Plan
 
-**Status**: In Progress
-**Last Updated**: 2025-12-30
+**Status**: Phase 2 Ready to Start
+**Last Updated**: 2026-01-03
 
 ---
 
@@ -11,20 +11,12 @@ This plan addresses the missing TUI functionality for multiline search and repla
 
 ## Issues Found
 
-1. ❌ **Replacement execution** - `replace_in_file()` can't handle multiline matches (line-by-line processing)
-2. ❌ **Conflict detection** - No detection of overlapping line ranges
-3. ❌ **Preview validation** - Compares single line vs multiline content (always fails)
-4. ❌ **Preview rendering** - Only centers on start line, doesn't show full match
-5. ❌ **Results display** - Only shows start line number (no multiline indication)
-
----
-
-## Phase 0: Setup ✅
-
-**Status**: ✅ COMPLETE
-
-- ✅ Created this plan document
-- ✅ Set up todo tracking
+1. ✅ **Replacement execution** - Fixed in Phase 1
+2. ✅ **Conflict detection** - Fixed in Phase 1
+3. ⏳ **Within-line replacement** - Phase 2 (in progress)
+4. ⏳ **Preview validation** - Phase 3 (TUI only)
+5. ⏳ **Preview rendering** - Phase 4 (TUI only)
+6. ⏳ **Results display** - Phase 5 (TUI only)
 
 ---
 
@@ -34,118 +26,7 @@ This plan addresses the missing TUI functionality for multiline search and repla
 
 **Goal**: Make replacements actually work with proper conflict handling
 
-**Key Insight from User's Commit**: SearchResult now stores **complete lines** (`lines: Vec<Line>`), not just matched text. Each `Line` has `content` (without line ending) and `line_ending` separate. The `content()` method reconstructs the full text by concatenating all lines with their endings.
-
-**Key Design Decision**: Single-line and multiline replacements can use the SAME code path. Multiline is just a generalization of single-line (where start_line == end_line). No need for two separate functions or in-memory loading.
-
-### Implementation Plan
-
-**File**: `scooter-core/src/replace.rs` - modify `replace_in_file()` function
-
-#### Step 1: Upfront conflict detection (before file I/O)
-
-Sort results by `start_line_number`, then mark conflicts in single O(n) pass:
-
-```rust
-results.sort_by_key(|r| r.search_result.start_line_number);
-
-let mut last_end_line = 0;
-for result in results.iter_mut() {
-    let start = result.search_result.start_line_number;
-    let end = result.search_result.end_line_number;
-
-    if start <= last_end_line {
-        // This replacement starts within or overlaps with previous range
-        result.replace_result = Some(ReplaceResult::Error(
-            "Conflicts with previous replacement".to_owned(),
-        ));
-    } else {
-        last_end_line = end;
-    }
-}
-```
-
-**Why this works**: After sorting by start line, if replacement N starts at line ≤ last_end_line, it MUST conflict with a previous replacement. O(n) pass marks all conflicts.
-
-**Conflict example** (lines 9-11, 10-13, 12-12 after sorting):
-- 9-11: start=9 > last_end(0) → OK, set last_end=11
-- 10-13: start=10 ≤ last_end(11) → CONFLICT
-- 12-12: start=12 > last_end(11) → OK, set last_end=12
-
-#### Step 2: Streaming line-by-line replacement (handles both single and multiline)
-
-```rust
-// Build map of non-conflicting replacements by start line
-let mut replacement_map: HashMap<usize, &mut SearchResultWithReplacement> = results
-    .iter_mut()
-    .filter(|r| r.replace_result.is_none())
-    .map(|r| (r.search_result.start_line_number, r))
-    .collect();
-
-let mut lines_iter = reader.lines_with_endings().enumerate();
-
-while let Some((idx, line_result)) = lines_iter.next() {
-    let line_number = idx + 1; // 1-indexed
-
-    if let Some(result) = replacement_map.get_mut(&line_number) {
-        // This line starts a replacement (single or multiline)
-        let end_line = result.search_result.end_line_number;
-        let num_lines = end_line - line_number + 1;
-
-        // Accumulate all lines for this match
-        let (first_line, first_ending) = line_result?;
-        let mut actual_lines = vec![Line {
-            content: String::from_utf8(first_line)?,
-            line_ending: first_ending,
-        }];
-
-        // Read additional lines if multiline (num_lines > 1)
-        for _ in 1..num_lines {
-            if let Some((_, next_result)) = lines_iter.next() {
-                let (line_bytes, ending) = next_result?;
-                actual_lines.push(Line {
-                    content: String::from_utf8(line_bytes)?,
-                    line_ending: ending,
-                });
-            } else {
-                // File shorter than expected
-                result.replace_result = Some(ReplaceResult::Error(
-                    "File changed since last search".to_owned(),
-                ));
-                break;
-            }
-        }
-
-        // Validate: actual lines match expected
-        if actual_lines == result.search_result.lines {
-            writer.write_all(result.replacement.as_bytes())?;
-            result.replace_result = Some(ReplaceResult::Success);
-        } else {
-            result.replace_result = Some(ReplaceResult::Error(
-                "File changed since last search".to_owned(),
-            ));
-            // Write original lines (file validation failed)
-            for line in &actual_lines {
-                writer.write_all(line.content.as_bytes())?;
-                writer.write_all(line.line_ending.as_bytes())?;
-            }
-        }
-    } else {
-        // No replacement for this line, copy as-is
-        let (line_bytes, line_ending) = line_result?;
-        writer.write_all(&line_bytes)?;
-        writer.write_all(line.line_ending.as_bytes())?;
-    }
-}
-```
-
-**Why this approach is better**:
-1. ✅ Streaming - no need to read entire file into memory
-2. ✅ Single unified code path for both single-line and multiline
-3. ✅ No LineIndex or byte-offset calculations needed
-4. ✅ O(n) conflict detection upfront (simpler than checking overlaps)
-5. ✅ Natural line ending handling via `lines_with_endings()`
-6. ✅ Iterator naturally skips past consumed lines (when we call `.next()` multiple times for multiline matches)
+**Summary**: Implemented streaming replacement logic that handles both single-line and multiline matches in a unified code path. Uses O(n) upfront conflict detection and consumes lines from iterator as needed for multiline matches.
 
 ### Unit Tests Added
 
@@ -163,366 +44,251 @@ while let Some((idx, line_result)) = lines_iter.next() {
 - ✅ Single multiline replacement (`test_single_multiline_replacement`)
 - ✅ Overlapping ranges (`test_conflict_overlapping_ranges`)
 
-### Testing Checkpoint
+### Byte-indexed Conflict Detection
 
-**Manual TUI testing** (by user):
-- [ ] Multiline replacements actually work (file is modified correctly)
-- [ ] Conflicting replacements show error message  
-- [ ] Non-conflicting replacements succeed
-- [ ] Preview rendering issues OK to ignore for now (Phase 2-3)
+**Status**: ✅ COMPLETE
+**Goal**: Support multiple matches on same line by tracking byte offsets
 
-**Approval**: ⏸️ WAITING FOR MANUAL TUI TESTING AND APPROVAL
+**Key changes**:
+- Added `byte_offsets: Option<(usize, usize)>` to SearchResult
+- `Some((start, end))` = multiline mode with byte tracking
+- `None` = line-mode (spans whole line)
+- Updated conflict detection with dual-mode logic (byte-level or line-level)
 
-### Phase 1 follow-up: Byte-indexed replacements
+**Tests**:
+- ✅ 19 conflict detection tests covering all mode combinations
+- ✅ 5 TDD tests written for Phase 2 (currently ignored)
 
-**Status**: ✅ INVESTIGATION COMPLETE - Ready for implementation
-**Goal**: Fix conflict detection for multiple matches on same line by tracking byte offsets
+---
 
-**Problem discovered**:
-When multiple matches occur on the same line (e.g., searching for "bar" in "bar baz bar qux"), the current implementation incorrectly marks the second match as conflicting, even though they occur at different byte offsets.
+## Phase 2: Within-line Replacement Implementation
 
-Example:
-```txt
-foo
-bar baz bar qux
-bar
-bux
+**Status**: ⏳ NOT STARTED - Critical bugs discovered and diagnosed via logging
+**Goal**: Enable multiple replacements on the same line using byte offsets
+
+**TL;DR**: Two bugs conspire to make it LOOK like it works, but tracking is broken:
+1. **Bug #1 (app.rs)**: `replace_all()` gives every match the full-line replacement string
+2. **Bug #2 (replace.rs)**: HashMap keeps only last match per line, but it has the full-line string from Bug #1
+3. **Result**: File is correct, but 5/7 matches show errors ("Failed to find search result in file")
+4. **Fix**: Calculate individual replacement strings + use Vec instead of HashMap
+
+**Background**:
+Phase 1 added byte offsets to `SearchResult` and implemented dual-mode conflict detection. However, there are TWO bugs preventing proper within-line replacement:
+
+### Bug #1: Replacement string calculation (app.rs:816-818)
+
+**Problem discovered via logging**: When multiple matches exist on the same line, `update_replacements` calls `replacement_if_match` with the FULL line content for each match. The function uses `.replace_all()` which replaces ALL occurrences, so every SearchResultWithReplacement gets the same fully-replaced line string.
+
+**Example**: Searching for "it" in "it it it\n  it it it it\n" with replacement "ITREPLACED":
+- Match 1 (line 1, bytes 0-1): replacement = "ITREPLACED ITREPLACED ITREPLACED\n"
+- Match 2 (line 1, bytes 3-4): replacement = "ITREPLACED ITREPLACED ITREPLACED\n" (same!)
+- Match 3 (line 1, bytes 6-7): replacement = "ITREPLACED ITREPLACED ITREPLACED\n" (same!)
+- Matches 4-7 on line 2: all get "  ITREPLACED ITREPLACED ITREPLACED ITREPLACED\n"
+
+**Current code flow**:
+```rust
+// app.rs:816
+let content = res.search_result.content(); // Full line(s) content
+match replacement_if_match(&content, file_searcher.search(), file_searcher.replace()) {
+    Some(replacement) => res.replacement = replacement, // BUG: replace_all replaces ALL matches
+    ...
+}
+
+// replace.rs:558-560
+SearchType::Fixed(fixed_str) => line.replace(fixed_str, replace), // Replaces ALL
+SearchType::Pattern(pattern) => pattern.replace_all(line, replace).to_string(), // Replaces ALL
 ```
 
-Searching for "bar" finds 3 matches:
-1. Line 2, bytes 4-7
-2. Line 2, bytes 12-15
-3. Line 3, bytes 20-23
+### Bug #2: HashMap keyed by line number (replace.rs:348-352)
 
-**Current buggy behavior**: Match #2 incorrectly conflicts with #1 ❌
-**Expected behavior**: All 3 matches should succeed ✅
-
-**Root cause**: `mark_conflicting_replacements` only checks line numbers, not byte offsets.
-
-**Solution**: Add byte offsets to `SearchResult`
-
-#### Changes Required:
-
-**1. Update SearchResult struct** (`scooter-core/src/search.rs:49`):
+**Problem**: When multiple matches exist on the same line, the HashMap construction keeps only the LAST match:
 ```rust
-pub struct SearchResult {
-    pub path: Option<PathBuf>,
-    pub start_line_number: usize,
-    pub end_line_number: usize,
-    pub start_byte_offset: usize,  // NEW: 0-indexed byte offset within file
-    pub end_byte_offset: usize,    // NEW: 0-indexed byte offset within file
-    pub lines: Vec<Line>,
-    pub included: bool,
+let mut line_map = results
+    .iter_mut()
+    .filter(|r| r.replace_result.is_none())
+    .map(|r| (r.search_result.start_line_number, r))
+    .collect::<HashMap<_, _>>();  // BUG: Duplicate keys, only last wins
+```
+
+**Why it appears to work**: The last match's replacement string ALREADY contains all replacements (Bug #1), so writing it produces the correct file. But the other matches never get their `replace_result` set, causing "Failed to find search result in file" errors.
+
+**Test results** (from user):
+```
+Successful replacements (lines): 2  ← Only 2 matches tracked (1 per line)
+Errors: 5  ← Other 5 matches not in HashMap
+tmp.txt: ITREPLACED ITREPLACED ITREPLACED  ← But file is correct!
+```
+
+### Implementation Plan
+
+### Step 1: Update `update_replacements` in app.rs (Fix Bug #1)
+
+**File**: `scooter-core/src/app.rs` line ~816
+
+**Current code**:
+```rust
+let content = res.search_result.content();
+match replacement_if_match(&content, file_searcher.search(), file_searcher.replace()) {
+    Some(replacement) => res.replacement = replacement,
+    None => return EventHandlingResult::Rerender,
 }
 ```
 
-**2. Update `create_search_result_from_bytes`** (already has the byte data!):
-- Just pass through `start_byte` and `end_byte` to `SearchResult::new`
-
-**3. Update `search_file` (line-by-line mode)**:
-- For non-multiline mode, set `start_byte_offset = 0` and `end_byte_offset = usize::MAX` (or line length)
-- This way byte-level conflict detection won't trigger for line-by-line mode
-
-**4. Update conflict detection** (`mark_conflicting_replacements`):
+**New code**:
 ```rust
-fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
-    // Sort by byte offset instead of line number
-    let mut last_end_byte = 0;
-    for result in results {
-        let start = result.search_result.start_byte_offset;
-        let end = result.search_result.end_byte_offset;
+let replacement = if let Some((start_byte, end_byte)) = res.search_result.byte_offsets {
+    // Multiline/byte-mode: replace only the matched substring
+    let content = res.search_result.content();
+    let matched_text = &content[start_byte..=end_byte];
+    // Apply replacement to just this match
+    match file_searcher.search() {
+        SearchType::Fixed(_) => file_searcher.replace().to_string(),
+        SearchType::Pattern(p) => p.replace(matched_text, file_searcher.replace()).to_string(),
+        SearchType::PatternAdvanced(p) => p.replace(matched_text, file_searcher.replace()).to_string(),
+    }
+} else {
+    // Line-mode: replace all occurrences in the line (preserve current behavior)
+    let content = res.search_result.content();
+    match replacement_if_match(&content, file_searcher.search(), file_searcher.replace()) {
+        Some(r) => r,
+        None => return EventHandlingResult::Rerender,
+    }
+};
+res.replacement = replacement;
+```
 
-        if start < last_end_byte {  // Byte-level overlap
-            result.replace_result = Some(ReplaceResult::Error(
-                "Conflicts with previous replacement".to_owned(),
-            ));
-        } else {
-            last_end_byte = end;
+**Critical**: This preserves non-multiline behavior where `.replace_all()` is correct!
+
+### Step 2: Refactor `replace_in_file` to handle multiple per line (Fix Bug #2)
+
+**File**: `scooter-core/src/replace.rs` line ~348
+
+**Current code**:
+```rust
+let mut line_map = results
+    .iter_mut()
+    .filter(|r| r.replace_result.is_none())
+    .map(|r| (r.search_result.start_line_number, r))
+    .collect::<HashMap<_, _>>(); // BUG: only keeps last per line
+```
+
+**New code**:
+```rust
+// Build map: line_number -> Vec<replacement> (sorted right-to-left)
+let mut line_map: HashMap<usize, Vec<&mut SearchResultWithReplacement>> = HashMap::new();
+for result in results.iter_mut().filter(|r| r.replace_result.is_none()) {
+    line_map
+        .entry(result.search_result.start_line_number)
+        .or_default()
+        .push(result);
+}
+
+// Sort each line's replacements by byte offset in REVERSE (right-to-left)
+for replacements in line_map.values_mut() {
+    replacements.sort_by_key(|r| {
+        std::cmp::Reverse(r.search_result.byte_offsets.map(|(start, _)| start))
+    });
+}
+```
+
+### Step 3: Update replacement logic to apply multiple per line
+
+**In the file processing loop**, handle both cases:
+```rust
+if let Some(mut replacements) = line_map.remove(&line_number) {
+    // Read the line(s)
+    let num_lines = replacements[0].search_result.end_line_number - line_number + 1;
+    let mut actual_lines = vec![...]; // existing line reading logic
+
+    if replacements.len() == 1 && replacements[0].search_result.byte_offsets.is_none() {
+        // Line-mode: single replacement for entire line(s) - existing behavior
+        // (validation + write replacement logic as before)
+    } else {
+        // Byte-mode: multiple replacements on same line, apply right-to-left
+        let mut line_content = actual_lines[0].content.clone();
+
+        for res in replacements {
+            if let Some((start, end)) = res.search_result.byte_offsets {
+                line_content.replace_range(start..=end, &res.replacement);
+                res.replace_result = Some(ReplaceResult::Success);
+            } else {
+                // Should be caught by conflict detection
+                res.replace_result = Some(ReplaceResult::Error(...));
+            }
         }
+
+        writer.write_all(line_content.as_bytes())?;
+        writer.write_all(actual_lines[0].line_ending.as_bytes())?;
     }
 }
 ```
 
-**5. Update replacement logic** to handle multiple matches per line:
-- Group replacements by line
-- Within each line, sort by byte offset in REVERSE order
-- Apply replacements right-to-left so byte offsets remain valid
-- This is only needed for multiline mode; line-by-line mode continues as before
+### Step 4: Enable TDD tests
 
-#### Benefits:
-- ✅ Fixes multiple matches per line
-- ✅ Enables precise diff highlighting (future enhancement)
-- ✅ Aligns with how regex engines work
-- ✅ No breaking changes for binary users (only affects `--multiline` flag behavior)
+Remove `#[ignore]` from the 5 Phase 2 tests and verify they all pass.
 
-#### Tests Added:
-- ✅ `search::tests::test_multiple_matches_per_line` - verifies search finds all 3
-- ✅ `replace::tests::test_multiple_matches_same_line_shows_conflict` - demonstrates the bug
-
-#### Tests To Add After Fix:
-- [ ] `test_multiple_matches_same_line_all_replaced` - verify all get replaced
-- [ ] `test_three_matches_same_line`
-- [ ] `test_multiple_matches_across_lines_and_within_lines`
+### Expected Results After Fix:
+- ✅ All 7 matches tracked individually
+- ✅ Each gets correct individual replacement string ("ITREPLACED", not full line)
+- ✅ All 7 marked as Success
+- ✅ File correctly shows all replacements
+- ✅ Non-multiline mode unchanged
 
 ---
 
-## Phase 2: Fix Preview Validation
+## Phase 3-5: TUI-Specific Fixes
 
-**Status**: ⏳ NOT STARTED (blocked on Phase 1 approval)
+**Status**: ⏳ NOT STARTED - TUI-only fixes, lower priority
 
-**Goal**: Stop "File changed since search" errors for multiline matches
+These phases fix TUI preview and display issues. The core replacement logic works correctly.
 
-**Updated approach based on SearchResult.lines structure**:
-- User already added TODO comments in view.rs showing where updates are needed
-- Now that we understand SearchResult stores complete lines, validation should compare:
-  - Extract lines from file using line numbers
-  - Compare against `search_result.lines` (Vec<Line>) instead of reconstructing from single line
-- The `content()` method can be used for simple string comparison when appropriate
+### Phase 3: Preview Validation
+- Fix: Extract multiline content for validation instead of single line
+- Files: `scooter/src/ui/view.rs` (~lines 723-727, 999-1007, 1037-1045)
 
-### Step 2a: Fix stdin preview validation
+### Phase 4: Preview Window Rendering
+- Fix: Calculate window to include all lines of multiline match
+- Files: `scooter/src/ui/view.rs` (~lines 714, 983)
 
-**File**: `scooter/src/ui/view.rs` (~lines 723-727)
-
-**Current problem**:
-```rust
-assert!(
-    cur.1 == result.search_result.line,  // cur.1 is single line, line is multiline
-    "Expected line didn't match actual",
-);
-```
-
-**Implementation plan**:
-- Extract lines `[start_line_number..=end_line_number]` from content
-- Join with newlines
-- Compare against `search_result.line`
-
-### Step 2b: Fix file preview validation
-
-**File**: `scooter/src/ui/view.rs` (~lines 999-1007, ~1037-1045)
-
-**Implementation plan**: Same multiline extraction approach
-
-### Unit Tests to Add
-
-- [ ] Validation passes for multiline matches
-- [ ] Validation still works for single-line matches
-- [ ] Different line ending types (LF, CRLF)
-
-### Testing Checkpoint
-
-**Unit tests**:
-- [ ] All new tests pass
-- [ ] Existing tests still pass
-
-**Manual TUI testing** (by user):
-- [ ] No false "File changed" errors for multiline matches
-- [ ] Preview content appears (even if window is wrong)
-
-**Approval**: ⏸️ WAITING FOR USER APPROVAL
+### Phase 5: Results Display Polish
+- Fix: Show line ranges (`:5-8`) instead of just start line (`:5`)
+- Files: `scooter/src/ui/view.rs` (~line 1193)
 
 ---
 
-## Phase 3: Fix Preview Window Rendering
+## Key Design Decisions
 
-**Status**: ⏳ NOT STARTED (blocked on Phase 2 approval)
-
-**Goal**: Show full multiline match in preview
-
-### Step 3a: Fix stdin preview window
-
-**File**: `scooter/src/ui/view.rs` (~line 714)
-
-**Current problem**:
-```rust
-let line_idx = result.search_result.start_line_number - 1;
-// Only uses start_line, doesn't consider end_line
-```
-
-**Implementation plan**:
-- Calculate window to include both `start_line_number` and `end_line_number`
-- Ensure all lines of match are visible
-
-### Step 3b: Fix file preview window
-
-**File**: `scooter/src/ui/view.rs` (~line 983)
-
-**Implementation plan**: Same window calculation
-
-### Unit Tests to Add
-
-- [ ] Window includes all lines of multiline match
-- [ ] Window calculation for various match sizes (2 lines, 5 lines, etc.)
-- [ ] Window at start/end of file
-
-### Testing Checkpoint
-
-**Unit tests**:
-- [ ] All new tests pass
-- [ ] Existing tests still pass
-
-**Manual TUI testing** (by user):
-- [ ] Full multiline matches visible in preview
-- [ ] Preview window centers appropriately
-
-**Approval**: ⏸️ WAITING FOR USER APPROVAL
-
----
-
-## Phase 4: Polish Results Display
-
-**Status**: ⏳ NOT STARTED (blocked on Phase 3 approval)
-
-**Goal**: Show line ranges for multiline matches
-
-### Step 4: Update results list display
-
-**File**: `scooter/src/ui/view.rs` (~line 1193)
-
-**Current problem**:
-```rust
-let line_num = format!(":{}", result.search_result.start_line_number);
-// Only shows start line
-```
-
-**Implementation plan**:
-```rust
-let line_num = if result.search_result.start_line_number == result.search_result.end_line_number {
-    format!(":{}", result.search_result.start_line_number)
-} else {
-    format!(":{}-{}", result.search_result.start_line_number, result.search_result.end_line_number)
-};
-```
-
-### Unit Tests to Add
-
-- [ ] Single-line match shows `:5`
-- [ ] Multiline match shows `:5-8`
-
-### Testing Checkpoint
-
-**Unit tests**:
-- [ ] All new tests pass
-- [ ] Existing tests still pass
-
-**Manual TUI testing** (by user):
-- [ ] Results list shows line ranges (e.g., `:5-8`)
-- [ ] Single-line matches still show correctly
-
-**Approval**: ⏸️ WAITING FOR USER APPROVAL
-
----
-
-## Phase 5: Full E2E Testing
-
-**Status**: ⏳ NOT STARTED (blocked on Phase 4 approval)
-
-**Goal**: Verify everything works together
-
-### Test Scenarios
-
-**Pattern variations**:
-- [ ] 2-line matches
-- [ ] 3+ line matches
-- [ ] Regex patterns spanning lines
-- [ ] Fixed string patterns spanning lines
-
-**Edge cases**:
-- [ ] Matches at start of file
-- [ ] Matches at end of file
-- [ ] Adjacent matches (no gap)
-- [ ] Matches with gaps
-
-**Conflict scenarios**:
-- [ ] Overlapping matches
-- [ ] Nested matches
-- [ ] Adjacent but non-overlapping
-
-**Performance**:
-- [ ] Large files with many multiline matches
-- [ ] Files with 100+ results
-
-### Testing Checkpoint
-
-**Manual TUI testing** (by user):
-- [ ] All scenarios work correctly
-- [ ] Performance is acceptable
-- [ ] No crashes or errors
-
-**Approval**: ⏸️ WAITING FOR USER APPROVAL
-
----
-
-## Notes & Discovered Issues
-
-### Phase 1 Implementation Notes (2026-01-02)
-
-**Key Architectural Change Discovered**:
-User's commit "Include multiple lines in search result" fundamentally changed how SearchResult works:
-- **Old**: `line: String` - just the matched text
-- **New**: `lines: Vec<Line>` - ALL complete lines that the match touches
-- Each `Line` = `{content: String, line_ending: LineEnding}`
+### SearchResult Structure
+- `lines: Vec<Line>` stores complete lines that the match touches
+- Each `Line` has `content` (without line ending) and `line_ending` separate
 - `content()` method reconstructs full text by joining lines with their endings
+- Design principle: "Scooter operates on lines, so we should always include all lines"
 
-**Scooter Design Principle Confirmed**:
-"Scooter operates on lines, so we should always include all lines" - user
-- When a pattern matches part of a line, the ENTIRE line is included in the replacement
-- This is consistent with how TUI shows results and what users expect
+### Replacement Approach
+- **Streaming**: No need to load entire file into memory
+- **Unified code path**: Single-line and multiline use same logic
+- **Iterator consumption**: Read multiline matches by calling `.next()` multiple times
+- **O(n) conflict detection**: After sorting, if `start <= last_end`, it's a conflict
 
-**Why conflict detection is necessary**:
-- User can select overlapping multiline matches in TUI
-- Example: matches at lines 9-11, 10-13, 12-12
-- First match succeeds, second conflicts (overlaps), third succeeds (no overlap)
-- Without conflict detection, would try to replace already-modified content
-
-**Evolution of Implementation Approach**:
-
-1. **First attempt (rejected)**: Byte-offset approach
-   - Read file into memory, build line-to-byte map, extract byte ranges
-   - Too complicated - SearchResult stores complete lines, not byte ranges
-
-2. **Second attempt (rejected)**: LineIndex + in-memory
-   - Read entire file into memory, use `search::LineIndex` to extract lines
-   - Overcomplicated - why read entire file when we can stream?
-   - User pointed out: "Can't we just iterate upwards over lines?"
-
-3. **Final approach (current plan)**: Streaming with iterator consumption
-   - Single code path for both single-line and multiline (multiline is the generalization)
-   - Consume lines from iterator as we go: when we hit a multiline match spanning lines 9-11, call `.next()` three times
-   - No need for in-memory loading, LineIndex, or separate code paths
-   - O(n) upfront conflict detection: after sorting, if start ≤ last_end, it's a conflict
-   - Much simpler and more elegant!
-
-**Critical Line Ending Design Decision**:
-During implementation, discovered that replacements must be written **as-is** with no automatic line ending manipulation:
-- Users have complete control over line structure by including/excluding `\n` in replacement strings
-- Example: replacing lines 9-11 with `"x"` (no newline) allows line 12 to concatenate: `"foo\nxbar\n"`
-- This enables n != m line replacements (replace 3 lines with 1, or 1 line with 4)
-- Test helper writes replacements exactly as provided
-
-**Implementation completed**:
-- ✅ Streaming approach implemented in `replace_in_file()` (scooter-core/src/replace.rs:247-362)
-- ✅ 12 comprehensive unit tests added and passing
-- ✅ Test helper consolidated: `create_search_result_with_replacement()` handles both single and multiline
-
-**Next steps**:
-- ⏸️ User will test manually in TUI
-- ⏸️ If issues found, iterate on the implementation
-- ⏸️ Once approved, proceed to Phase 2 (preview validation)
+### Line Endings
+- Replacements written **as-is** with no automatic line ending manipulation
+- Users control line structure by including/excluding `\n` in replacement strings
+- Enables n != m line replacements (replace 3 lines with 1, or vice versa)
 
 ---
 
-## Completion Checklist
+## Status Summary
 
-- ⏳ Phase 1: Replacement + conflicts (basic implementation complete, byte-indexed fix needed)
-  - ✅ Basic multiline replacement working
-  - ✅ Conflict detection for overlapping line ranges
-  - ⏳ Byte-indexed replacements for multiple matches per line
-- [ ] Phase 2: Preview validation
-- [ ] Phase 3: Preview rendering
-- [ ] Phase 4: Display polish
-- [ ] Phase 5: E2E testing
-- ✅ Phase 1 basic unit tests passing (13/13 tests)
-- [ ] Phase 1 byte-indexed tests
-- [ ] All manual tests passing
-- [ ] No regressions in existing functionality
-- [ ] Documentation updated (if needed)
+**Phase 1**: ✅ COMPLETE
+- Multiline replacement working
+- Conflict detection (line-level and byte-level)
+- 330 tests passing, 5 TDD tests for Phase 2
+
+**Phase 2**: ⏳ READY TO START
+- Fix replacement string calculation (app.rs)
+- Fix HashMap to handle multiple per line (replace.rs)
+- Enable 5 ignored TDD tests
+
+**Phase 3-5**: ⏳ NOT STARTED
+- TUI-only fixes (preview validation, rendering, display)
+- Lower priority - core logic works

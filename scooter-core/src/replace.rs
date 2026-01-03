@@ -259,21 +259,51 @@ pub enum ReplaceResult {
     Error(String),
 }
 
-/// Sorts by start line and detects conflicting replacements and adds an error replace result
+/// Sorts by byte offset and detects conflicting replacements.
+///
+/// Replacements conflict if they overlap:
+/// - With byte offsets: checks byte-level overlap (allows multiple matches per line)
+/// - Without byte offsets: checks line-level overlap
 fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
-    results.sort_by_key(|r| r.search_result.start_line_number);
+    // Sort by line number, then by byte offset if available
+    results.sort_by_key(|r| {
+        (
+            r.search_result.start_line_number,
+            r.search_result.byte_offsets.map(|(start, _)| start),
+        )
+    });
 
     let mut last_end_line = 0;
-    for result in results {
-        let start = result.search_result.start_line_number;
-        let end = result.search_result.end_line_number;
+    let mut last_end_byte: Option<usize> = None;
 
-        if start <= last_end_line {
+    for result in results {
+        let start_line = result.search_result.start_line_number;
+        let end_line = result.search_result.end_line_number;
+
+        let conflict = if let Some((start_byte, _)) = result.search_result.byte_offsets {
+            // With byte offsets: check byte-level overlap if previous had byte offsets,
+            // or line-level overlap if previous was line-mode (last_end_byte is None)
+            last_end_byte.map_or(
+                // Previous was line-mode: check line overlap
+                start_line <= last_end_line,
+                // Previous had byte offsets: check byte overlap
+                |last_end| start_byte <= last_end,
+            )
+        } else {
+            // Without byte offsets: check line-level overlap
+            start_line <= last_end_line
+        };
+
+        if conflict {
             result.replace_result = Some(ReplaceResult::Error(
                 "Conflicts with previous replacement".to_owned(),
             ));
         } else {
-            last_end_line = end;
+            last_end_byte = result
+                .search_result
+                .byte_offsets
+                .map(|(_, end_byte)| end_byte);
+            last_end_line = end_line;
         }
     }
 }
@@ -581,14 +611,11 @@ mod tests {
         full_replacement.push_str(line_ending.as_str());
 
         SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from(path)),
                 line_number,
-                line_number,
-                vec![Line {
-                    content: line.to_string(),
-                    line_ending,
-                }],
+                line.to_string(),
+                line_ending,
                 included,
             ),
             replacement: full_replacement,
@@ -3173,6 +3200,7 @@ mod tests {
 
     mod multiline_replace_tests {
         use super::*;
+        use crate::search::search_multiline;
 
         fn create_search_result_with_replacement(
             path: &str,
@@ -3194,6 +3222,7 @@ mod tests {
                     Some(PathBuf::from(path)),
                     start_line,
                     end_line,
+                    None,
                     lines,
                     true,
                 ),
@@ -3368,6 +3397,301 @@ mod tests {
 
             let expected = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nFIRST\nTHIRD\nline 13\nline 14\nline 15\n";
             assert_file_content(&file_path, expected);
+        }
+
+        #[test]
+        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
+        fn test_conflict_detection_byte_offsets_no_overlap() {
+            // Test that non-overlapping byte offsets on same line don't conflict
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "abc def ghi\n");
+
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((0, 2)), // "abc" at bytes 0-2
+                        vec![Line {
+                            content: "abc def ghi".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "XXX".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((4, 6)), // "def" at bytes 4-6
+                        vec![Line {
+                            content: "abc def ghi".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "YYY".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((8, 10)), // "ghi" at bytes 8-10
+                        vec![Line {
+                            content: "abc def ghi".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "ZZZ".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // All three should succeed (no byte overlap)
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+
+            // Verify file content: all three replaced
+            assert_file_content(&file_path, "XXX YYY ZZZ\n");
+        }
+
+        #[test]
+        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
+        fn test_conflict_detection_byte_offsets_with_overlap() {
+            // Test that overlapping byte offsets are detected as conflicts
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "abcdef\n");
+
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((0, 3)), // "abcd" at bytes 0-3
+                        vec![Line {
+                            content: "abcdef".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "XXX".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((2, 5)), // "cdef" at bytes 2-5 (overlaps with first)
+                        vec![Line {
+                            content: "abcdef".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "YYY".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // First should succeed
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second should be marked as conflict (overlaps with first at bytes 2-3)
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            // File should only have first replacement
+            assert_file_content(&file_path, "XXXdef\n");
+        }
+
+        #[test]
+        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
+        fn test_conflict_detection_byte_offsets_adjacent() {
+            // Test that adjacent (touching) byte ranges conflict
+            // Since byte offsets are inclusive, "abc" ends at byte 2 and "cdef" starts at byte 2,
+            // so they overlap at byte 2 (the 'c')
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "abcdef\n");
+
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((0, 2)), // "abc" at bytes 0-2 (inclusive)
+                        vec![Line {
+                            content: "abcdef".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "XXX".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        Some((2, 5)), // "cdef" at bytes 2-5 (shares byte 2 with first)
+                        vec![Line {
+                            content: "abcdef".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "YYY".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // First should succeed
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second should be marked as conflict (start_byte <= last_end_byte: 2 <= 2)
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            // File should only have first replacement
+            assert_file_content(&file_path, "XXXdef\n");
+        }
+
+        #[test]
+        fn test_conflict_detection_line_level_overlap() {
+            // Test line-level conflict detection (no byte offsets)
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "line 1\nline 2\nline 3\n");
+
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        2,
+                        None, // No byte offsets - line-level detection
+                        vec![
+                            Line {
+                                content: "line 1".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line 2".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "XXX\n".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        2,
+                        3,
+                        None, // No byte offsets
+                        vec![
+                            Line {
+                                content: "line 2".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line 3".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "YYY\n".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // First should succeed
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second should be marked as conflict (line 2 overlaps with first)
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            // File should only have first replacement
+            assert_file_content(&file_path, "XXX\nline 3\n");
+        }
+
+        #[test]
+        fn test_conflict_detection_line_level_adjacent() {
+            // Test that adjacent lines (no overlap) don't conflict
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "line 1\nline 2\nline 3\n");
+
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path.clone()),
+                        1,
+                        1,
+                        None,
+                        vec![Line {
+                            content: "line 1".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "XXX\n".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(file_path),
+                        2,
+                        2,
+                        None,
+                        vec![Line {
+                            content: "line 2".to_string(),
+                            line_ending: LineEnding::Lf,
+                        }],
+                        true,
+                    ),
+                    replacement: "YYY\n".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // Both should succeed (no overlap: line 2 > line 1)
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
         }
 
         #[test]
@@ -3745,6 +4069,601 @@ mod tests {
             assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
 
             assert_file_content(&file_path, "FIRST\nline 3\nline 4\nLAST\n");
+        }
+
+        #[test]
+        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
+        fn test_multiple_matches_same_line_no_conflict() {
+            // Test that multiple matches on the same line with byte offsets don't conflict
+            // "foo\nbar baz bar qux\nbar\nbux\n"
+            //  0123 456789012345678 901234567
+            //       ^     ^         ^
+            //       4-6   12-14     20-22
+            let temp_dir = TempDir::new().unwrap();
+            let file_path =
+                create_test_file(&temp_dir, "test.txt", "foo\nbar baz bar qux\nbar\nbux\n");
+
+            // Use search_multiline to get real byte offsets
+            let content = std::fs::read_to_string(&file_path).unwrap();
+            let search = SearchType::Fixed("bar".to_string());
+            let search_results = search_multiline(&content, &search, Some(&file_path));
+
+            // Should find 3 matches: 2 on line 2, 1 on line 3
+            assert_eq!(search_results.len(), 3);
+
+            // First match: "bar" at bytes 4-6 on line 2
+            assert_eq!(search_results[0].start_line_number, 2);
+            assert_eq!(search_results[0].end_line_number, 2);
+            assert_eq!(search_results[0].byte_offsets, Some((4, 6)));
+            assert_eq!(search_results[0].lines.len(), 1);
+            assert_eq!(search_results[0].lines[0].content, "bar baz bar qux");
+
+            // Second match: "bar" at bytes 12-14 on line 2 (same line!)
+            assert_eq!(search_results[1].start_line_number, 2);
+            assert_eq!(search_results[1].end_line_number, 2);
+            assert_eq!(search_results[1].byte_offsets, Some((12, 14)));
+            assert_eq!(search_results[1].lines.len(), 1);
+            assert_eq!(search_results[1].lines[0].content, "bar baz bar qux");
+
+            // Third match: "bar" at bytes 20-22 on line 3
+            assert_eq!(search_results[2].start_line_number, 3);
+            assert_eq!(search_results[2].end_line_number, 3);
+            assert_eq!(search_results[2].byte_offsets, Some((20, 22)));
+            assert_eq!(search_results[2].lines.len(), 1);
+            assert_eq!(search_results[2].lines[0].content, "bar");
+
+            // Convert to replacements
+            let mut results: Vec<SearchResultWithReplacement> = search_results
+                .into_iter()
+                .map(|sr| SearchResultWithReplacement {
+                    search_result: sr,
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                })
+                .collect();
+
+            // Attempt to replace - this will call mark_conflicting_replacements internally
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // All three should succeed (no conflicts due to non-overlapping byte offsets)
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+
+            // File should have all three replacements
+            assert_file_content(
+                &file_path,
+                "foo\nREPLACED baz REPLACED qux\nREPLACED\nbux\n",
+            );
+        }
+
+        #[test]
+        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
+        fn test_multiple_matches_same_line_all_replaced() {
+            // Test that multiple matches on the same line are all replaced correctly
+            // when they have non-overlapping byte offsets
+            let temp_dir = TempDir::new().unwrap();
+            let file_path =
+                create_test_file(&temp_dir, "test.txt", "foo\nbar baz bar qux\nbar\nbux\n");
+
+            // Use search_multiline to get real byte offsets
+            let content = std::fs::read_to_string(&file_path).unwrap();
+            let search = SearchType::Fixed("bar".to_string());
+            let search_results = search_multiline(&content, &search, Some(&file_path));
+
+            // Should find 3 matches: 2 on line 2, 1 on line 3
+            assert_eq!(search_results.len(), 3);
+
+            // Verify byte offsets are correct
+            assert_eq!(search_results[0].byte_offsets, Some((4, 6)));
+            assert_eq!(search_results[1].byte_offsets, Some((12, 14)));
+            assert_eq!(search_results[2].byte_offsets, Some((20, 22)));
+
+            // Convert to replacements
+            let mut results: Vec<SearchResultWithReplacement> = search_results
+                .into_iter()
+                .map(|sr| SearchResultWithReplacement {
+                    search_result: sr,
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                })
+                .collect();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+
+            // All three should succeed (no conflicts due to non-overlapping byte offsets)
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+
+            // File should have all three replacements
+            assert_file_content(
+                &file_path,
+                "foo\nREPLACED baz REPLACED qux\nREPLACED\nbux\n",
+            );
+        }
+    }
+
+    mod mark_conflicting_replacements_tests {
+        use super::{super::mark_conflicting_replacements, *};
+
+        fn create_replacement_result(
+            start_line: usize,
+            end_line: usize,
+            byte_offsets: Option<(usize, usize)>,
+        ) -> SearchResultWithReplacement {
+            let num_lines = end_line - start_line + 1;
+            let lines = (0..num_lines)
+                .map(|i| Line {
+                    content: format!("test-{}", start_line + i),
+                    line_ending: LineEnding::Lf,
+                })
+                .collect();
+
+            SearchResultWithReplacement {
+                search_result: SearchResult::new(
+                    Some(PathBuf::from("test.txt")),
+                    start_line,
+                    end_line,
+                    byte_offsets,
+                    lines,
+                    true,
+                ),
+                replacement: "REPLACED".to_string(),
+                replace_result: None,
+            }
+        }
+
+        #[test]
+        fn test_no_conflicts_sequential_lines() {
+            let mut results = vec![
+                create_replacement_result(1, 1, None),
+                create_replacement_result(2, 2, None),
+                create_replacement_result(3, 3, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+            assert_eq!(results[2].replace_result, None);
+        }
+
+        #[test]
+        fn test_conflict_same_line() {
+            let mut results = vec![
+                create_replacement_result(2, 2, None),
+                create_replacement_result(2, 2, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_conflict_overlapping_multiline() {
+            // Manually create multiline results to satisfy validation
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(PathBuf::from("test.txt")),
+                        1,
+                        3,
+                        None,
+                        vec![
+                            Line {
+                                content: "line1".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line2".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line3".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(PathBuf::from("test.txt")),
+                        2,
+                        4,
+                        None,
+                        vec![
+                            Line {
+                                content: "line2".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line3".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line4".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_no_conflict_adjacent_multiline() {
+            // Manually create multiline results to satisfy validation
+            let mut results = vec![
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(PathBuf::from("test.txt")),
+                        1,
+                        3,
+                        None,
+                        vec![
+                            Line {
+                                content: "line1".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line2".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line3".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                },
+                SearchResultWithReplacement {
+                    search_result: SearchResult::new(
+                        Some(PathBuf::from("test.txt")),
+                        4,
+                        6,
+                        None,
+                        vec![
+                            Line {
+                                content: "line4".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line5".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                            Line {
+                                content: "line6".to_string(),
+                                line_ending: LineEnding::Lf,
+                            },
+                        ],
+                        true,
+                    ),
+                    replacement: "REPLACED".to_string(),
+                    replace_result: None,
+                },
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+        }
+
+        #[test]
+        fn test_byte_offsets_no_overlap_same_line() {
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(1, 1, Some((6, 10))),
+                create_replacement_result(1, 1, Some((11, 15))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+            assert_eq!(results[2].replace_result, None);
+        }
+
+        #[test]
+        fn test_byte_offsets_touching_conflict() {
+            // Byte offsets are inclusive, so end=5 and start=5 should conflict
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(1, 1, Some((5, 10))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_byte_offsets_overlap_conflict() {
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 10))),
+                create_replacement_result(1, 1, Some((5, 15))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_byte_offsets_across_lines() {
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(2, 2, Some((10, 15))),
+                create_replacement_result(2, 2, Some((16, 20))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+            assert_eq!(results[2].replace_result, None);
+        }
+
+        #[test]
+        fn test_sorting_by_line_then_byte() {
+            // Results provided out of order
+            let mut results = vec![
+                create_replacement_result(2, 2, Some((10, 15))),
+                create_replacement_result(1, 1, Some((5, 8))),
+                create_replacement_result(1, 1, Some((0, 3))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            // After sorting: line 1 byte 0-3, line 1 byte 5-8, line 2 byte 10-15
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].search_result.start_line_number, 1);
+            assert_eq!(results[0].search_result.byte_offsets, Some((0, 3)));
+            assert_eq!(results[0].replace_result, None);
+
+            assert_eq!(results[1].search_result.start_line_number, 1);
+            assert_eq!(results[1].search_result.byte_offsets, Some((5, 8)));
+            assert_eq!(results[1].replace_result, None);
+
+            assert_eq!(results[2].search_result.start_line_number, 2);
+            assert_eq!(results[2].search_result.byte_offsets, Some((10, 15)));
+            assert_eq!(results[2].replace_result, None);
+        }
+
+        #[test]
+        fn test_mixed_byte_and_line_mode() {
+            // First result has byte offsets, second doesn't
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(2, 2, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+        }
+
+        #[test]
+        fn test_mixed_byte_and_line_mode_same_line() {
+            // Line-mode and byte-mode results on the same line should conflict
+            // None sorts before Some, so line-mode comes first and succeeds,
+            // byte-mode comes second and should detect conflict via line-level check
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(1, 1, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            // After sorting: None comes first (succeeds), Some(0) comes second (conflicts)
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_chain_of_conflicts() {
+            let mut results = vec![
+                create_replacement_result(1, 1, None),
+                create_replacement_result(1, 1, None),
+                create_replacement_result(1, 2, None),
+                create_replacement_result(2, 2, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 4);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            assert_eq!(
+                results[2].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            assert_eq!(results[3].replace_result, None);
+        }
+
+        #[test]
+        fn test_empty_results() {
+            let mut results: Vec<SearchResultWithReplacement> = vec![];
+            mark_conflicting_replacements(&mut results);
+            assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_single_result() {
+            let mut results = vec![create_replacement_result(1, 1, None)];
+            mark_conflicting_replacements(&mut results);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].replace_result, None);
+        }
+
+        #[test]
+        fn test_byte_mode_then_line_mode_same_line() {
+            // When user provides byte-mode then line-mode (reverse of typical sort order),
+            // sorting will put line-mode first (None < Some), and they should still conflict
+            let mut results = vec![
+                create_replacement_result(1, 1, Some((0, 5))),
+                create_replacement_result(1, 1, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            // First result (line-mode after sort) succeeds
+            assert_eq!(results[0].replace_result, None);
+            // Second result (byte-mode after sort) conflicts with line-mode
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_line_mode_multiline_with_byte_mode_on_spanned_line() {
+            // Line-mode spans lines 1-3, byte-mode is on line 2 (within the span)
+            let mut results = vec![
+                create_replacement_result(1, 3, None),
+                create_replacement_result(2, 2, Some((0, 5))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            // Byte-mode on line 2 conflicts because line-mode covers lines 1-3
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_byte_mode_on_line_then_line_mode_multiline_spanning_it() {
+            // Byte-mode on line 2, then line-mode spanning lines 1-3
+            let mut results = vec![
+                create_replacement_result(2, 2, Some((0, 5))),
+                create_replacement_result(1, 3, None),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            // After sorting: line-mode (1-3) comes first, byte-mode (line 2) comes second
+            // Line-mode succeeds
+            assert_eq!(results[0].replace_result, None);
+            // Byte-mode on line 2 conflicts (2 <= 3, last_end_line from line-mode)
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+        }
+
+        #[test]
+        fn test_line_mode_then_byte_mode_on_next_line() {
+            // Line-mode on line 1, byte-mode on line 2 - should NOT conflict
+            let mut results = vec![
+                create_replacement_result(1, 1, None),
+                create_replacement_result(2, 2, Some((0, 5))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(results[1].replace_result, None);
+        }
+
+        #[test]
+        fn test_multiple_line_modes_then_byte_mode() {
+            // Multiple line-mode results, then byte-mode
+            // Second line-mode conflicts with first, byte-mode after is on different line
+            let mut results = vec![
+                create_replacement_result(1, 1, None),
+                create_replacement_result(1, 1, None),
+                create_replacement_result(2, 2, Some((0, 5))),
+            ];
+
+            mark_conflicting_replacements(&mut results);
+
+            assert_eq!(results.len(), 3);
+            assert_eq!(results[0].replace_result, None);
+            assert_eq!(
+                results[1].replace_result,
+                Some(ReplaceResult::Error(
+                    "Conflicts with previous replacement".to_owned()
+                ))
+            );
+            // Byte-mode on line 2 should NOT conflict with line 1
+            assert_eq!(results[2].replace_result, None);
         }
     }
 }
