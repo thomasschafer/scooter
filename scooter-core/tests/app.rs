@@ -9,7 +9,7 @@ use scooter_core::{
 use scooter_core::{
     line_reader::LineEnding,
     replace::ReplaceResult,
-    search::{Line, SearchResult, SearchResultWithReplacement},
+    search::{SearchResult, SearchResultWithReplacement},
 };
 use std::{
     env::current_dir,
