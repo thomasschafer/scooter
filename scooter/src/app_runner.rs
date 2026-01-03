@@ -633,11 +633,7 @@ fn write_results_to_stderr_impl(
 
 #[cfg(test)]
 mod tests {
-    use scooter_core::{
-        line_reader::LineEnding,
-        replace::ReplaceResult,
-        search::{Line, SearchResult},
-    };
+    use scooter_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
 
     use super::*;
 
@@ -653,14 +649,11 @@ mod tests {
     #[test]
     fn test_format_replacement_results_with_errors() {
         let error_result = SearchResultWithReplacement {
-            search_result: SearchResult::new(
+            search_result: SearchResult::new_line(
                 Some(PathBuf::from("file.txt")),
                 10,
-                10,
-                vec![Line {
-                    content: "line".to_string(),
-                    line_ending: LineEnding::Lf,
-                }],
+                "line".to_string(),
+                LineEnding::Lf,
                 true,
             ),
             replacement: "replacement".to_string(),

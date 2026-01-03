@@ -173,10 +173,15 @@ while let Some((idx, line_result)) = lines_iter.next() {
 
 **Approval**: ⏸️ WAITING FOR MANUAL TUI TESTING AND APPROVAL
 
-### Phase 1 follow-up:
+### Phase 1 follow-up: Byte-indexed replacements
 
-What happens if there are multiple replacements on a single line? E.g. if we search for "bar" and we have
+**Status**: ✅ INVESTIGATION COMPLETE - Ready for implementation
+**Goal**: Fix conflict detection for multiple matches on same line by tracking byte offsets
 
+**Problem discovered**:
+When multiple matches occur on the same line (e.g., searching for "bar" in "bar baz bar qux"), the current implementation incorrectly marks the second match as conflicting, even though they occur at different byte offsets.
+
+Example:
 ```txt
 foo
 bar baz bar qux
@@ -184,16 +189,80 @@ bar
 bux
 ```
 
-Then, currently, we get 3 results: 2 from line 2, and 1 from line 3. The first and third of those replacements are made fine, but the second is not, as there was a conflict.
+Searching for "bar" finds 3 matches:
+1. Line 2, bytes 4-7
+2. Line 2, bytes 12-15
+3. Line 3, bytes 20-23
 
-Instead, should we store indices with the search results? E.g. in this case we would have:
-1. line 2, indices 0 to 2
-2. line 2, indices 8 to 10
-3. line 3, indices 0 to 2
+**Current buggy behavior**: Match #2 incorrectly conflicts with #1 ❌
+**Expected behavior**: All 3 matches should succeed ✅
 
-Then actually we only need to remove conflicts when lines and indices overlap (although I wonder how often this would actually happen, if ever? We should probably handle just in case, but not sure if regex engines would give overlapping results?). In this case, we can make all replacements, but we need to be more nuanced in our replacement, as we'll need to work not only line-by-line by also char-by-char.
+**Root cause**: `mark_conflicting_replacements` only checks line numbers, not byte offsets.
 
-Also a nice benefit is that we can improve the diff: currently we create a new diff between lines using a char diffing algorithm, but in this case we can display with a red background in the - lines on the diff exactly the chars that were matched, and with a green background on the + lines exactly the chars that replaced the match, if this is possible?
+**Solution**: Add byte offsets to `SearchResult`
+
+#### Changes Required:
+
+**1. Update SearchResult struct** (`scooter-core/src/search.rs:49`):
+```rust
+pub struct SearchResult {
+    pub path: Option<PathBuf>,
+    pub start_line_number: usize,
+    pub end_line_number: usize,
+    pub start_byte_offset: usize,  // NEW: 0-indexed byte offset within file
+    pub end_byte_offset: usize,    // NEW: 0-indexed byte offset within file
+    pub lines: Vec<Line>,
+    pub included: bool,
+}
+```
+
+**2. Update `create_search_result_from_bytes`** (already has the byte data!):
+- Just pass through `start_byte` and `end_byte` to `SearchResult::new`
+
+**3. Update `search_file` (line-by-line mode)**:
+- For non-multiline mode, set `start_byte_offset = 0` and `end_byte_offset = usize::MAX` (or line length)
+- This way byte-level conflict detection won't trigger for line-by-line mode
+
+**4. Update conflict detection** (`mark_conflicting_replacements`):
+```rust
+fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
+    // Sort by byte offset instead of line number
+    let mut last_end_byte = 0;
+    for result in results {
+        let start = result.search_result.start_byte_offset;
+        let end = result.search_result.end_byte_offset;
+
+        if start < last_end_byte {  // Byte-level overlap
+            result.replace_result = Some(ReplaceResult::Error(
+                "Conflicts with previous replacement".to_owned(),
+            ));
+        } else {
+            last_end_byte = end;
+        }
+    }
+}
+```
+
+**5. Update replacement logic** to handle multiple matches per line:
+- Group replacements by line
+- Within each line, sort by byte offset in REVERSE order
+- Apply replacements right-to-left so byte offsets remain valid
+- This is only needed for multiline mode; line-by-line mode continues as before
+
+#### Benefits:
+- ✅ Fixes multiple matches per line
+- ✅ Enables precise diff highlighting (future enhancement)
+- ✅ Aligns with how regex engines work
+- ✅ No breaking changes for binary users (only affects `--multiline` flag behavior)
+
+#### Tests Added:
+- ✅ `search::tests::test_multiple_matches_per_line` - verifies search finds all 3
+- ✅ `replace::tests::test_multiple_matches_same_line_shows_conflict` - demonstrates the bug
+
+#### Tests To Add After Fix:
+- [ ] `test_multiple_matches_same_line_all_replaced` - verify all get replaced
+- [ ] `test_three_matches_same_line`
+- [ ] `test_multiple_matches_across_lines_and_within_lines`
 
 ---
 
@@ -444,12 +513,16 @@ During implementation, discovered that replacements must be written **as-is** wi
 
 ## Completion Checklist
 
-- ✅ Phase 1: Replacement + conflicts (implementation complete, awaiting manual testing)
+- ⏳ Phase 1: Replacement + conflicts (basic implementation complete, byte-indexed fix needed)
+  - ✅ Basic multiline replacement working
+  - ✅ Conflict detection for overlapping line ranges
+  - ⏳ Byte-indexed replacements for multiple matches per line
 - [ ] Phase 2: Preview validation
 - [ ] Phase 3: Preview rendering
 - [ ] Phase 4: Display polish
 - [ ] Phase 5: E2E testing
-- ✅ Phase 1 unit tests passing (12/12 tests)
+- ✅ Phase 1 basic unit tests passing (13/13 tests)
+- [ ] Phase 1 byte-indexed tests
 - [ ] All manual tests passing
 - [ ] No regressions in existing functionality
 - [ ] Documentation updated (if needed)

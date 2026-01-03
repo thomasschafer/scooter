@@ -50,9 +50,15 @@ pub struct SearchResult {
     pub path: Option<PathBuf>,
     /// 1-indexed line number where the match starts
     pub start_line_number: usize,
-    /// 1-indexed line number where the match ends (same as `start_line_number` for single-line matches)
+    /// 1-indexed line number where the match ends (inclusive - same as `start_line_number` for single-line matches)
     pub end_line_number: usize,
+    /// Byte offsets within the file (0-indexed, inclusive on both ends).
+    /// `Some((start, end))` for multiline mode with real byte positions.
+    /// `None` for non-multiline mode where each line is treated independently.
+    pub byte_offsets: Option<(usize, usize)>,
+    /// The full lines containing the content (the match will be a subset of these as defined by the byte offsets)
     pub lines: Vec<Line>,
+    /// Whether to replace the given match
     pub included: bool,
 }
 
@@ -61,6 +67,7 @@ impl SearchResult {
         path: Option<PathBuf>,
         start_line_number: usize,
         end_line_number: usize,
+        byte_offsets: Option<(usize, usize)>,
         lines: Vec<Line>,
         included: bool,
     ) -> Self {
@@ -78,9 +85,31 @@ impl SearchResult {
             path,
             start_line_number,
             end_line_number,
+            byte_offsets,
             lines,
             included,
         }
+    }
+
+    /// Creates a `SearchResult` for a single, entire line.
+    pub fn new_line(
+        path: Option<PathBuf>,
+        line_number: usize,
+        content: String,
+        line_ending: LineEnding,
+        included: bool,
+    ) -> Self {
+        Self::new(
+            path,
+            line_number,
+            line_number,
+            None,
+            vec![Line {
+                content,
+                line_ending,
+            }],
+            included,
+        )
     }
 
     /// Reconstructs the full text from the lines vector, including all line endings.
@@ -451,14 +480,11 @@ pub fn search_file(
         if let Ok(line_content) = String::from_utf8(line_bytes)
             && contains_search(&line_content, search)
         {
-            let result = SearchResult::new(
+            let result = SearchResult::new_line(
                 Some(path.to_path_buf()),
                 line_number,
-                line_number,
-                vec![Line {
-                    content: line_content,
-                    line_ending,
-                }],
+                line_content,
+                line_ending,
                 true,
             );
             results.push(result);
@@ -599,6 +625,7 @@ fn create_search_result_from_bytes(
         path.map(Path::to_path_buf),
         start_line,
         end_line,
+        Some((start_byte, end_byte.saturating_sub(1))), // Convert from exclusive to inclusive
         lines,
         true,
     )
@@ -617,14 +644,11 @@ mod tests {
             replace_result: Option<ReplaceResult>,
         ) -> SearchResultWithReplacement {
             SearchResultWithReplacement {
-                search_result: SearchResult::new(
+                search_result: SearchResult::new_line(
                     Some(PathBuf::from(path)),
                     line_number,
-                    line_number,
-                    vec![Line {
-                        content: "test line".to_string(),
-                        line_ending: LineEnding::Lf,
-                    }],
+                    "test line".to_string(),
+                    LineEnding::Lf,
                     true,
                 ),
                 replacement: "replacement".to_string(),
@@ -1455,5 +1479,35 @@ mod tests {
                 ],
             );
         }
+    }
+
+    #[test]
+    fn test_multiple_matches_per_line() {
+        // "foo\nbar baz bar qux\nbar\nbux\n"
+        //  0123 456789012345678 901234567
+        //       ^     ^         ^
+        //       4-6   12-14     20-22
+        let content = "foo\nbar baz bar qux\nbar\nbux\n";
+        let search = SearchType::Fixed("bar".to_string());
+
+        let results = search_multiline(content, &search, None);
+
+        // Should find 3 matches: 2 on line 2, 1 on line 3
+        assert_eq!(results.len(), 3);
+
+        // First match: "bar" at bytes 4-6 on line 2
+        assert_eq!(results[0].start_line_number, 2);
+        assert_eq!(results[0].end_line_number, 2);
+        assert_eq!(results[0].byte_offsets, Some((4, 6)));
+
+        // Second match: "bar" at bytes 12-14 on line 2 (same line!)
+        assert_eq!(results[1].start_line_number, 2);
+        assert_eq!(results[1].end_line_number, 2);
+        assert_eq!(results[1].byte_offsets, Some((12, 14)));
+
+        // Third match: "bar" at bytes 20-22 on line 3
+        assert_eq!(results[2].start_line_number, 3);
+        assert_eq!(results[2].end_line_number, 3);
+        assert_eq!(results[2].byte_offsets, Some((20, 22)));
     }
 }
