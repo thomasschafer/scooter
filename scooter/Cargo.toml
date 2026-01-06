@@ -16,7 +16,7 @@ anyhow = "1.0.100"
 scooter-core = { version = "0.3.0", path = "../scooter-core", features = [
   "term",
 ] }
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.54", features = ["derive"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 etcetera = "0.11.0"
 futures = "0.3.31"
