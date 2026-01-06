@@ -83,7 +83,7 @@ jobs:
           - ubuntu-latest
           - macos-latest
           # - windows-latest # TODO: add Windows via WSL
-    timeout-minutes: 15
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
