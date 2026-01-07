@@ -45,6 +45,12 @@ impl Searcher {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinePos {
+    pub line: usize, // 1-indexed
+    pub byte_pos: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatchContent {
     /// Line-mode: Replace all occurrences of pattern on the line
     /// Used for non-multiline search where we replace ALL matches on a single line
@@ -56,9 +62,9 @@ pub enum MatchContent {
     /// Byte-mode: Replace only the specific byte range
     /// Used for multiline search where we track individual matches precisely
     ByteRange {
-        start_line: usize, // For sorting/grouping
-        end_line: usize,
-        byte_start: usize, // Absolute position in file
+        start_line: LinePos,
+        end_line: LinePos,
+        byte_start: usize, // Absolute position in file (for replacement)
         byte_end: usize,
         expected_content: String, // Just the matched bytes
     },
@@ -95,8 +101,8 @@ impl SearchResult {
     /// Creates a `SearchResult` with byte-range content
     pub fn new_byte_range(
         path: Option<PathBuf>,
-        start_line: usize,
-        end_line: usize,
+        start_line: LinePos,
+        end_line: LinePos,
         byte_start: usize,
         byte_end: usize,
         expected_content: String,
@@ -133,7 +139,7 @@ impl SearchResult {
     pub fn start_line_number(&self) -> usize {
         match &self.content {
             MatchContent::Lines { line_number, .. } => *line_number,
-            MatchContent::ByteRange { start_line, .. } => *start_line,
+            MatchContent::ByteRange { start_line, .. } => start_line.line,
         }
     }
 
@@ -141,7 +147,7 @@ impl SearchResult {
     pub fn end_line_number(&self) -> usize {
         match &self.content {
             MatchContent::Lines { line_number, .. } => *line_number,
-            MatchContent::ByteRange { end_line, .. } => *end_line,
+            MatchContent::ByteRange { end_line, .. } => end_line.line,
         }
     }
 }
@@ -576,6 +582,17 @@ impl<'a> LineIndex<'a> {
             Ok(idx) | Err(idx) => idx + 1,
         }
     }
+
+    /// Get the byte offset where a line starts (`line_num` is 1-indexed)
+    pub(crate) fn line_start_byte(&self, line_num: usize) -> usize {
+        assert!(line_num >= 1, "Line numbers are 1-indexed");
+        if line_num == 1 {
+            0
+        } else {
+            // Line N starts after the (N-1)th newline
+            self.newline_positions[line_num - 2] + 1
+        }
+    }
 }
 
 /// Create a `SearchResult` from byte offsets in the content
@@ -585,16 +602,26 @@ fn create_search_result_from_bytes(
     path: Option<&Path>,
     line_index: &LineIndex<'_>,
 ) -> SearchResult {
-    let start_line = line_index.line_number_at(start_byte);
-    let end_line = line_index.line_number_at(end_byte.saturating_sub(1));
+    let start_line_num = line_index.line_number_at(start_byte);
+    let end_line_num = line_index.line_number_at(end_byte.saturating_sub(1));
+
+    // Compute byte offsets within each line (for preview highlighting)
+    let start_byte_in_line = start_byte - line_index.line_start_byte(start_line_num);
+    let end_byte_in_line = end_byte.saturating_sub(1) - line_index.line_start_byte(end_line_num);
 
     // Extract the matched content (byte offsets are exclusive end, make inclusive for indexing)
     let expected_content = line_index.content[start_byte..end_byte].to_string();
 
     SearchResult::new_byte_range(
         path.map(Path::to_path_buf),
-        start_line,
-        end_line,
+        LinePos {
+            line: start_line_num,
+            byte_pos: start_byte_in_line,
+        },
+        LinePos {
+            line: end_line_num,
+            byte_pos: end_byte_in_line,
+        },
         start_byte,
         end_byte.saturating_sub(1), // Convert from exclusive to inclusive
         expected_content,
