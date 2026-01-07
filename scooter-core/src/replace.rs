@@ -22,7 +22,9 @@ use crate::{
     app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
     line_reader::BufReadExt,
-    search::{self, FileSearcher, SearchResult, SearchResultWithReplacement, SearchType},
+    search::{
+        self, FileSearcher, MatchContent, SearchResult, SearchResultWithReplacement, SearchType,
+    },
 };
 
 #[cfg(unix)]
@@ -121,8 +123,15 @@ fn validate_search_result_correctness(
     results: &[SearchResultWithReplacement],
 ) {
     for res in results {
-        let content = res.search_result.content();
-        let expected = replacement_if_match(
+        // For line-mode, use just the content without line ending
+        // For byte-mode, use the full expected_content
+        let content = match &res.search_result.content {
+            MatchContent::Lines { content, .. } => content.clone(),
+            MatchContent::ByteRange {
+                expected_content, ..
+            } => expected_content.clone(),
+        };
+        let expected = replace_all_if_match(
             &content,
             validation_search_config.search(),
             validation_search_config.replace(),
@@ -259,61 +268,42 @@ pub enum ReplaceResult {
     Error(String),
 }
 
-/// Sorts by byte offset and detects conflicting replacements.
-///
-/// Replacements conflict if they overlap:
-/// - With byte offsets: checks byte-level overlap (allows multiple matches per line)
-/// - Without byte offsets: checks line-level overlap
+/// Sorts by byte offset, and detects and marks conflicting byte-range replacements.
+/// Two replacements conflict if their byte ranges overlap.
+/// Only valid for `ByteRange` content - panics if `Lines` content is encountered.
 fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
-    // Sort by line number, then by byte offset if available
-    results.sort_by_key(|r| {
-        (
-            r.search_result.start_line_number,
-            r.search_result.byte_offsets.map(|(start, _)| start),
-        )
+    // Sort by byte_start
+    results.sort_by_key(|r| match &r.search_result.content {
+        MatchContent::ByteRange { byte_start, .. } => *byte_start,
+        MatchContent::Lines { .. } => {
+            panic!(
+                "mark_conflicting_replacements called with Lines content - use only for byte-mode"
+            )
+        }
     });
 
-    let mut last_end_line = 0;
     let mut last_end_byte: Option<usize> = None;
 
     for result in results {
-        let start_line = result.search_result.start_line_number;
-        let end_line = result.search_result.end_line_number;
-
-        let conflict = if let Some((start_byte, _)) = result.search_result.byte_offsets {
-            // With byte offsets: check byte-level overlap if previous had byte offsets,
-            // or line-level overlap if previous was line-mode (last_end_byte is None)
-            last_end_byte.map_or(
-                // Previous was line-mode: check line overlap
-                start_line <= last_end_line,
-                // Previous had byte offsets: check byte overlap
-                |last_end| start_byte <= last_end,
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            ..
+        } = &result.search_result.content
+        else {
+            panic!(
+                "mark_conflicting_replacements called with Lines content - use only for byte-mode"
             )
-        } else {
-            // Without byte offsets: check line-level overlap
-            start_line <= last_end_line
         };
 
-        if conflict {
+        if last_end_byte.is_some_and(|last_end| *byte_start <= last_end) {
             result.replace_result = Some(ReplaceResult::Error(
                 "Conflicts with previous replacement".to_owned(),
             ));
         } else {
-            last_end_byte = result
-                .search_result
-                .byte_offsets
-                .map(|(_, end_byte)| end_byte);
-            last_end_line = end_line;
+            last_end_byte = Some(*byte_end);
         }
     }
-}
-
-fn write_lines(writer: &mut BufWriter<File>, actual_lines: &[search::Line]) -> anyhow::Result<()> {
-    for line in actual_lines {
-        writer.write_all(line.content.as_bytes())?;
-        writer.write_all(line.line_ending.as_bytes())?;
-    }
-    Ok(())
 }
 
 /// NOTE: this should only be called with search results from the same file
@@ -323,82 +313,157 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
         [r, ..] => r.search_result.path.clone(),
         [] => return Ok(()),
     };
-    debug_assert!(results.iter().all(|r| r.search_result.path == file_path));
-
-    // Sort by start line and detect conflicts
-    mark_conflicting_replacements(results);
-
-    // Build map of non-conflicting replacements by start line
-    let mut line_map = results
-        .iter_mut()
-        .filter(|r| r.replace_result.is_none()) // Filter out those already marked as conflicts
-        .map(|r| (r.search_result.start_line_number, r))
-        .collect::<HashMap<_, _>>();
+    assert!(results.iter().all(|r| r.search_result.path == file_path));
 
     let file_path = file_path.expect("File path must be present when searching in files");
-    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, &file_path)?;
 
-    // Stream through file, consuming lines for multiline replacements
-    // Scope the file operations so they're closed before rename
+    let first_content = &results[0].search_result.content;
     {
-        let input = File::open(&file_path)?;
+        let first_discriminant = std::mem::discriminant(first_content);
+        assert!(
+            results.iter().all(|r| {
+                std::mem::discriminant(&r.search_result.content) == first_discriminant
+            }),
+            "Inconsistent MatchContent variants detected in results"
+        );
+    }
+
+    match first_content {
+        MatchContent::Lines { .. } => replace_line_mode(&file_path, results),
+        MatchContent::ByteRange { .. } => replace_byte_mode(&file_path, results),
+    }
+}
+
+/// Line-mode replacement: Replace ALL occurrences on the line
+fn replace_line_mode(
+    file_path: &Path,
+    results: &mut [SearchResultWithReplacement],
+) -> anyhow::Result<()> {
+    let mut line_map: HashMap<usize, &mut SearchResultWithReplacement> = results
+        .iter_mut()
+        .map(|res| (res.search_result.start_line_number(), res))
+        .collect();
+
+    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
+    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+
+    {
+        let input = File::open(file_path)?;
         let reader = BufReader::new(input);
 
         let output = File::create(temp_output_file.path())?;
         let mut writer = BufWriter::new(output);
 
-        let mut lines_iter = reader.lines_with_endings().enumerate();
-
-        while let Some((idx, line_result)) = lines_iter.next() {
-            let line_number = idx + 1; // 1-indexed
-            let (line_bytes, line_ending) = line_result?;
+        for (idx, line_result) in reader.lines_with_endings().enumerate() {
+            let line_number = idx + 1;
+            let (mut line_bytes, line_ending) = line_result?;
 
             if let Some(res) = line_map.get_mut(&line_number) {
-                // This line starts a replacement (single or multiline)
-                let num_lines = res.search_result.end_line_number - line_number + 1;
+                let MatchContent::Lines { content, .. } = &res.search_result.content else {
+                    unreachable!("Line-mode must have Lines content")
+                };
 
-                // Accumulate all lines for this match
-                let mut actual_lines = vec![search::Line {
-                    content: String::from_utf8(line_bytes)?,
-                    line_ending,
-                }];
-                let mut file_too_short = false;
-                for _ in 1..num_lines {
-                    if let Some((_, next_result)) = lines_iter.next() {
-                        let (line_bytes, ending) = next_result?;
-                        actual_lines.push(search::Line {
-                            content: String::from_utf8(line_bytes)?,
-                            line_ending: ending,
-                        });
-                    } else {
-                        file_too_short = true;
-                        break;
-                    }
-                }
-
-                // Validate and perform replacement
-                if file_too_short {
-                    write_lines(&mut writer, &actual_lines)?;
-                    res.replace_result = Some(ReplaceResult::Error(
-                        "File is shorter than expected".to_owned(),
-                    ));
-                } else if actual_lines == res.search_result.lines {
-                    writer.write_all(res.replacement.as_bytes())?;
+                if line_bytes == content.as_bytes() {
+                    line_bytes = res.replacement.as_bytes().to_vec();
                     res.replace_result = Some(ReplaceResult::Success);
                 } else {
-                    write_lines(&mut writer, &actual_lines)?;
                     res.replace_result = Some(ReplaceResult::Error(
                         "File changed since last search".to_owned(),
                     ));
                 }
-            } else {
-                // No replacement for this line, copy as-is
-                writer.write_all(&line_bytes)?;
-                writer.write_all(line_ending.as_bytes())?;
             }
+
+            line_bytes.extend(line_ending.as_bytes());
+            writer.write_all(&line_bytes)?;
         }
 
+        writer.flush()?;
+    }
+
+    temp_output_file.persist(file_path)?;
+    Ok(())
+}
+
+/// Byte-mode replacement: Replace only the specific byte range for each match
+fn replace_byte_mode(
+    file_path: &Path,
+    results: &mut [SearchResultWithReplacement],
+) -> anyhow::Result<()> {
+    use std::io::Read;
+
+    mark_conflicting_replacements(results);
+
+    let mut to_replace: Vec<_> = results
+        .iter_mut()
+        .filter(|r| r.replace_result.is_none())
+        .collect();
+
+    if to_replace.is_empty() {
+        return Ok(());
+    }
+
+    to_replace.sort_by_key(|r| match &r.search_result.content {
+        MatchContent::ByteRange { byte_start, .. } => *byte_start,
+        MatchContent::Lines { .. } => unreachable!(),
+    });
+
+    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
+    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+
+    {
+        let mut input = File::open(file_path)?;
+        let output = File::create(temp_output_file.path())?;
+        let mut writer = BufWriter::new(output);
+        let mut current_pos: usize = 0;
+
+        for result in to_replace {
+            let MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                expected_content,
+                ..
+            } = &result.search_result.content
+            else {
+                unreachable!()
+            };
+
+            // Copy bytes from current_pos to byte_start
+            if *byte_start > current_pos {
+                let bytes_to_copy = byte_start - current_pos;
+                std::io::copy(
+                    &mut Read::by_ref(&mut input).take(bytes_to_copy as u64),
+                    &mut writer,
+                )?;
+            }
+
+            // Read the expected match bytes
+            let match_len = byte_end - byte_start + 1;
+            let mut actual_bytes = Vec::with_capacity(match_len);
+            let bytes_read = Read::by_ref(&mut input)
+                .take(match_len as u64)
+                .read_to_end(&mut actual_bytes)?;
+
+            if bytes_read < match_len {
+                // Hit EOF before reading full match - write what we got and break
+                // Leave replace_result as None, `calculate_statistics` will mark as error
+                writer.write_all(&actual_bytes)?;
+                break;
+            }
+
+            // Full read - check if content matches
+            if actual_bytes != expected_content.as_bytes() {
+                result.replace_result =
+                    Some(ReplaceResult::Error("File changed since search".to_owned()));
+                writer.write_all(&actual_bytes)?;
+            } else {
+                result.replace_result = Some(ReplaceResult::Success);
+                writer.write_all(result.replacement.as_bytes())?;
+            }
+            current_pos = byte_end + 1;
+        }
+
+        // Copy remaining bytes
+        std::io::copy(&mut input, &mut writer)?;
         writer.flush()?;
     }
 
@@ -459,8 +524,15 @@ pub fn add_replacement(
     search: &SearchType,
     replace: &str,
 ) -> Option<SearchResultWithReplacement> {
-    let line_text = search_result.content();
-    let replacement = replacement_if_match(&line_text, search, replace)?;
+    // For line-mode, use just the content without line ending
+    // For byte-mode, use the full expected_content
+    let text_to_search = match &search_result.content {
+        MatchContent::Lines { content, .. } => content.clone(),
+        MatchContent::ByteRange {
+            expected_content, ..
+        } => expected_content.clone(),
+    };
+    let replacement = replace_all_if_match(&text_to_search, search, replace)?;
     Some(SearchResultWithReplacement {
         search_result,
         replacement,
@@ -493,7 +565,7 @@ fn replace_chunked(
 
 fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> anyhow::Result<bool> {
     let content = fs::read_to_string(file_path)?;
-    if let Some(new_content) = replacement_if_match(&content, search, replace) {
+    if let Some(new_content) = replace_all_if_match(&content, search, replace) {
         let parent_dir = file_path.parent().unwrap_or(Path::new("."));
         let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
         temp_file.write_all(new_content.as_bytes())?;
@@ -504,7 +576,12 @@ fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> an
     }
 }
 
-/// Performs a search and replace operation on a string if the pattern matches
+/// Calculate replacement text for a line containing matches.
+///
+/// This is used in line-mode search where we replace ALL occurrences of the pattern
+/// on the line(s). Returns the full line content with all matches replaced.
+///
+/// For both fixed and pattern searches, this uses `replace_all` semantics.
 ///
 /// # Arguments
 ///
@@ -514,9 +591,9 @@ fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> an
 ///
 /// # Returns
 ///
-/// * `Some(String)` containing the string with replacements if matches were found
+/// * `Some(String)` containing the string with ALL replacements if matches were found
 /// * `None` if no matches were found
-pub fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
+pub fn replace_all_if_match(line: &str, search: &SearchType, replace: &str) -> Option<String> {
     if line.is_empty() || search.is_empty() {
         return None;
     }
@@ -530,6 +607,32 @@ pub fn replacement_if_match(line: &str, search: &SearchType, replace: &str) -> O
         Some(replacement)
     } else {
         None
+    }
+}
+
+/// Calculate replacement text for a specific matched substring.
+///
+/// This is used in byte-mode multiline search where we track individual matches
+/// and need to replace only the specific occurrence. Returns the replacement text
+/// that should substitute the matched portion.
+///
+/// For fixed searches, this simply returns the replacement string.
+/// For pattern searches, this applies the regex replacement to the matched text.
+///
+/// # Arguments
+///
+/// * `matched_text` - The specific text that was matched
+/// * `search` - The search pattern (fixed string, regex, or advanced regex)
+/// * `replace` - The replacement string
+///
+/// # Returns
+///
+/// * `String` containing the replacement text for this specific match
+pub fn replacement_for_match(matched_text: &str, search: &SearchType, replace: &str) -> String {
+    match search {
+        SearchType::Fixed(_) => replace.to_string(),
+        SearchType::Pattern(pattern) => pattern.replace(matched_text, replace).to_string(),
+        SearchType::PatternAdvanced(pattern) => pattern.replace(matched_text, replace).to_string(),
     }
 }
 
@@ -586,10 +689,12 @@ mod tests {
     use crate::{
         line_reader::LineEnding,
         replace::{
-            ReplaceResult, add_replacement, replace_all_in_file, replace_chunked, replace_in_file,
-            replace_in_memory, replacement_if_match,
+            ReplaceResult, add_replacement, replace_all_if_match, replace_all_in_file,
+            replace_chunked, replace_in_file, replace_in_memory,
         },
-        search::{Line, SearchResult, SearchResultWithReplacement, SearchType, search_file},
+        search::{
+            MatchContent, SearchResult, SearchResultWithReplacement, SearchType, search_file,
+        },
     };
 
     use crate::{
@@ -607,9 +712,7 @@ mod tests {
         included: bool,
         replace_result: Option<ReplaceResult>,
     ) -> SearchResultWithReplacement {
-        let mut full_replacement = replacement.to_string();
-        full_replacement.push_str(line_ending.as_str());
-
+        // Replacement should NOT include line ending - replace_line_mode appends it
         SearchResultWithReplacement {
             search_result: SearchResult::new_line(
                 Some(PathBuf::from(path)),
@@ -618,7 +721,7 @@ mod tests {
                 line_ending,
                 included,
             ),
-            replacement: full_replacement,
+            replacement: replacement.to_string(),
             replace_result,
         }
     }
@@ -1446,7 +1549,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].replacement, "Line with Greek: GREEK\n");
+        assert_eq!(results[0].replacement, "Line with Greek: GREEK");
 
         let search = SearchType::Pattern(Regex::new(r"🚀").unwrap());
         let replacement = "ROCKET";
@@ -1457,11 +1560,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].replacement, "Line with Emoji: 😀 ROCKET 🌍\r\n");
-        assert_eq!(
-            results[0].search_result.lines[0].line_ending,
-            LineEnding::CrLf
-        );
+        assert_eq!(results[0].replacement, "Line with Emoji: 😀 ROCKET 🌍");
+        let MatchContent::Lines { line_ending, .. } = &results[0].search_result.content else {
+            panic!("Expected Lines content");
+        };
+        assert_eq!(*line_ending, LineEnding::CrLf);
     }
 
     mod search_file_tests {
@@ -1488,9 +1591,12 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 1);
-            assert_eq!(results[0].search_result.start_line_number, 2);
-            assert_eq!(results[0].search_result.lines[0].content, "search target");
-            assert_eq!(results[0].replacement, "replace target\n");
+            assert_eq!(results[0].search_result.start_line_number(), 2);
+            let MatchContent::Lines { content, .. } = &results[0].search_result.content else {
+                panic!("Expected Lines content");
+            };
+            assert_eq!(content, "search target");
+            assert_eq!(results[0].replacement, "replace target");
             assert!(results[0].search_result.included);
         }
 
@@ -1512,12 +1618,12 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 3);
-            assert_eq!(results[0].search_result.start_line_number, 1);
-            assert_eq!(results[0].replacement, "replaced line 1\n");
-            assert_eq!(results[1].search_result.start_line_number, 2);
-            assert_eq!(results[1].replacement, "replaced line 2\n");
-            assert_eq!(results[2].search_result.start_line_number, 4);
-            assert_eq!(results[2].replacement, "replaced line 4\n");
+            assert_eq!(results[0].search_result.start_line_number(), 1);
+            assert_eq!(results[0].replacement, "replaced line 1");
+            assert_eq!(results[1].search_result.start_line_number(), 2);
+            assert_eq!(results[1].replacement, "replaced line 2");
+            assert_eq!(results[2].search_result.start_line_number(), 4);
+            assert_eq!(results[2].replacement, "replaced line 4");
         }
 
         #[test]
@@ -1556,8 +1662,8 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 2);
-            assert_eq!(results[0].replacement, "number: XXX\n");
-            assert_eq!(results[1].replacement, "another number: XXX\n");
+            assert_eq!(results[0].replacement, "number: XXX");
+            assert_eq!(results[1].replacement, "another number: XXX");
         }
 
         #[test]
@@ -1580,8 +1686,8 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 1);
-            assert_eq!(results[0].replacement, "123REPLACED456\n");
-            assert_eq!(results[0].search_result.start_line_number, 1);
+            assert_eq!(results[0].replacement, "123REPLACED456");
+            assert_eq!(results[0].search_result.start_line_number(), 1);
         }
 
         #[test]
@@ -1616,18 +1722,27 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 3);
-            assert_eq!(
-                results[0].search_result.lines[0].line_ending,
-                LineEnding::Lf
-            );
-            assert_eq!(
-                results[1].search_result.lines[0].line_ending,
-                LineEnding::CrLf
-            );
-            assert_eq!(
-                results[2].search_result.lines[0].line_ending,
-                LineEnding::None
-            );
+            let MatchContent::Lines {
+                line_ending: le0, ..
+            } = &results[0].search_result.content
+            else {
+                panic!("Expected Lines content");
+            };
+            assert_eq!(*le0, LineEnding::Lf);
+            let MatchContent::Lines {
+                line_ending: le1, ..
+            } = &results[1].search_result.content
+            else {
+                panic!("Expected Lines content");
+            };
+            assert_eq!(*le1, LineEnding::CrLf);
+            let MatchContent::Lines {
+                line_ending: le2, ..
+            } = &results[2].search_result.content
+            else {
+                panic!("Expected Lines content");
+            };
+            assert_eq!(*le2, LineEnding::None);
         }
 
         #[test]
@@ -1655,7 +1770,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 1);
-            assert_eq!(results[0].replacement, "Hello World!\n");
+            assert_eq!(results[0].replacement, "Hello World!");
         }
 
         #[test]
@@ -1700,9 +1815,9 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 10); // Lines 0, 100, 200, ..., 900
-            assert_eq!(results[0].search_result.start_line_number, 1); // 1-indexed
-            assert_eq!(results[1].search_result.start_line_number, 101);
-            assert_eq!(results[9].search_result.start_line_number, 901);
+            assert_eq!(results[0].search_result.start_line_number(), 1); // 1-indexed
+            assert_eq!(results[1].search_result.start_line_number(), 101);
+            assert_eq!(results[9].search_result.start_line_number(), 901);
         }
     }
 
@@ -1756,7 +1871,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1775,7 +1890,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -1794,7 +1909,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -1817,7 +1932,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1836,7 +1951,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1855,7 +1970,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -1874,7 +1989,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("Hello CAFÉ table", &parsed.search, &parsed.replace),
+                        replace_all_if_match("Hello CAFÉ table", &parsed.search, &parsed.replace),
                         Some("Hello restaurant table".to_string())
                     );
                 }
@@ -1897,7 +2012,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1916,7 +2031,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -1935,7 +2050,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         Some("earthwide".to_string())
                     );
                 }
@@ -1958,7 +2073,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1977,7 +2092,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -1996,7 +2111,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("WORLDWIDE", &parsed.search, &parsed.replace),
+                        replace_all_if_match("WORLDWIDE", &parsed.search, &parsed.replace),
                         Some("earthWIDE".to_string())
                     );
                 }
@@ -2026,7 +2141,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -2046,7 +2161,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2066,7 +2181,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2090,7 +2205,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -2110,7 +2225,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2130,7 +2245,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("test 123 number", &parsed.search, &parsed.replace),
+                        replace_all_if_match("test 123 number", &parsed.search, &parsed.replace),
                         Some("test NUM number".to_string())
                     );
                 }
@@ -2150,10 +2265,10 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert!(
-                        replacement_if_match("Text 世界 more", &parsed.search, &parsed.replace)
+                        replace_all_if_match("Text 世界 more", &parsed.search, &parsed.replace)
                             .is_some()
                     );
-                    assert!(replacement_if_match("Text世界more", &parsed.search, "XX").is_none());
+                    assert!(replace_all_if_match("Text世界more", &parsed.search, "XX").is_none());
                 }
             }
 
@@ -2175,7 +2290,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -2195,7 +2310,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2215,7 +2330,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         Some("earthwide".to_string())
                     );
                 }
@@ -2239,7 +2354,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         Some("hello earth".to_string())
                     );
                 }
@@ -2259,7 +2374,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("WORLDWIDE", &parsed.search, &parsed.replace),
+                        replace_all_if_match("WORLDWIDE", &parsed.search, &parsed.replace),
                         Some("earthWIDE".to_string())
                     );
                 }
@@ -2279,7 +2394,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("SSN: 123-45-6789", &parsed.search, &parsed.replace),
+                        replace_all_if_match("SSN: 123-45-6789", &parsed.search, &parsed.replace),
                         Some("SSN: XXX-XX-XXXX".to_string())
                     );
                 }
@@ -2308,7 +2423,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match(
+                        replace_all_if_match(
                             "email: user@example.com",
                             &parsed.search,
                             &parsed.replace
@@ -2332,7 +2447,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("file: document.pdf", &parsed.search, &parsed.replace),
+                        replace_all_if_match("file: document.pdf", &parsed.search, &parsed.replace),
                         Some("file: report.pdf".to_string())
                     );
                 }
@@ -2352,7 +2467,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello WORLD", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello WORLD", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2376,7 +2491,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match(
+                        replace_all_if_match(
                             "email: user@EXAMPLE.com",
                             &parsed.search,
                             &parsed.replace
@@ -2400,7 +2515,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                        replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2424,7 +2539,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match(
+                        replace_all_if_match(
                             "Timestamp: 2023-01-15T14:30:00Z",
                             &parsed.search,
                             &parsed.replace
@@ -2448,7 +2563,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                        replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                         None
                     );
                 }
@@ -2472,7 +2587,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match(
+                        replace_all_if_match(
                             "Tag: [WARNING] message",
                             &parsed.search,
                             &parsed.replace
@@ -2496,7 +2611,7 @@ mod tests {
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
                     assert_eq!(
-                        replacement_if_match("Symbol: αβγδ", &parsed.search, &parsed.replace),
+                        replace_all_if_match("Symbol: αβγδ", &parsed.search, &parsed.replace),
                         Some("Symbol: GREEK".to_string())
                     );
                 }
@@ -2516,7 +2631,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("world hello world", &parsed.search, &parsed.replace),
+                replace_all_if_match("world hello world", &parsed.search, &parsed.replace),
                 Some("earth hello earth".to_string())
             );
         }
@@ -2534,7 +2649,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("worldwide", &parsed.search, &parsed.replace),
+                replace_all_if_match("worldwide", &parsed.search, &parsed.replace),
                 None
             );
             let search_config = SearchConfig {
@@ -2548,7 +2663,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("_world_", &parsed.search, &parsed.replace),
+                replace_all_if_match("_world_", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2566,7 +2681,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match(",world-", &parsed.search, &parsed.replace),
+                replace_all_if_match(",world-", &parsed.search, &parsed.replace),
                 Some(",earth-".to_string())
             );
             let search_config = SearchConfig {
@@ -2580,7 +2695,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("world-word", &parsed.search, &parsed.replace),
+                replace_all_if_match("world-word", &parsed.search, &parsed.replace),
                 Some("earth-word".to_string())
             );
             let search_config = SearchConfig {
@@ -2594,7 +2709,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("Hello-world!", &parsed.search, &parsed.replace),
+                replace_all_if_match("Hello-world!", &parsed.search, &parsed.replace),
                 Some("Hello-earth!".to_string())
             );
         }
@@ -2612,7 +2727,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("Hello WORLD", &parsed.search, &parsed.replace),
+                replace_all_if_match("Hello WORLD", &parsed.search, &parsed.replace),
                 None
             );
             let search_config = SearchConfig {
@@ -2626,7 +2741,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("Hello world", &parsed.search, &parsed.replace),
+                replace_all_if_match("Hello world", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2644,7 +2759,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("", &parsed.search, &parsed.replace),
+                replace_all_if_match("", &parsed.search, &parsed.replace),
                 None
             );
             let search_config = SearchConfig {
@@ -2658,7 +2773,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("hello world", &parsed.search, &parsed.replace),
+                replace_all_if_match("hello world", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2676,7 +2791,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("worldwide web", &parsed.search, &parsed.replace),
+                replace_all_if_match("worldwide web", &parsed.search, &parsed.replace),
                 None
             );
             let search_config = SearchConfig {
@@ -2690,7 +2805,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("underworld", &parsed.search, &parsed.replace),
+                replace_all_if_match("underworld", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2708,7 +2823,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("hello (world)", &parsed.search, &parsed.replace),
+                replace_all_if_match("hello (world)", &parsed.search, &parsed.replace),
                 Some("hello earth".to_string())
             );
             let search_config = SearchConfig {
@@ -2722,7 +2837,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("hello world.*", &parsed.search, &parsed.replace),
+                replace_all_if_match("hello world.*", &parsed.search, &parsed.replace),
                 Some("hello ea+rth".to_string())
             );
         }
@@ -2741,7 +2856,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("foo axxxxb bar", &parsed.search, &parsed.replace),
+                replace_all_if_match("foo axxxxb bar", &parsed.search, &parsed.replace),
                 Some("foo NEW bar".to_string())
             );
             let search_config = SearchConfig {
@@ -2755,7 +2870,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("fooaxxxxb bar", &parsed.search, &parsed.replace),
+                replace_all_if_match("fooaxxxxb bar", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2774,7 +2889,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("say hello world!", &parsed.search, &parsed.replace),
+                replace_all_if_match("say hello world!", &parsed.search, &parsed.replace),
                 Some("say hi earth!".to_string())
             );
             let search_config = SearchConfig {
@@ -2788,7 +2903,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("helloworld", &parsed.search, &parsed.replace),
+                replace_all_if_match("helloworld", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2807,7 +2922,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("foo aab abb", &parsed.search, &parsed.replace),
+                replace_all_if_match("foo aab abb", &parsed.search, &parsed.replace),
                 Some("foo X X".to_string())
             );
             let search_config = SearchConfig {
@@ -2821,7 +2936,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("ab abaab abb", &parsed.search, &parsed.replace),
+                replace_all_if_match("ab abaab abb", &parsed.search, &parsed.replace),
                 Some("X abaab X".to_string())
             );
             let search_config = SearchConfig {
@@ -2835,7 +2950,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("ababaababb", &parsed.search, &parsed.replace),
+                replace_all_if_match("ababaababb", &parsed.search, &parsed.replace),
                 None
             );
             let search_config = SearchConfig {
@@ -2849,7 +2964,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("ab ab aab abb", &parsed.search, &parsed.replace),
+                replace_all_if_match("ab ab aab abb", &parsed.search, &parsed.replace),
                 Some("X X X X".to_string())
             );
         }
@@ -2869,7 +2984,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("foo bar baz", &parsed.search, &parsed.replace),
+                replace_all_if_match("foo bar baz", &parsed.search, &parsed.replace),
                 Some("TEST baz".to_string())
             );
             // At end of string
@@ -2884,7 +2999,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("baz foo bar", &parsed.search, &parsed.replace),
+                replace_all_if_match("baz foo bar", &parsed.search, &parsed.replace),
                 Some("baz TEST".to_string())
             );
             // With punctuation
@@ -2899,7 +3014,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("a (?( foo  bar)", &parsed.search, &parsed.replace),
+                replace_all_if_match("a (?( foo  bar)", &parsed.search, &parsed.replace),
                 Some("a (?( TEST)".to_string())
             );
         }
@@ -2918,7 +3033,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("(a42b)", &parsed.search, &parsed.replace),
+                replace_all_if_match("(a42b)", &parsed.search, &parsed.replace),
                 Some("(X)".to_string())
             );
             let search_config = SearchConfig {
@@ -2932,7 +3047,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("foo.a123b!bar", &parsed.search, &parsed.replace),
+                replace_all_if_match("foo.a123b!bar", &parsed.search, &parsed.replace),
                 Some("foo.X!bar".to_string())
             );
         }
@@ -2951,7 +3066,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("test9 abc123def 8xyz", &parsed.search, &parsed.replace),
+                replace_all_if_match("test9 abc123def 8xyz", &parsed.search, &parsed.replace),
                 Some("test9 NEW 8xyz".to_string())
             );
             let search_config = SearchConfig {
@@ -2965,7 +3080,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("test9abc123def8xyz", &parsed.search, &parsed.replace),
+                replace_all_if_match("test9abc123def8xyz", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -2984,7 +3099,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("my color and colour", &parsed.search, &parsed.replace),
+                replace_all_if_match("my color and colour", &parsed.search, &parsed.replace),
                 Some("my X and X".to_string())
             );
         }
@@ -3003,7 +3118,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("", &parsed.search, &parsed.replace),
+                replace_all_if_match("", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -3022,7 +3137,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("search", &parsed.search, &parsed.replace),
+                replace_all_if_match("search", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -3041,7 +3156,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("b a c", &parsed.search, &parsed.replace),
+                replace_all_if_match("b a c", &parsed.search, &parsed.replace),
                 Some("b X c".to_string())
             );
             let search_config = SearchConfig {
@@ -3055,7 +3170,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("bac", &parsed.search, &parsed.replace),
+                replace_all_if_match("bac", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -3074,7 +3189,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("test (123) foo", &parsed.search, &parsed.replace),
+                replace_all_if_match("test (123) foo", &parsed.search, &parsed.replace),
                 Some("test X foo".to_string())
             );
         }
@@ -3093,7 +3208,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("calc λ123 β", &parsed.search, &parsed.replace),
+                replace_all_if_match("calc λ123 β", &parsed.search, &parsed.replace),
                 Some("calc X β".to_string())
             );
             let search_config = SearchConfig {
@@ -3107,7 +3222,7 @@ mod tests {
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
-                replacement_if_match("calcλ123", &parsed.search, &parsed.replace),
+                replace_all_if_match("calcλ123", &parsed.search, &parsed.replace),
                 None
             );
         }
@@ -3202,28 +3317,25 @@ mod tests {
         use super::*;
         use crate::search::search_multiline;
 
-        fn create_search_result_with_replacement(
+        /// Helper to create a ByteRange SearchResult for testing multiline replacement.
+        /// `byte_start` and `expected_content` define the byte range to replace.
+        fn create_byte_range_result(
             path: &str,
             start_line: usize,
-            lines_content: Vec<(&str, LineEnding)>,
+            end_line: usize,
+            byte_start: usize,
+            byte_end: usize,
+            expected_content: &str,
             replacement: &str,
         ) -> SearchResultWithReplacement {
-            let lines: Vec<Line> = lines_content
-                .into_iter()
-                .map(|(content, ending)| Line {
-                    content: content.to_string(),
-                    line_ending: ending,
-                })
-                .collect();
-            let end_line = start_line + lines.len() - 1;
-
             SearchResultWithReplacement {
-                search_result: SearchResult::new(
+                search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from(path)),
                     start_line,
                     end_line,
-                    None,
-                    lines,
+                    byte_start,
+                    byte_end,
+                    expected_content.to_string(),
                     true,
                 ),
                 replacement: replacement.to_string(),
@@ -3231,23 +3343,71 @@ mod tests {
             }
         }
 
+        /// Helper to create a ByteRange SearchResult from line content.
+        /// Computes byte offsets by reading the file and finding the line positions.
+        fn create_search_result_with_replacement(
+            path: &str,
+            start_line: usize,
+            lines_content: Vec<(&str, LineEnding)>,
+            replacement: &str,
+        ) -> SearchResultWithReplacement {
+            use std::io::{BufRead, BufReader};
+
+            let file = std::fs::File::open(path).expect("Failed to open test file");
+            let reader = BufReader::new(file);
+
+            let mut byte_start = 0;
+            let mut current_line = 1;
+
+            // Skip to start_line and track byte position
+            for line_result in reader.lines() {
+                if current_line >= start_line {
+                    break;
+                }
+                let line = line_result.expect("Failed to read line");
+                byte_start += line.len() + 1; // +1 for newline
+                current_line += 1;
+            }
+
+            // Build expected content from lines
+            let expected_content: String = lines_content
+                .iter()
+                .map(|(content, ending)| format!("{}{}", content, ending.as_str()))
+                .collect();
+
+            let byte_end = byte_start + expected_content.len() - 1;
+            let end_line = start_line + lines_content.len() - 1;
+
+            create_byte_range_result(
+                path,
+                start_line,
+                end_line,
+                byte_start,
+                byte_end,
+                &expected_content,
+                replacement,
+            )
+        }
+
         #[test]
         fn test_single_multiline_replacement() {
             let temp_dir = TempDir::new().unwrap();
+            // "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            // bytes: 0-6=line1, 7-13=line2, 14-20=line3, 21-27=line4, 28-34=line5
             let file_path = create_test_file(
                 &temp_dir,
                 "test.txt",
                 "line 1\nline 2\nline 3\nline 4\nline 5\n",
             );
 
-            let mut results = vec![create_search_result_with_replacement(
+            // Replace lines 2-4: "line 2\nline 3\nline 4\n" = bytes 7-27
+            let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 2,
-                vec![
-                    ("line 2", LineEnding::Lf),
-                    ("line 3", LineEnding::Lf),
-                    ("line 4", LineEnding::Lf),
-                ],
+                4,
+                7,
+                27,
+                "line 2\nline 3\nline 4\n",
                 "REPLACED\n",
             )];
 
@@ -3261,6 +3421,8 @@ mod tests {
         #[test]
         fn test_non_overlapping_multiline_replacements() {
             let temp_dir = TempDir::new().unwrap();
+            // "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\n"
+            // bytes: 0-6=line1, 7-13=line2, 14-20=line3, 21-27=line4, 28-34=line5, 35-41=line6, 42-48=line7
             let file_path = create_test_file(
                 &temp_dir,
                 "test.txt",
@@ -3268,20 +3430,24 @@ mod tests {
             );
 
             let mut results = vec![
-                create_search_result_with_replacement(
+                // Replace lines 1-2: "line 1\nline 2\n" = bytes 0-13
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![("line 1", LineEnding::Lf), ("line 2", LineEnding::Lf)],
+                    2,
+                    0,
+                    13,
+                    "line 1\nline 2\n",
                     "FIRST\n",
                 ),
-                create_search_result_with_replacement(
+                // Replace lines 5-7: "line 5\nline 6\nline 7\n" = bytes 28-48
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     5,
-                    vec![
-                        ("line 5", LineEnding::Lf),
-                        ("line 6", LineEnding::Lf),
-                        ("line 7", LineEnding::Lf),
-                    ],
+                    7,
+                    28,
+                    48,
+                    "line 5\nline 6\nline 7\n",
                     "SECOND\n",
                 ),
             ];
@@ -3297,33 +3463,33 @@ mod tests {
         #[test]
         fn test_conflict_overlapping_ranges() {
             let temp_dir = TempDir::new().unwrap();
+            // "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            // bytes: 0-6=line1, 7-13=line2, 14-20=line3, 21-27=line4, 28-34=line5
             let file_path = create_test_file(
                 &temp_dir,
                 "test.txt",
                 "line 1\nline 2\nline 3\nline 4\nline 5\n",
             );
 
-            // First replacement: lines 2-4
-            // Second replacement: lines 3-5 (overlaps with first)
+            // First replacement: lines 2-4 = bytes 7-27
+            // Second replacement: lines 3-5 = bytes 14-34 (overlaps with first)
             let mut results = vec![
-                create_search_result_with_replacement(
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     2,
-                    vec![
-                        ("line 2", LineEnding::Lf),
-                        ("line 3", LineEnding::Lf),
-                        ("line 4", LineEnding::Lf),
-                    ],
+                    4,
+                    7,
+                    27,
+                    "line 2\nline 3\nline 4\n",
                     "FIRST\n",
                 ),
-                create_search_result_with_replacement(
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     3,
-                    vec![
-                        ("line 3", LineEnding::Lf),
-                        ("line 4", LineEnding::Lf),
-                        ("line 5", LineEnding::Lf),
-                    ],
+                    5,
+                    14,
+                    34,
+                    "line 3\nline 4\nline 5\n",
                     "SECOND\n",
                 ),
             ];
@@ -3345,6 +3511,11 @@ mod tests {
         #[test]
         fn test_multiple_overlapping_conflicts() {
             let temp_dir = TempDir::new().unwrap();
+            // File: "line 1\nline 2\n...line 15\n"
+            // Byte positions:
+            // lines 1-9: 7 bytes each (bytes 0-62)
+            // lines 10-15: 8 bytes each
+            // line 9: 56-62, line 10: 63-70, line 11: 71-78, line 12: 79-86, line 13: 87-94
             let file_content = (1..=15)
                 .map(|i| format!("line {i}"))
                 .collect::<Vec<_>>()
@@ -3353,31 +3524,34 @@ mod tests {
             let file_path = create_test_file(&temp_dir, "test.txt", &file_content);
 
             let mut results = vec![
-                create_search_result_with_replacement(
+                // First: lines 9-11 = bytes 56-78
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     9,
-                    vec![
-                        ("line 9", LineEnding::Lf),
-                        ("line 10", LineEnding::Lf),
-                        ("line 11", LineEnding::Lf),
-                    ],
+                    11,
+                    56,
+                    78,
+                    "line 9\nline 10\nline 11\n",
                     "FIRST\n",
                 ),
-                create_search_result_with_replacement(
+                // Second: lines 10-13 = bytes 63-94 (overlaps with first)
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     10,
-                    vec![
-                        ("line 10", LineEnding::Lf),
-                        ("line 11", LineEnding::Lf),
-                        ("line 12", LineEnding::Lf),
-                        ("line 13", LineEnding::Lf),
-                    ],
+                    13,
+                    63,
+                    94,
+                    "line 10\nline 11\nline 12\nline 13\n",
                     "SECOND\n",
                 ),
-                create_search_result_with_replacement(
+                // Third: line 12 = bytes 79-86 (no overlap with first after first succeeds)
+                create_byte_range_result(
                     file_path.to_str().unwrap(),
                     12,
-                    vec![("line 12", LineEnding::Lf)],
+                    12,
+                    79,
+                    86,
+                    "line 12\n",
                     "THIRD\n",
                 ),
             ];
@@ -3392,7 +3566,7 @@ mod tests {
                 results[1].replace_result,
                 Some(ReplaceResult::Error(ref msg)) if msg.contains("Conflicts")
             ));
-            // Third succeeds (12-12, no overlap with 9-11)
+            // Third succeeds (12-12, no overlap with first which ends at byte 78)
             assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
 
             let expected = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nFIRST\nTHIRD\nline 13\nline 14\nline 15\n";
@@ -3400,7 +3574,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
         fn test_conflict_detection_byte_offsets_no_overlap() {
             // Test that non-overlapping byte offsets on same line don't conflict
             let temp_dir = TempDir::new().unwrap();
@@ -3408,45 +3581,39 @@ mod tests {
 
             let mut results = vec![
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((0, 2)), // "abc" at bytes 0-2
-                        vec![Line {
-                            content: "abc def ghi".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        0,
+                        2,
+                        "abc".to_string(),
                         true,
                     ),
                     replacement: "XXX".to_string(),
                     replace_result: None,
                 },
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((4, 6)), // "def" at bytes 4-6
-                        vec![Line {
-                            content: "abc def ghi".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        4,
+                        6,
+                        "def".to_string(),
                         true,
                     ),
                     replacement: "YYY".to_string(),
                     replace_result: None,
                 },
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((8, 10)), // "ghi" at bytes 8-10
-                        vec![Line {
-                            content: "abc def ghi".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        8,
+                        10,
+                        "ghi".to_string(),
                         true,
                     ),
                     replacement: "ZZZ".to_string(),
@@ -3467,7 +3634,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
         fn test_conflict_detection_byte_offsets_with_overlap() {
             // Test that overlapping byte offsets are detected as conflicts
             let temp_dir = TempDir::new().unwrap();
@@ -3475,30 +3641,26 @@ mod tests {
 
             let mut results = vec![
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((0, 3)), // "abcd" at bytes 0-3
-                        vec![Line {
-                            content: "abcdef".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        0,
+                        2,
+                        "abc".to_string(),
                         true,
                     ),
                     replacement: "XXX".to_string(),
                     replace_result: None,
                 },
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((2, 5)), // "cdef" at bytes 2-5 (overlaps with first)
-                        vec![Line {
-                            content: "abcdef".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        2,
+                        5,
+                        "cdef".to_string(),
                         true,
                     ),
                     replacement: "YYY".to_string(),
@@ -3511,7 +3673,7 @@ mod tests {
 
             // First should succeed
             assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-            // Second should be marked as conflict (overlaps with first at bytes 2-3)
+            // Second should be marked as conflict (overlaps with first at byte 2)
             assert_eq!(
                 results[1].replace_result,
                 Some(ReplaceResult::Error(
@@ -3523,7 +3685,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
         fn test_conflict_detection_byte_offsets_adjacent() {
             // Test that adjacent (touching) byte ranges conflict
             // Since byte offsets are inclusive, "abc" ends at byte 2 and "cdef" starts at byte 2,
@@ -3533,30 +3694,26 @@ mod tests {
 
             let mut results = vec![
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((0, 2)), // "abc" at bytes 0-2 (inclusive)
-                        vec![Line {
-                            content: "abcdef".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        0,
+                        2,
+                        "abc".to_string(),
                         true,
                     ),
                     replacement: "XXX".to_string(),
                     replace_result: None,
                 },
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
                         1,
                         1,
-                        Some((2, 5)), // "cdef" at bytes 2-5 (shares byte 2 with first)
-                        vec![Line {
-                            content: "abcdef".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        2,
+                        5,
+                        "cdef".to_string(),
                         true,
                     ),
                     replacement: "YYY".to_string(),
@@ -3581,73 +3738,6 @@ mod tests {
         }
 
         #[test]
-        fn test_conflict_detection_line_level_overlap() {
-            // Test line-level conflict detection (no byte offsets)
-            let temp_dir = TempDir::new().unwrap();
-            let file_path = create_test_file(&temp_dir, "test.txt", "line 1\nline 2\nline 3\n");
-
-            let mut results = vec![
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(file_path.clone()),
-                        1,
-                        2,
-                        None, // No byte offsets - line-level detection
-                        vec![
-                            Line {
-                                content: "line 1".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line 2".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "XXX\n".to_string(),
-                    replace_result: None,
-                },
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(file_path.clone()),
-                        2,
-                        3,
-                        None, // No byte offsets
-                        vec![
-                            Line {
-                                content: "line 2".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line 3".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "YYY\n".to_string(),
-                    replace_result: None,
-                },
-            ];
-
-            let result = replace_in_file(&mut results);
-            assert!(result.is_ok());
-
-            // First should succeed
-            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
-            // Second should be marked as conflict (line 2 overlaps with first)
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
-            // File should only have first replacement
-            assert_file_content(&file_path, "XXX\nline 3\n");
-        }
-
-        #[test]
         fn test_conflict_detection_line_level_adjacent() {
             // Test that adjacent lines (no overlap) don't conflict
             let temp_dir = TempDir::new().unwrap();
@@ -3655,30 +3745,22 @@ mod tests {
 
             let mut results = vec![
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_line(
                         Some(file_path.clone()),
                         1,
-                        1,
-                        None,
-                        vec![Line {
-                            content: "line 1".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        "line 1".to_string(),
+                        LineEnding::Lf,
                         true,
                     ),
                     replacement: "XXX\n".to_string(),
                     replace_result: None,
                 },
                 SearchResultWithReplacement {
-                    search_result: SearchResult::new(
+                    search_result: SearchResult::new_line(
                         Some(file_path),
                         2,
-                        2,
-                        None,
-                        vec![Line {
-                            content: "line 2".to_string(),
-                            line_ending: LineEnding::Lf,
-                        }],
+                        "line 2".to_string(),
+                        LineEnding::Lf,
                         true,
                     ),
                     replacement: "YYY\n".to_string(),
@@ -3985,12 +4067,10 @@ mod tests {
 
             let result = replace_in_file(&mut results);
             assert!(result.is_ok());
-            assert!(matches!(
-                results[0].replace_result,
-                Some(ReplaceResult::Error(ref msg)) if msg.contains("shorter than expected")
-            ));
+            // replace_result is None because we hit EOF - calculate_statistics will mark as error
+            assert!(results[0].replace_result.is_none());
 
-            // File should remain unchanged
+            // File should remain unchanged (we read partial content and wrote it back)
             assert_file_content(&file_path, "line 1\nline 2\n");
         }
 
@@ -4072,7 +4152,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
         fn test_multiple_matches_same_line_no_conflict() {
             // Test that multiple matches on the same line with byte offsets don't conflict
             // "foo\nbar baz bar qux\nbar\nbux\n"
@@ -4092,25 +4171,49 @@ mod tests {
             assert_eq!(search_results.len(), 3);
 
             // First match: "bar" at bytes 4-6 on line 2
-            assert_eq!(search_results[0].start_line_number, 2);
-            assert_eq!(search_results[0].end_line_number, 2);
-            assert_eq!(search_results[0].byte_offsets, Some((4, 6)));
-            assert_eq!(search_results[0].lines.len(), 1);
-            assert_eq!(search_results[0].lines[0].content, "bar baz bar qux");
+            assert_eq!(search_results[0].start_line_number(), 2);
+            assert_eq!(search_results[0].end_line_number(), 2);
+            let MatchContent::ByteRange {
+                byte_start: bs0,
+                byte_end: be0,
+                expected_content: ec0,
+                ..
+            } = &search_results[0].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((*bs0, *be0), (4, 6));
+            assert_eq!(ec0, "bar");
 
             // Second match: "bar" at bytes 12-14 on line 2 (same line!)
-            assert_eq!(search_results[1].start_line_number, 2);
-            assert_eq!(search_results[1].end_line_number, 2);
-            assert_eq!(search_results[1].byte_offsets, Some((12, 14)));
-            assert_eq!(search_results[1].lines.len(), 1);
-            assert_eq!(search_results[1].lines[0].content, "bar baz bar qux");
+            assert_eq!(search_results[1].start_line_number(), 2);
+            assert_eq!(search_results[1].end_line_number(), 2);
+            let MatchContent::ByteRange {
+                byte_start: bs1,
+                byte_end: be1,
+                expected_content: ec1,
+                ..
+            } = &search_results[1].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((*bs1, *be1), (12, 14));
+            assert_eq!(ec1, "bar");
 
             // Third match: "bar" at bytes 20-22 on line 3
-            assert_eq!(search_results[2].start_line_number, 3);
-            assert_eq!(search_results[2].end_line_number, 3);
-            assert_eq!(search_results[2].byte_offsets, Some((20, 22)));
-            assert_eq!(search_results[2].lines.len(), 1);
-            assert_eq!(search_results[2].lines[0].content, "bar");
+            assert_eq!(search_results[2].start_line_number(), 3);
+            assert_eq!(search_results[2].end_line_number(), 3);
+            let MatchContent::ByteRange {
+                byte_start: bs2,
+                byte_end: be2,
+                expected_content: ec2,
+                ..
+            } = &search_results[2].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((*bs2, *be2), (20, 22));
+            assert_eq!(ec2, "bar");
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4139,7 +4242,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "temp ignore until multiline is implemented"] // TODO(multiline): Enable when within-line replacement is implemented
         fn test_multiple_matches_same_line_all_replaced() {
             // Test that multiple matches on the same line are all replaced correctly
             // when they have non-overlapping byte offsets
@@ -4156,9 +4258,33 @@ mod tests {
             assert_eq!(search_results.len(), 3);
 
             // Verify byte offsets are correct
-            assert_eq!(search_results[0].byte_offsets, Some((4, 6)));
-            assert_eq!(search_results[1].byte_offsets, Some((12, 14)));
-            assert_eq!(search_results[2].byte_offsets, Some((20, 22)));
+            let MatchContent::ByteRange {
+                byte_start: bs0,
+                byte_end: be0,
+                ..
+            } = &search_results[0].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            let MatchContent::ByteRange {
+                byte_start: bs1,
+                byte_end: be1,
+                ..
+            } = &search_results[1].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            let MatchContent::ByteRange {
+                byte_start: bs2,
+                byte_end: be2,
+                ..
+            } = &search_results[2].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((*bs0, *be0), (4, 6));
+            assert_eq!((*bs1, *be1), (12, 14));
+            assert_eq!((*bs2, *be2), (20, 22));
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4189,26 +4315,22 @@ mod tests {
     mod mark_conflicting_replacements_tests {
         use super::{super::mark_conflicting_replacements, *};
 
+        /// Create a ByteRange result for conflict detection testing.
+        /// Since mark_conflicting_replacements only handles ByteRange, this always creates ByteRange.
         fn create_replacement_result(
             start_line: usize,
             end_line: usize,
-            byte_offsets: Option<(usize, usize)>,
+            byte_start: usize,
+            byte_end: usize,
         ) -> SearchResultWithReplacement {
-            let num_lines = end_line - start_line + 1;
-            let lines = (0..num_lines)
-                .map(|i| Line {
-                    content: format!("test-{}", start_line + i),
-                    line_ending: LineEnding::Lf,
-                })
-                .collect();
-
             SearchResultWithReplacement {
-                search_result: SearchResult::new(
+                search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from("test.txt")),
                     start_line,
                     end_line,
-                    byte_offsets,
-                    lines,
+                    byte_start,
+                    byte_end,
+                    format!("content-{}-{}", byte_start, byte_end),
                     true,
                 ),
                 replacement: "REPLACED".to_string(),
@@ -4217,11 +4339,12 @@ mod tests {
         }
 
         #[test]
-        fn test_no_conflicts_sequential_lines() {
+        fn test_no_conflicts_sequential_byte_ranges() {
+            // Sequential non-overlapping byte ranges: 0-9, 10-19, 20-29
             let mut results = vec![
-                create_replacement_result(1, 1, None),
-                create_replacement_result(2, 2, None),
-                create_replacement_result(3, 3, None),
+                create_replacement_result(1, 1, 0, 9),
+                create_replacement_result(2, 2, 10, 19),
+                create_replacement_result(3, 3, 20, 29),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4233,10 +4356,11 @@ mod tests {
         }
 
         #[test]
-        fn test_conflict_same_line() {
+        fn test_conflict_overlapping_byte_ranges() {
+            // Overlapping byte ranges: 0-10 and 5-15 overlap
             let mut results = vec![
-                create_replacement_result(2, 2, None),
-                create_replacement_result(2, 2, None),
+                create_replacement_result(1, 1, 0, 10),
+                create_replacement_result(1, 1, 5, 15),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4252,59 +4376,13 @@ mod tests {
         }
 
         #[test]
-        fn test_conflict_overlapping_multiline() {
-            // Manually create multiline results to satisfy validation
+        fn test_conflict_overlapping_multiline_byte_ranges() {
+            // Two multiline results with overlapping byte ranges
+            // First: bytes 0-17 (lines 1-3)
+            // Second: bytes 6-23 (lines 2-4) - overlaps with first
             let mut results = vec![
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(PathBuf::from("test.txt")),
-                        1,
-                        3,
-                        None,
-                        vec![
-                            Line {
-                                content: "line1".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line2".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line3".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "REPLACED".to_string(),
-                    replace_result: None,
-                },
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(PathBuf::from("test.txt")),
-                        2,
-                        4,
-                        None,
-                        vec![
-                            Line {
-                                content: "line2".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line3".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line4".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "REPLACED".to_string(),
-                    replace_result: None,
-                },
+                create_replacement_result(1, 3, 0, 17),
+                create_replacement_result(2, 4, 6, 23),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4320,59 +4398,11 @@ mod tests {
         }
 
         #[test]
-        fn test_no_conflict_adjacent_multiline() {
-            // Manually create multiline results to satisfy validation
+        fn test_no_conflict_adjacent_multiline_byte_ranges() {
+            // Adjacent non-overlapping multiline byte ranges
             let mut results = vec![
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(PathBuf::from("test.txt")),
-                        1,
-                        3,
-                        None,
-                        vec![
-                            Line {
-                                content: "line1".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line2".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line3".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "REPLACED".to_string(),
-                    replace_result: None,
-                },
-                SearchResultWithReplacement {
-                    search_result: SearchResult::new(
-                        Some(PathBuf::from("test.txt")),
-                        4,
-                        6,
-                        None,
-                        vec![
-                            Line {
-                                content: "line4".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line5".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                            Line {
-                                content: "line6".to_string(),
-                                line_ending: LineEnding::Lf,
-                            },
-                        ],
-                        true,
-                    ),
-                    replacement: "REPLACED".to_string(),
-                    replace_result: None,
-                },
+                create_replacement_result(1, 3, 0, 17),
+                create_replacement_result(4, 6, 18, 35),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4385,9 +4415,9 @@ mod tests {
         #[test]
         fn test_byte_offsets_no_overlap_same_line() {
             let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(1, 1, Some((6, 10))),
-                create_replacement_result(1, 1, Some((11, 15))),
+                create_replacement_result(1, 1, 0, 5),
+                create_replacement_result(1, 1, 6, 10),
+                create_replacement_result(1, 1, 11, 15),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4402,8 +4432,8 @@ mod tests {
         fn test_byte_offsets_touching_conflict() {
             // Byte offsets are inclusive, so end=5 and start=5 should conflict
             let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(1, 1, Some((5, 10))),
+                create_replacement_result(1, 1, 0, 5),
+                create_replacement_result(1, 1, 5, 10),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4421,8 +4451,8 @@ mod tests {
         #[test]
         fn test_byte_offsets_overlap_conflict() {
             let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 10))),
-                create_replacement_result(1, 1, Some((5, 15))),
+                create_replacement_result(1, 1, 0, 10),
+                create_replacement_result(1, 1, 5, 15),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4440,9 +4470,9 @@ mod tests {
         #[test]
         fn test_byte_offsets_across_lines() {
             let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(2, 2, Some((10, 15))),
-                create_replacement_result(2, 2, Some((16, 20))),
+                create_replacement_result(1, 1, 0, 5),
+                create_replacement_result(2, 2, 10, 15),
+                create_replacement_result(2, 2, 16, 20),
             ];
 
             mark_conflicting_replacements(&mut results);
@@ -4454,81 +4484,64 @@ mod tests {
         }
 
         #[test]
-        fn test_sorting_by_line_then_byte() {
+        fn test_sorting_by_byte_offset() {
             // Results provided out of order
             let mut results = vec![
-                create_replacement_result(2, 2, Some((10, 15))),
-                create_replacement_result(1, 1, Some((5, 8))),
-                create_replacement_result(1, 1, Some((0, 3))),
+                create_replacement_result(2, 2, 10, 15),
+                create_replacement_result(1, 1, 5, 8),
+                create_replacement_result(1, 1, 0, 3),
             ];
 
             mark_conflicting_replacements(&mut results);
 
-            // After sorting: line 1 byte 0-3, line 1 byte 5-8, line 2 byte 10-15
+            // After sorting by byte_start: 0-3, 5-8, 10-15
             assert_eq!(results.len(), 3);
-            assert_eq!(results[0].search_result.start_line_number, 1);
-            assert_eq!(results[0].search_result.byte_offsets, Some((0, 3)));
+            let MatchContent::ByteRange {
+                byte_start: bs0,
+                byte_end: be0,
+                ..
+            } = results[0].search_result.content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((bs0, be0), (0, 3));
             assert_eq!(results[0].replace_result, None);
 
-            assert_eq!(results[1].search_result.start_line_number, 1);
-            assert_eq!(results[1].search_result.byte_offsets, Some((5, 8)));
+            let MatchContent::ByteRange {
+                byte_start: bs1,
+                byte_end: be1,
+                ..
+            } = results[1].search_result.content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((bs1, be1), (5, 8));
             assert_eq!(results[1].replace_result, None);
 
-            assert_eq!(results[2].search_result.start_line_number, 2);
-            assert_eq!(results[2].search_result.byte_offsets, Some((10, 15)));
+            let MatchContent::ByteRange {
+                byte_start: bs2,
+                byte_end: be2,
+                ..
+            } = results[2].search_result.content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((bs2, be2), (10, 15));
             assert_eq!(results[2].replace_result, None);
         }
 
         #[test]
-        fn test_mixed_byte_and_line_mode() {
-            // First result has byte offsets, second doesn't
+        fn test_chain_of_overlapping_conflicts() {
+            // All overlap: 0-10, 5-15, 10-20
             let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(2, 2, None),
+                create_replacement_result(1, 1, 0, 10),
+                create_replacement_result(1, 1, 5, 15),
+                create_replacement_result(1, 2, 10, 20),
             ];
 
             mark_conflicting_replacements(&mut results);
 
-            assert_eq!(results.len(), 2);
-            assert_eq!(results[0].replace_result, None);
-            assert_eq!(results[1].replace_result, None);
-        }
-
-        #[test]
-        fn test_mixed_byte_and_line_mode_same_line() {
-            // Line-mode and byte-mode results on the same line should conflict
-            // None sorts before Some, so line-mode comes first and succeeds,
-            // byte-mode comes second and should detect conflict via line-level check
-            let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(1, 1, None),
-            ];
-
-            mark_conflicting_replacements(&mut results);
-
-            assert_eq!(results.len(), 2);
-            // After sorting: None comes first (succeeds), Some(0) comes second (conflicts)
-            assert_eq!(results[0].replace_result, None);
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
-        }
-
-        #[test]
-        fn test_chain_of_conflicts() {
-            let mut results = vec![
-                create_replacement_result(1, 1, None),
-                create_replacement_result(1, 1, None),
-                create_replacement_result(1, 2, None),
-                create_replacement_result(2, 2, None),
-            ];
-
-            mark_conflicting_replacements(&mut results);
-
-            assert_eq!(results.len(), 4);
+            assert_eq!(results.len(), 3);
             assert_eq!(results[0].replace_result, None);
             assert_eq!(
                 results[1].replace_result,
@@ -4542,7 +4555,6 @@ mod tests {
                     "Conflicts with previous replacement".to_owned()
                 ))
             );
-            assert_eq!(results[3].replace_result, None);
         }
 
         #[test]
@@ -4554,116 +4566,506 @@ mod tests {
 
         #[test]
         fn test_single_result() {
-            let mut results = vec![create_replacement_result(1, 1, None)];
+            let mut results = vec![create_replacement_result(1, 1, 0, 10)];
             mark_conflicting_replacements(&mut results);
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].replace_result, None);
         }
+    }
 
-        #[test]
-        fn test_byte_mode_then_line_mode_same_line() {
-            // When user provides byte-mode then line-mode (reverse of typical sort order),
-            // sorting will put line-mode first (None < Some), and they should still conflict
-            let mut results = vec![
-                create_replacement_result(1, 1, Some((0, 5))),
-                create_replacement_result(1, 1, None),
-            ];
+    mod byte_mode_replace_tests {
+        use super::*;
 
-            mark_conflicting_replacements(&mut results);
+        fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            path
+        }
 
-            assert_eq!(results.len(), 2);
-            // First result (line-mode after sort) succeeds
-            assert_eq!(results[0].replace_result, None);
-            // Second result (byte-mode after sort) conflicts with line-mode
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
+        fn assert_file_content(path: &Path, expected: &str) {
+            let actual = std::fs::read_to_string(path).unwrap();
+            assert_eq!(actual, expected, "File content mismatch");
+        }
+
+        fn create_byte_range_result(
+            path: &str,
+            start_line: usize,
+            end_line: usize,
+            byte_start: usize,
+            byte_end: usize,
+            expected_content: &str,
+            replacement: &str,
+        ) -> SearchResultWithReplacement {
+            SearchResultWithReplacement {
+                search_result: SearchResult::new_byte_range(
+                    Some(PathBuf::from(path)),
+                    start_line,
+                    end_line,
+                    byte_start,
+                    byte_end,
+                    expected_content.to_string(),
+                    true,
+                ),
+                replacement: replacement.to_string(),
+                replace_result: None,
+            }
         }
 
         #[test]
-        fn test_line_mode_multiline_with_byte_mode_on_spanned_line() {
-            // Line-mode spans lines 1-3, byte-mode is on line 2 (within the span)
-            let mut results = vec![
-                create_replacement_result(1, 3, None),
-                create_replacement_result(2, 2, Some((0, 5))),
-            ];
+        fn test_byte_mode_happy_path_single_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            mark_conflicting_replacements(&mut results);
+            // Replace "world" (bytes 6-10) with "rust"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "rust",
+            )];
 
-            assert_eq!(results.len(), 2);
-            assert_eq!(results[0].replace_result, None);
-            // Byte-mode on line 2 conflicts because line-mode covers lines 1-3
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello rust");
         }
 
         #[test]
-        fn test_byte_mode_on_line_then_line_mode_multiline_spanning_it() {
-            // Byte-mode on line 2, then line-mode spanning lines 1-3
+        fn test_byte_mode_happy_path_multiple_replacements() {
+            let temp_dir = TempDir::new().unwrap();
+            // "foo bar baz qux" - bytes: foo=0-2, bar=4-6, baz=8-10, qux=12-14
+            let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz qux");
+
             let mut results = vec![
-                create_replacement_result(2, 2, Some((0, 5))),
-                create_replacement_result(1, 3, None),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 14, "qux", "DDD"),
             ];
 
-            mark_conflicting_replacements(&mut results);
-
-            assert_eq!(results.len(), 2);
-            // After sorting: line-mode (1-3) comes first, byte-mode (line 2) comes second
-            // Line-mode succeeds
-            assert_eq!(results[0].replace_result, None);
-            // Byte-mode on line 2 conflicts (2 <= 3, last_end_line from line-mode)
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "AAA bar CCC DDD");
         }
 
         #[test]
-        fn test_line_mode_then_byte_mode_on_next_line() {
-            // Line-mode on line 1, byte-mode on line 2 - should NOT conflict
-            let mut results = vec![
-                create_replacement_result(1, 1, None),
-                create_replacement_result(2, 2, Some((0, 5))),
-            ];
+        fn test_byte_mode_replacement_at_start() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            mark_conflicting_replacements(&mut results);
+            // Replace "hello" (bytes 0-4) with "hi"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                0,
+                4,
+                "hello",
+                "hi",
+            )];
 
-            assert_eq!(results.len(), 2);
-            assert_eq!(results[0].replace_result, None);
-            assert_eq!(results[1].replace_result, None);
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hi world");
         }
 
         #[test]
-        fn test_multiple_line_modes_then_byte_mode() {
-            // Multiple line-mode results, then byte-mode
-            // Second line-mode conflicts with first, byte-mode after is on different line
+        fn test_byte_mode_replacement_at_end() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            // Replace "world" (bytes 6-10) with "everyone"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "everyone",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello everyone");
+        }
+
+        #[test]
+        fn test_byte_mode_file_content_changed() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            // Create result expecting "world" but file has different content at that position
+            // We'll manually overwrite the file to simulate a change
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world", // Expected
+                "rust",
+            )];
+
+            // Change the file content before replacement
+            std::fs::write(&file_path, "hello earth").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert!(matches!(
+                &results[0].replace_result,
+                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+            ));
+            // File should have original (changed) content preserved
+            assert_file_content(&file_path, "hello earth");
+        }
+
+        #[test]
+        fn test_byte_mode_file_fully_truncated_single_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            // Create result expecting bytes 6-10 ("world")
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "rust",
+            )];
+
+            // Truncate file to only "hello" (5 bytes + null at position 5 would be beyond)
+            std::fs::write(&file_path, "hello").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            // replace_result is None because we hit EOF - calculate_statistics will mark as error
+            assert!(results[0].replace_result.is_none());
+            // File should remain as truncated (we write what we could read)
+            assert_file_content(&file_path, "hello");
+        }
+
+        #[test]
+        fn test_byte_mode_file_partially_truncated_single_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world hi world");
+
             let mut results = vec![
-                create_replacement_result(1, 1, None),
-                create_replacement_result(1, 1, None),
-                create_replacement_result(2, 2, Some((0, 5))),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 6, 10, "world", "rust"),
+                create_byte_range_result(
+                    file_path.to_str().unwrap(),
+                    1,
+                    1,
+                    15,
+                    19,
+                    "world",
+                    "blah",
+                ),
             ];
 
-            mark_conflicting_replacements(&mut results);
+            std::fs::write(&file_path, "hello world hi wo").unwrap();
 
-            assert_eq!(results.len(), 3);
-            assert_eq!(results[0].replace_result, None);
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
-            // Byte-mode on line 2 should NOT conflict with line 1
-            assert_eq!(results[2].replace_result, None);
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second result is None because we hit EOF - calculate_statistics will mark as error
+            assert!(results[1].replace_result.is_none());
+            // File should remain as truncated (we write what we could read)
+            assert_file_content(&file_path, "hello rust hi wo");
+        }
+
+        #[test]
+        fn test_byte_mode_file_truncated_partial_match() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world test");
+
+            // Create result expecting bytes 6-10 ("world")
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "rust",
+            )];
+
+            // Truncate file to "hello wo" (8 bytes) - partial match
+            std::fs::write(&file_path, "hello wo").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            // replace_result is None because we hit EOF - calculate_statistics will mark as error
+            assert!(results[0].replace_result.is_none());
+            // File should have "hello" + whatever was read ("wo")
+            assert_file_content(&file_path, "hello wo");
+        }
+
+        #[test]
+        fn test_byte_mode_file_truncated_multiple_replacements() {
+            let temp_dir = TempDir::new().unwrap();
+            // "foo bar baz qux" - bytes: foo=0-2, bar=4-6, baz=8-10, qux=12-14
+            let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz qux");
+
+            let mut results = vec![
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 14, "qux", "DDD"),
+            ];
+
+            // Truncate file after "foo bar " (8 bytes) - first replacement succeeds,
+            // second is partially there, third is gone
+            std::fs::write(&file_path, "foo bar b").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            // First replacement should succeed
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second and third replacements are None (EOF hit during second, third never processed)
+            assert!(results[1].replace_result.is_none());
+            assert!(results[2].replace_result.is_none());
+            // File should have first replacement + copied bytes + partial read bytes
+            assert_file_content(&file_path, "AAA bar b");
+        }
+
+        #[test]
+        fn test_byte_mode_first_replacement_succeeds_second_content_changed() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz");
+
+            let mut results = vec![
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
+            ];
+
+            // Change content at second match position
+            std::fs::write(&file_path, "foo bar qux").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            // First replacement should succeed
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            // Second replacement should fail (content mismatch)
+            assert!(matches!(
+                &results[1].replace_result,
+                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+            ));
+            // File should have first replacement + original (changed) content preserved
+            assert_file_content(&file_path, "AAA bar qux");
+        }
+
+        #[test]
+        fn test_byte_mode_replacement_with_different_length() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            // Replace "world" (5 chars) with "everyone" (8 chars)
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "everyone",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello everyone");
+        }
+
+        #[test]
+        fn test_byte_mode_multiline_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            // "line1\nline2\nline3\n" - line1\n = 0-5, line2\n = 6-11, line3\n = 12-17
+            let file_path = create_test_file(&temp_dir, "test.txt", "line1\nline2\nline3\n");
+
+            // Replace "line2\n" (bytes 6-11) with "REPLACED\n"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                2,
+                2,
+                6,
+                11,
+                "line2\n",
+                "REPLACED\n",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "line1\nREPLACED\nline3\n");
+        }
+
+        #[test]
+        fn test_byte_mode_spanning_multiple_lines() {
+            let temp_dir = TempDir::new().unwrap();
+            // "line1\nline2\nline3\n"
+            let file_path = create_test_file(&temp_dir, "test.txt", "line1\nline2\nline3\n");
+
+            // Replace bytes spanning lines 1-2 (bytes 0-11 = "line1\nline2\n")
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                2,
+                0,
+                11,
+                "line1\nline2\n",
+                "REPLACED\n",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "REPLACED\nline3\n");
+        }
+
+        #[test]
+        fn test_byte_mode_empty_file() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello");
+
+            // Create result expecting bytes 0-4 ("hello")
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                0,
+                4,
+                "hello",
+                "world",
+            )];
+
+            // Empty the file
+            std::fs::write(&file_path, "").unwrap();
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            // replace_result is None because we hit EOF - calculate_statistics will mark as error
+            assert!(results[0].replace_result.is_none());
+            // File should remain empty
+            assert_file_content(&file_path, "");
+        }
+
+        #[test]
+        fn test_byte_mode_preserves_trailing_content() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world and more");
+
+            // Replace only "world" (bytes 6-10), should preserve " and more"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "rust",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello rust and more");
+        }
+
+        #[test]
+        fn test_byte_mode_empty_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            // Replace "world" with empty string
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello ");
+        }
+
+        #[test]
+        fn test_byte_mode_unicode_content() {
+            let temp_dir = TempDir::new().unwrap();
+            // "hello 世界 test" - 世界 starts at byte 6, each char is 3 bytes
+            // h=0, e=1, l=2, l=3, o=4, space=5, 世=6-8, 界=9-11, space=12, t=13, e=14, s=15, t=16
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello 世界 test");
+
+            // Replace "世界" (bytes 6-11) with "world"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                11,
+                "世界",
+                "world",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello world test");
+        }
+
+        #[test]
+        fn test_byte_mode_unicode_replacement() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world test");
+
+            // Replace "world" (bytes 6-10) with "世界"
+            let mut results = vec![create_byte_range_result(
+                file_path.to_str().unwrap(),
+                1,
+                1,
+                6,
+                10,
+                "world",
+                "世界",
+            )];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "hello 世界 test");
+        }
+
+        #[test]
+        fn test_byte_mode_multiple_unicode_replacements() {
+            let temp_dir = TempDir::new().unwrap();
+            // "aaa bbb ccc" - a=0-2, space=3, b=4-6, space=7, c=8-10
+            let file_path = create_test_file(&temp_dir, "test.txt", "aaa bbb ccc");
+
+            let mut results = vec![
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "aaa", "日"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 4, 6, "bbb", "本"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "ccc", "語"),
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+            assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "日 本 語");
         }
     }
 }

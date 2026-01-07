@@ -37,7 +37,7 @@ use two_face::re_exports::syntect::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use scooter_core::search::SearchResultWithReplacement;
+use scooter_core::search::{MatchContent, SearchResultWithReplacement};
 use scooter_core::{config::Config, utils::read_lines_range};
 
 use crate::ui::cache::{self, FileWindow};
@@ -711,7 +711,7 @@ fn build_preview_from_str<'a>(
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.start_line_number - 1;
+    let line_idx = result.search_result.start_line_number() - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -722,7 +722,7 @@ fn build_preview_from_str<'a>(
     let (before, cur, after) =
         utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
     // TODO(multiline): update this for multiline
-    let expected_line = &result.search_result.content();
+    let expected_line = &result.search_result.content_string();
     assert!(cur.1 == *expected_line, "Expected line didn't match actual",);
 
     let before = before.iter().map(|(_, l)| to_line_plain(l));
@@ -956,13 +956,12 @@ const LONG_LINE_THRESHOLD: usize = 5_000;
 
 fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
     // Check if any line in the search result is long
-    let max_line_len = result
-        .search_result
-        .lines
-        .iter()
-        .map(|l| l.content.len())
-        .max()
-        .unwrap_or(0);
+    let max_line_len = match &result.search_result.content {
+        MatchContent::Lines { content, .. } => content.len(),
+        MatchContent::ByteRange {
+            expected_content, ..
+        } => expected_content.len(),
+    };
     max_line_len.max(result.replacement.len()) > LONG_LINE_THRESHOLD
 }
 
@@ -982,7 +981,7 @@ fn build_preview_from_file<'a>(
         .expect("attempted to build preview list from file with no path");
 
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.start_line_number - 1;
+    let line_idx = result.search_result.start_line_number() - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -1006,7 +1005,12 @@ fn build_preview_from_file<'a>(
                     bail!("File has changed since search (lines have changed)");
                 };
                 // TODO(multiline): handle multiple lines correctly
-                let expected_line = &result.search_result.lines[0].content;
+                let expected_line = match &result.search_result.content {
+                    MatchContent::Lines { content, .. } => content,
+                    MatchContent::ByteRange {
+                        expected_content, ..
+                    } => expected_content,
+                };
                 if cur.1.iter().map(|(_, s)| s).join("") != *expected_line {
                     bail!("File has changed since search (lines don't match)");
                 }
@@ -1046,7 +1050,12 @@ fn build_preview_from_file<'a>(
                     bail!("File has changed since search (lines have changed)");
                 };
                 // TODO(multiline): handle multiple lines correctly
-                let expected_line = &result.search_result.lines[0].content;
+                let expected_line = match &result.search_result.content {
+                    MatchContent::Lines { content, .. } => content,
+                    MatchContent::ByteRange {
+                        expected_content, ..
+                    } => expected_content,
+                };
                 if cur.1 != *expected_line {
                     bail!("File has changed since search (lines don't match)");
                 }
@@ -1106,7 +1115,7 @@ fn build_search_result_preview(
     event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
     // TODO(multiline): handle mutliple lines correctly here
-    let old_line = result.search_result.content();
+    let old_line = result.search_result.content_string();
     let new_line = &result.replacement;
     let cache_key = (old_line.clone(), new_line.clone());
 
@@ -1197,7 +1206,7 @@ fn file_path_line<'a>(
         Some(path) => relative_path(base_path, path),
         None => "stdin".to_string(),
     };
-    let line_num = format!(":{}", result.search_result.start_line_number);
+    let line_num = format!(":{}", result.search_result.start_line_number());
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);

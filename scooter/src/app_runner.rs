@@ -588,7 +588,7 @@ fn write_results_to_stderr_impl(
     let mut line_map = state
         .replace_results
         .iter_mut()
-        .map(|res| (res.search_result.start_line_number, res))
+        .map(|res| (res.search_result.start_line_number(), res))
         .collect::<HashMap<_, _>>();
 
     let cursor = Cursor::new(state.stdin.as_bytes());
@@ -603,7 +603,7 @@ fn write_results_to_stderr_impl(
             .get_mut(&line_number)
             .and_then(|res| {
                 // TODO(multiline): handle multiple lines correctly here
-                let expected_line = &res.search_result.content();
+                let expected_line = &res.search_result.content_string();
                 assert_eq!(line, *expected_line, "line has changed since search");
                 if res.search_result.included {
                     res.replace_result = Some(ReplaceResult::Success);
