@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use crate::{
     line_reader::BufReadExt,
-    replace::replacement_if_match,
+    replace::replace_all_if_match,
     search::{FileSearcher, ParsedDirConfig, ParsedSearchConfig},
     validation::{
         DirConfig, SearchConfig, SimpleErrorHandler, ValidationResult,
@@ -37,7 +37,7 @@ pub fn find_and_replace_text(
 
     // When multiline mode is enabled, perform replacement on the entire content
     if parsed_search_config.multiline {
-        let result = replacement_if_match(
+        let result = replace_all_if_match(
             content,
             &parsed_search_config.search,
             &parsed_search_config.replace,
@@ -57,7 +57,7 @@ pub fn find_and_replace_text(
         // TODO(multiline): handle multiple lines correctly here
         line.push_str(line_ending.as_str());
 
-        if let Some(replaced_line) = replacement_if_match(
+        if let Some(replaced_line) = replace_all_if_match(
             &line,
             &parsed_search_config.search,
             &parsed_search_config.replace,
