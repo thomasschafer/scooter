@@ -29,11 +29,11 @@ use crate::{
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     line_reader::{BufReadExt, LineEnding},
     replace::{self, PerformingReplacementState, ReplaceState},
-    replace::{add_replacement, replacement_if_match},
+    replace::{add_replacement, replace_all_if_match, replacement_for_match},
     search::Searcher,
     search::{
-        FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
-        search_multiline,
+        FileSearcher, MatchContent, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
+        contains_search, search_multiline,
     },
     utils::{Either, Either::Left, Either::Right, ceil_div},
     validation::{
@@ -891,11 +891,35 @@ impl<'a> App {
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
-            let content = res.search_result.content();
-            match replacement_if_match(&content, file_searcher.search(), file_searcher.replace()) {
-                Some(replacement) => res.replacement = replacement,
-                None => return EventHandlingResult::Rerender, // TODO: can we handle this better?
-            }
+            let replacement = match &res.search_result.content {
+                MatchContent::ByteRange {
+                    expected_content, ..
+                } => {
+                    if !contains_search(expected_content, file_searcher.search()) {
+                        // Handle race condition where search results are being updated
+                        // The new search results will already have the correct replacement so no need to update
+                        return EventHandlingResult::Rerender;
+                    }
+                    replacement_for_match(
+                        expected_content,
+                        file_searcher.search(),
+                        file_searcher.replace(),
+                    )
+                }
+                MatchContent::Lines { content, .. } => {
+                    let Some(replacement) = replace_all_if_match(
+                        content,
+                        file_searcher.search(),
+                        file_searcher.replace(),
+                    ) else {
+                        // Handle race condition where search results are being updated
+                        // The new search results will already have the correct replacement so no need to update
+                        return EventHandlingResult::Rerender;
+                    };
+                    replacement
+                }
+            };
+            res.replacement = replacement;
         }
         preview_update_state.replacements_updated += end - start + 1;
 
@@ -1145,8 +1169,13 @@ impl<'a> App {
             if let Some(ref mut state) = search_fields_state.search_state {
                 // Immediately update replacement on selected fields - the remainder will be updated async
                 if let Some(highlighted) = state.primary_selected_field_mut() {
-                    let content = highlighted.search_result.content();
-                    if let Some(updated) = replacement_if_match(
+                    let content = match &highlighted.search_result.content {
+                        MatchContent::Lines { content, .. } => content.clone(),
+                        MatchContent::ByteRange {
+                            expected_content, ..
+                        } => expected_content.clone(),
+                    };
+                    if let Some(updated) = replace_all_if_match(
                         &content,
                         file_searcher.search(),
                         file_searcher.replace(),
@@ -1233,7 +1262,7 @@ impl<'a> App {
                             .sender
                             .send(Event::LaunchEditor((
                                 path.clone(),
-                                selected.search_result.start_line_number,
+                                selected.search_result.start_line_number(),
                             )))
                             .expect("Failed to send event");
                     }
@@ -1511,7 +1540,7 @@ impl<'a> App {
                                         continue;
                                     }
                                 };
-                                if replacement_if_match(&line, &config.search, &config.replace)
+                                if replace_all_if_match(&line, &config.search, &config.replace)
                                     .is_some()
                                 {
                                     let line_number = idx + 1;
