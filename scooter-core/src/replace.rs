@@ -3315,10 +3315,12 @@ mod tests {
 
     mod multiline_replace_tests {
         use super::*;
-        use crate::search::search_multiline;
+        use crate::search::{search_multiline, LinePos};
 
         /// Helper to create a ByteRange SearchResult for testing multiline replacement.
         /// `byte_start` and `expected_content` define the byte range to replace.
+        /// Note: byte_pos in LinePos is set to 0 as these tests focus on replacement logic,
+        /// not preview highlighting.
         fn create_byte_range_result(
             path: &str,
             start_line: usize,
@@ -3331,8 +3333,8 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from(path)),
-                    start_line,
-                    end_line,
+                    LinePos { line: start_line, byte_pos: 0 },
+                    LinePos { line: end_line, byte_pos: 0 },
                     byte_start,
                     byte_end,
                     expected_content.to_string(),
@@ -3583,10 +3585,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        0,
-                        2,
+                        LinePos { line: 1, byte_pos: 0 },
+                        LinePos { line: 1, byte_pos: 2 },
+                        0, 2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3596,10 +3597,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        4,
-                        6,
+                        LinePos { line: 1, byte_pos: 4 },
+                        LinePos { line: 1, byte_pos: 6 },
+                        4, 6,
                         "def".to_string(),
                         true,
                     ),
@@ -3609,10 +3609,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        8,
-                        10,
+                        LinePos { line: 1, byte_pos: 8 },
+                        LinePos { line: 1, byte_pos: 10 },
+                        8, 10,
                         "ghi".to_string(),
                         true,
                     ),
@@ -3643,10 +3642,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        0,
-                        2,
+                        LinePos { line: 1, byte_pos: 0 },
+                        LinePos { line: 1, byte_pos: 2 },
+                        0, 2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3656,10 +3654,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        2,
-                        5,
+                        LinePos { line: 1, byte_pos: 2 },
+                        LinePos { line: 1, byte_pos: 5 },
+                        2, 5,
                         "cdef".to_string(),
                         true,
                     ),
@@ -3696,10 +3693,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        0,
-                        2,
+                        LinePos { line: 1, byte_pos: 0 },
+                        LinePos { line: 1, byte_pos: 2 },
+                        0, 2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3709,10 +3705,9 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        1,
-                        1,
-                        2,
-                        5,
+                        LinePos { line: 1, byte_pos: 2 },
+                        LinePos { line: 1, byte_pos: 5 },
+                        2, 5,
                         "cdef".to_string(),
                         true,
                     ),
@@ -4314,6 +4309,7 @@ mod tests {
 
     mod mark_conflicting_replacements_tests {
         use super::{super::mark_conflicting_replacements, *};
+        use crate::search::LinePos;
 
         /// Create a ByteRange result for conflict detection testing.
         /// Since mark_conflicting_replacements only handles ByteRange, this always creates ByteRange.
@@ -4326,8 +4322,8 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from("test.txt")),
-                    start_line,
-                    end_line,
+                    LinePos { line: start_line, byte_pos: 0 },
+                    LinePos { line: end_line, byte_pos: 0 },
                     byte_start,
                     byte_end,
                     format!("content-{}-{}", byte_start, byte_end),
@@ -4575,6 +4571,7 @@ mod tests {
 
     mod byte_mode_replace_tests {
         use super::*;
+        use crate::search::LinePos;
 
         fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
             let path = dir.path().join(name);
@@ -4599,8 +4596,8 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from(path)),
-                    start_line,
-                    end_line,
+                    LinePos { line: start_line, byte_pos: 0 },
+                    LinePos { line: end_line, byte_pos: 0 },
                     byte_start,
                     byte_end,
                     expected_content.to_string(),
