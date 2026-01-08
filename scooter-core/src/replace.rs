@@ -126,7 +126,7 @@ fn validate_search_result_correctness(
         // For line-mode, use just the content without line ending
         // For byte-mode, use the full expected_content
         let content = match &res.search_result.content {
-            MatchContent::Lines { content, .. } => content.clone(),
+            MatchContent::Line { content, .. } => content.clone(),
             MatchContent::ByteRange {
                 expected_content, ..
             } => expected_content.clone(),
@@ -275,7 +275,7 @@ fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
     // Sort by byte_start
     results.sort_by_key(|r| match &r.search_result.content {
         MatchContent::ByteRange { byte_start, .. } => *byte_start,
-        MatchContent::Lines { .. } => {
+        MatchContent::Line { .. } => {
             panic!(
                 "mark_conflicting_replacements called with Lines content - use only for byte-mode"
             )
@@ -329,7 +329,7 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
     }
 
     match first_content {
-        MatchContent::Lines { .. } => replace_line_mode(&file_path, results),
+        MatchContent::Line { .. } => replace_line_mode(&file_path, results),
         MatchContent::ByteRange { .. } => replace_byte_mode(&file_path, results),
     }
 }
@@ -359,7 +359,7 @@ fn replace_line_mode(
             let (mut line_bytes, line_ending) = line_result?;
 
             if let Some(res) = line_map.get_mut(&line_number) {
-                let MatchContent::Lines { content, .. } = &res.search_result.content else {
+                let MatchContent::Line { content, .. } = &res.search_result.content else {
                     unreachable!("Line-mode must have Lines content")
                 };
 
@@ -404,7 +404,7 @@ fn replace_byte_mode(
 
     to_replace.sort_by_key(|r| match &r.search_result.content {
         MatchContent::ByteRange { byte_start, .. } => *byte_start,
-        MatchContent::Lines { .. } => unreachable!(),
+        MatchContent::Line { .. } => unreachable!(),
     });
 
     let parent_dir = file_path.parent().unwrap_or(Path::new("."));
@@ -527,7 +527,7 @@ pub fn add_replacement(
     // For line-mode, use just the content without line ending
     // For byte-mode, use the full expected_content
     let text_to_search = match &search_result.content {
-        MatchContent::Lines { content, .. } => content.clone(),
+        MatchContent::Line { content, .. } => content.clone(),
         MatchContent::ByteRange {
             expected_content, ..
         } => expected_content.clone(),
@@ -1561,7 +1561,7 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].replacement, "Line with Emoji: 😀 ROCKET 🌍");
-        let MatchContent::Lines { line_ending, .. } = &results[0].search_result.content else {
+        let MatchContent::Line { line_ending, .. } = &results[0].search_result.content else {
             panic!("Expected Lines content");
         };
         assert_eq!(*line_ending, LineEnding::CrLf);
@@ -1592,7 +1592,7 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].search_result.start_line_number(), 2);
-            let MatchContent::Lines { content, .. } = &results[0].search_result.content else {
+            let MatchContent::Line { content, .. } = &results[0].search_result.content else {
                 panic!("Expected Lines content");
             };
             assert_eq!(content, "search target");
@@ -1722,21 +1722,21 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 3);
-            let MatchContent::Lines {
+            let MatchContent::Line {
                 line_ending: le0, ..
             } = &results[0].search_result.content
             else {
                 panic!("Expected Lines content");
             };
             assert_eq!(*le0, LineEnding::Lf);
-            let MatchContent::Lines {
+            let MatchContent::Line {
                 line_ending: le1, ..
             } = &results[1].search_result.content
             else {
                 panic!("Expected Lines content");
             };
             assert_eq!(*le1, LineEnding::CrLf);
-            let MatchContent::Lines {
+            let MatchContent::Line {
                 line_ending: le2, ..
             } = &results[2].search_result.content
             else {
@@ -3315,11 +3315,11 @@ mod tests {
 
     mod multiline_replace_tests {
         use super::*;
-        use crate::search::{search_multiline, LinePos};
+        use crate::search::{LinePos, search_multiline};
 
-        /// Helper to create a ByteRange SearchResult for testing multiline replacement.
+        /// Helper to create a `ByteRange` `SearchResult` for testing multiline replacement.
         /// `byte_start` and `expected_content` define the byte range to replace.
-        /// Note: byte_pos in LinePos is set to 0 as these tests focus on replacement logic,
+        /// Note: `byte_pos` in `LinePos` is set to 0 as these tests focus on replacement logic,
         /// not preview highlighting.
         fn create_byte_range_result(
             path: &str,
@@ -3333,8 +3333,14 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from(path)),
-                    LinePos { line: start_line, byte_pos: 0 },
-                    LinePos { line: end_line, byte_pos: 0 },
+                    LinePos {
+                        line: start_line,
+                        byte_pos: 0,
+                    },
+                    LinePos {
+                        line: end_line,
+                        byte_pos: 0,
+                    },
                     byte_start,
                     byte_end,
                     expected_content.to_string(),
@@ -3345,12 +3351,12 @@ mod tests {
             }
         }
 
-        /// Helper to create a ByteRange SearchResult from line content.
+        /// Helper to create a `ByteRange` `SearchResult` from line content.
         /// Computes byte offsets by reading the file and finding the line positions.
         fn create_search_result_with_replacement(
             path: &str,
             start_line: usize,
-            lines_content: Vec<(&str, LineEnding)>,
+            lines_content: &[(&str, LineEnding)],
             replacement: &str,
         ) -> SearchResultWithReplacement {
             use std::io::{BufRead, BufReader};
@@ -3372,10 +3378,14 @@ mod tests {
             }
 
             // Build expected content from lines
-            let expected_content: String = lines_content
-                .iter()
-                .map(|(content, ending)| format!("{}{}", content, ending.as_str()))
-                .collect();
+            let expected_content =
+                lines_content
+                    .iter()
+                    .fold(String::new(), |mut acc, (content, ending)| {
+                        use std::fmt::Write;
+                        write!(acc, "{}{}", content, ending.as_str()).unwrap();
+                        acc
+                    });
 
             let byte_end = byte_start + expected_content.len() - 1;
             let end_line = start_line + lines_content.len() - 1;
@@ -3585,9 +3595,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 0 },
-                        LinePos { line: 1, byte_pos: 2 },
-                        0, 2,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 0,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 2,
+                        },
+                        0,
+                        2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3597,9 +3614,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 4 },
-                        LinePos { line: 1, byte_pos: 6 },
-                        4, 6,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 4,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 6,
+                        },
+                        4,
+                        6,
                         "def".to_string(),
                         true,
                     ),
@@ -3609,9 +3633,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 8 },
-                        LinePos { line: 1, byte_pos: 10 },
-                        8, 10,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 8,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 10,
+                        },
+                        8,
+                        10,
                         "ghi".to_string(),
                         true,
                     ),
@@ -3642,9 +3673,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 0 },
-                        LinePos { line: 1, byte_pos: 2 },
-                        0, 2,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 0,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 2,
+                        },
+                        0,
+                        2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3654,9 +3692,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 2 },
-                        LinePos { line: 1, byte_pos: 5 },
-                        2, 5,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 2,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 5,
+                        },
+                        2,
+                        5,
                         "cdef".to_string(),
                         true,
                     ),
@@ -3693,9 +3738,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 0 },
-                        LinePos { line: 1, byte_pos: 2 },
-                        0, 2,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 0,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 2,
+                        },
+                        0,
+                        2,
                         "abc".to_string(),
                         true,
                     ),
@@ -3705,9 +3757,16 @@ mod tests {
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_byte_range(
                         Some(file_path.clone()),
-                        LinePos { line: 1, byte_pos: 2 },
-                        LinePos { line: 1, byte_pos: 5 },
-                        2, 5,
+                        LinePos {
+                            line: 1,
+                            byte_pos: 2,
+                        },
+                        LinePos {
+                            line: 1,
+                            byte_pos: 5,
+                        },
+                        2,
+                        5,
                         "cdef".to_string(),
                         true,
                     ),
@@ -3784,7 +3843,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![
+                    &[
                         ("line 1", LineEnding::Lf),
                         ("line 2", LineEnding::Lf),
                         ("line 3", LineEnding::Lf),
@@ -3794,7 +3853,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     4,
-                    vec![
+                    &[
                         ("line 4", LineEnding::Lf),
                         ("line 5", LineEnding::Lf),
                         ("line 6", LineEnding::Lf),
@@ -3824,7 +3883,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![
+                    &[
                         ("line 1", LineEnding::Lf),
                         ("line 2", LineEnding::Lf),
                         ("line 3", LineEnding::Lf),
@@ -3836,7 +3895,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     3,
-                    vec![
+                    &[
                         ("line 3", LineEnding::Lf),
                         ("line 4", LineEnding::Lf),
                         ("line 5", LineEnding::Lf),
@@ -3872,7 +3931,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![
+                    &[
                         ("line 1", LineEnding::Lf),
                         ("line 2", LineEnding::Lf),
                         ("line 3", LineEnding::Lf),
@@ -3882,13 +3941,13 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     2,
-                    vec![("line 2", LineEnding::Lf)],
+                    &[("line 2", LineEnding::Lf)],
                     "MIDDLE\n",
                 ),
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     4,
-                    vec![
+                    &[
                         ("line 4", LineEnding::Lf),
                         ("line 5", LineEnding::Lf),
                         ("line 6", LineEnding::Lf),
@@ -3921,7 +3980,7 @@ mod tests {
             let mut results = vec![create_search_result_with_replacement(
                 file_path.to_str().unwrap(),
                 3,
-                vec![
+                &[
                     ("line 3", LineEnding::Lf),
                     ("line 4", LineEnding::Lf),
                     ("line 5", LineEnding::None),
@@ -3948,7 +4007,7 @@ mod tests {
             let mut results = vec![create_search_result_with_replacement(
                 file_path.to_str().unwrap(),
                 2,
-                vec![
+                &[
                     ("line 2", LineEnding::Lf),
                     ("line 3", LineEnding::Lf),
                     ("line 4", LineEnding::Lf),
@@ -3978,13 +4037,13 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![("line 1", LineEnding::Lf), ("line 2", LineEnding::Lf)],
+                    &[("line 1", LineEnding::Lf), ("line 2", LineEnding::Lf)],
                     "A\n",
                 ),
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     5,
-                    vec![
+                    &[
                         ("line 5", LineEnding::Lf),
                         ("line 6", LineEnding::Lf),
                         ("line 7", LineEnding::Lf),
@@ -3994,7 +4053,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     10,
-                    vec![
+                    &[
                         ("line 10", LineEnding::Lf),
                         ("line 11", LineEnding::Lf),
                         ("line 12", LineEnding::Lf),
@@ -4023,7 +4082,7 @@ mod tests {
             let mut results = vec![create_search_result_with_replacement(
                 file_path.to_str().unwrap(),
                 1,
-                vec![
+                &[
                     ("line 1", LineEnding::Lf),
                     ("line 2", LineEnding::Lf),
                     ("line 3", LineEnding::Lf),
@@ -4051,7 +4110,7 @@ mod tests {
             let mut results = vec![create_search_result_with_replacement(
                 file_path.to_str().unwrap(),
                 1,
-                vec![
+                &[
                     ("line 1", LineEnding::Lf),
                     ("line 2", LineEnding::Lf),
                     ("line 3", LineEnding::Lf),
@@ -4082,13 +4141,13 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![("line 1", LineEnding::Lf)],
+                    &[("line 1", LineEnding::Lf)],
                     "SINGLE\n",
                 ),
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     3,
-                    vec![
+                    &[
                         ("line 3", LineEnding::Lf),
                         ("line 4", LineEnding::Lf),
                         ("line 5", LineEnding::Lf),
@@ -4098,7 +4157,7 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     6,
-                    vec![("line 6", LineEnding::Lf)],
+                    &[("line 6", LineEnding::Lf)],
                     "SINGLE2\n",
                 ),
             ];
@@ -4127,13 +4186,13 @@ mod tests {
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     5,
-                    vec![("line 5", LineEnding::Lf)],
+                    &[("line 5", LineEnding::Lf)],
                     "LAST\n",
                 ),
                 create_search_result_with_replacement(
                     file_path.to_str().unwrap(),
                     1,
-                    vec![("line 1", LineEnding::Lf), ("line 2", LineEnding::Lf)],
+                    &[("line 1", LineEnding::Lf), ("line 2", LineEnding::Lf)],
                     "FIRST\n",
                 ),
             ];
@@ -4169,45 +4228,45 @@ mod tests {
             assert_eq!(search_results[0].start_line_number(), 2);
             assert_eq!(search_results[0].end_line_number(), 2);
             let MatchContent::ByteRange {
-                byte_start: bs0,
-                byte_end: be0,
+                byte_start: byte_start_0,
+                byte_end: byte_end_0,
                 expected_content: ec0,
                 ..
             } = &search_results[0].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*bs0, *be0), (4, 6));
+            assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
             assert_eq!(ec0, "bar");
 
             // Second match: "bar" at bytes 12-14 on line 2 (same line!)
             assert_eq!(search_results[1].start_line_number(), 2);
             assert_eq!(search_results[1].end_line_number(), 2);
             let MatchContent::ByteRange {
-                byte_start: bs1,
-                byte_end: be1,
+                byte_start: byte_start_1,
+                byte_end: byte_end_1,
                 expected_content: ec1,
                 ..
             } = &search_results[1].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*bs1, *be1), (12, 14));
+            assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
             assert_eq!(ec1, "bar");
 
             // Third match: "bar" at bytes 20-22 on line 3
             assert_eq!(search_results[2].start_line_number(), 3);
             assert_eq!(search_results[2].end_line_number(), 3);
             let MatchContent::ByteRange {
-                byte_start: bs2,
-                byte_end: be2,
+                byte_start: byte_start_2,
+                byte_end: byte_end_2,
                 expected_content: ec2,
                 ..
             } = &search_results[2].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*bs2, *be2), (20, 22));
+            assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
             assert_eq!(ec2, "bar");
 
             // Convert to replacements
@@ -4254,32 +4313,32 @@ mod tests {
 
             // Verify byte offsets are correct
             let MatchContent::ByteRange {
-                byte_start: bs0,
-                byte_end: be0,
+                byte_start: byte_start_0,
+                byte_end: byte_end_0,
                 ..
             } = &search_results[0].content
             else {
                 panic!("Expected ByteRange");
             };
             let MatchContent::ByteRange {
-                byte_start: bs1,
-                byte_end: be1,
+                byte_start: byte_start_1,
+                byte_end: byte_end_1,
                 ..
             } = &search_results[1].content
             else {
                 panic!("Expected ByteRange");
             };
             let MatchContent::ByteRange {
-                byte_start: bs2,
-                byte_end: be2,
+                byte_start: byte_start_2,
+                byte_end: byte_end_2,
                 ..
             } = &search_results[2].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*bs0, *be0), (4, 6));
-            assert_eq!((*bs1, *be1), (12, 14));
-            assert_eq!((*bs2, *be2), (20, 22));
+            assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
+            assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
+            assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4311,8 +4370,8 @@ mod tests {
         use super::{super::mark_conflicting_replacements, *};
         use crate::search::LinePos;
 
-        /// Create a ByteRange result for conflict detection testing.
-        /// Since mark_conflicting_replacements only handles ByteRange, this always creates ByteRange.
+        /// Create a `ByteRange` result for conflict detection testing.
+        /// Since `mark_conflicting_replacements` only handles `ByteRange`, this always creates `ByteRange`.
         fn create_replacement_result(
             start_line: usize,
             end_line: usize,
@@ -4322,11 +4381,17 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from("test.txt")),
-                    LinePos { line: start_line, byte_pos: 0 },
-                    LinePos { line: end_line, byte_pos: 0 },
+                    LinePos {
+                        line: start_line,
+                        byte_pos: 0,
+                    },
+                    LinePos {
+                        line: end_line,
+                        byte_pos: 0,
+                    },
                     byte_start,
                     byte_end,
-                    format!("content-{}-{}", byte_start, byte_end),
+                    format!("content-{byte_start}-{byte_end}"),
                     true,
                 ),
                 replacement: "REPLACED".to_string(),
@@ -4493,36 +4558,36 @@ mod tests {
             // After sorting by byte_start: 0-3, 5-8, 10-15
             assert_eq!(results.len(), 3);
             let MatchContent::ByteRange {
-                byte_start: bs0,
-                byte_end: be0,
+                byte_start: byte_start_0,
+                byte_end: byte_end_0,
                 ..
             } = results[0].search_result.content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((bs0, be0), (0, 3));
+            assert_eq!((byte_start_0, byte_end_0), (0, 3));
             assert_eq!(results[0].replace_result, None);
 
             let MatchContent::ByteRange {
-                byte_start: bs1,
-                byte_end: be1,
+                byte_start: byte_start_1,
+                byte_end: byte_end_1,
                 ..
             } = results[1].search_result.content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((bs1, be1), (5, 8));
+            assert_eq!((byte_start_1, byte_end_1), (5, 8));
             assert_eq!(results[1].replace_result, None);
 
             let MatchContent::ByteRange {
-                byte_start: bs2,
-                byte_end: be2,
+                byte_start: byte_start_2,
+                byte_end: byte_end_2,
                 ..
             } = results[2].search_result.content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((bs2, be2), (10, 15));
+            assert_eq!((byte_start_2, byte_end_2), (10, 15));
             assert_eq!(results[2].replace_result, None);
         }
 
@@ -4596,8 +4661,14 @@ mod tests {
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
                     Some(PathBuf::from(path)),
-                    LinePos { line: start_line, byte_pos: 0 },
-                    LinePos { line: end_line, byte_pos: 0 },
+                    LinePos {
+                        line: start_line,
+                        byte_pos: 0,
+                    },
+                    LinePos {
+                        line: end_line,
+                        byte_pos: 0,
+                    },
                     byte_start,
                     byte_end,
                     expected_content.to_string(),

@@ -33,7 +33,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run clippy on all packages
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --tests -- -D warnings
 
       - name: Run cargo check
         run: cargo check
