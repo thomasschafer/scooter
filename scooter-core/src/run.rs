@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use crate::{
     line_reader::BufReadExt,
-    replace::replacement_if_match,
+    replace::replace_all_if_match,
     search::{FileSearcher, ParsedDirConfig, ParsedSearchConfig},
     validation::{
         DirConfig, SearchConfig, SimpleErrorHandler, ValidationResult,
@@ -34,16 +34,30 @@ pub fn find_and_replace_text(
     search_config: SearchConfig<'_>,
 ) -> anyhow::Result<String> {
     let (parsed_search_config, _) = parse_config(search_config, None)?;
-    let mut result = String::with_capacity(content.len());
 
+    // When multiline mode is enabled, perform replacement on the entire content
+    if parsed_search_config.multiline {
+        let result = replace_all_if_match(
+            content,
+            &parsed_search_config.search,
+            &parsed_search_config.replace,
+        )
+        .unwrap_or_else(|| content.to_string());
+        return Ok(result);
+    }
+
+    // Default line-by-line processing
+    let mut result = String::with_capacity(content.len());
     let cursor = Cursor::new(content);
 
     for line_result in cursor.lines_with_endings() {
         let (line_bytes, line_ending) = line_result?;
 
-        let line = String::from_utf8(line_bytes)?;
+        let mut line = String::from_utf8(line_bytes)?;
+        // TODO(multiline): handle multiple lines correctly here
+        line.push_str(line_ending.as_str());
 
-        if let Some(replaced_line) = replacement_if_match(
+        if let Some(replaced_line) = replace_all_if_match(
             &line,
             &parsed_search_config.search,
             &parsed_search_config.replace,
@@ -52,8 +66,6 @@ pub fn find_and_replace_text(
         } else {
             result.push_str(&line);
         }
-
-        result.push_str(line_ending.as_str());
     }
 
     Ok(result)

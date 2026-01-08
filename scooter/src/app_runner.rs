@@ -10,6 +10,7 @@ use ratatui::{
     backend::{Backend, CrosstermBackend, TestBackend},
     crossterm::event::KeyEventKind,
 };
+use scooter_core::line_reader::BufReadExt;
 use scooter_core::{
     app::{
         App, AppRunConfig, Event, EventHandlingResult, ExitAndReplaceState, ExitState, InputSource,
@@ -24,7 +25,8 @@ use scooter_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
 use std::{
     collections::HashMap,
     env,
-    io::{self, Write},
+    fmt::Write as _,
+    io::{self, Cursor, Write},
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -393,14 +395,11 @@ pub fn format_replacement_results(
     errors: Option<&[SearchResultWithReplacement]>,
 ) -> String {
     let errors_display = if let Some(errors) = errors {
-        #[allow(clippy::format_collect)]
-        errors
-            .iter()
-            .map(|error| {
-                let (path, error) = error.display_error();
-                format!("\n{path}:\n  {}", error.red())
-            })
-            .collect::<String>()
+        errors.iter().fold(String::new(), |mut acc, error| {
+            let (path, error) = error.display_error();
+            write!(acc, "\n{path}:\n  {}", error.red()).expect("failed to write error");
+            acc
+        })
     } else {
         String::new()
     };
@@ -418,7 +417,7 @@ pub fn format_replacement_results(
     };
 
     format!(
-        "Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
+        "\nSuccessful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
     )
 }
 
@@ -482,18 +481,23 @@ fn write_results_to_stderr_impl(
     let mut line_map = state
         .replace_results
         .iter_mut()
-        .map(|res| (res.search_result.line_number, res))
+        .map(|res| (res.search_result.start_line_number(), res))
         .collect::<HashMap<_, _>>();
 
-    for (idx, line) in state.stdin.lines().enumerate() {
+    let cursor = Cursor::new(state.stdin.as_bytes());
+    for (idx, line_result) in cursor.lines_with_endings().enumerate() {
         let line_number = idx + 1; // Ensure line-number is 1-indexed
+
+        let (content, ending) = line_result?;
+        let mut line = String::from_utf8(content)?;
+        line.push_str(ending.as_str()); // Add newline for writing later
+
         let line_new = line_map
             .get_mut(&line_number)
             .and_then(|res| {
-                assert_eq!(
-                    line, res.search_result.line,
-                    "line has changed since search"
-                );
+                // TODO(multiline): handle multiple lines correctly here
+                let expected_line = &res.search_result.content_string();
+                assert_eq!(line, *expected_line, "line has changed since search");
                 if res.search_result.included {
                     res.replace_result = Some(ReplaceResult::Success);
                     num_successes += 1;
@@ -503,8 +507,8 @@ fn write_results_to_stderr_impl(
                     None
                 }
             })
-            .unwrap_or(line);
-        writeln!(io::stderr(), "{line_new}")?;
+            .unwrap_or(&line);
+        write!(io::stderr(), "{line_new}")?;
     }
 
     let res = if return_stats {
@@ -531,26 +535,26 @@ mod tests {
         let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
             result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
+            "\nSuccessful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
         );
     }
 
     #[test]
     fn test_format_replacement_results_with_errors() {
         let error_result = SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("file.txt")),
-                line_number: 10,
-                line: "line".to_string(),
-                line_ending: LineEnding::Lf,
-                included: true,
-            },
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("file.txt")),
+                10,
+                "line".to_string(),
+                LineEnding::Lf,
+                true,
+            ),
             replacement: "replacement".to_string(),
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3\n"));
+        assert!(result.contains("\nSuccessful replacements (lines): 3\n"));
         assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
@@ -560,7 +564,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
+        assert_eq!(result, "\nSuccessful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
     }
 }
