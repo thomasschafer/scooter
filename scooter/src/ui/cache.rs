@@ -1,10 +1,12 @@
 use lru::LruCache;
-use scooter_core::{diff::Diff, utils::HighlightedLine};
+use scooter_core::{search::MatchContent, utils::HighlightedLine};
 use std::{
     num::NonZeroUsize,
     path::PathBuf,
     sync::{Mutex, OnceLock},
 };
+
+use crate::ui::view::SearchResultPreview;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct FileWindow {
@@ -51,5 +53,5 @@ define_cache! {
 
 define_cache! {
     /// Cache of line diffs
-    diff_cache: (String, String) => (Vec<Diff>, Vec<Diff>)
+    diff_cache: (MatchContent, String) => SearchResultPreview
 }

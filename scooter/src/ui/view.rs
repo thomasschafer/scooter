@@ -502,14 +502,26 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
     });
 }
 
-fn spawn_compute_diff(old_line: String, new_line: String, event_sender: UnboundedSender<Event>) {
+fn spawn_compute_diff(old: MatchContent, new: String, event_sender: UnboundedSender<Event>) {
     tokio::spawn(async move {
         // Compute the detailed character-level diff
-        let (old_diffs, new_diffs) = line_diff(&old_line, &new_line);
+        let preview = match old.clone() {
+            MatchContent::ByteRange { .. } => {
+                // TODO(mutliline): handle
+                todo!()
+            }
+            MatchContent::Line { content, .. } => {
+                let (old_diffs, new_diffs) = line_diff(&content, &new);
+                SearchResultPreview {
+                    old_line_diffs: vec![diff_to_line(old_diffs.iter())],
+                    new_line_diffs: vec![diff_to_line(new_diffs.iter())],
+                }
+            }
+        };
 
         // Cache the result
         let mut cache_guard = cache::diff_cache().lock().unwrap();
-        cache_guard.put((old_line, new_line), (old_diffs, new_diffs));
+        cache_guard.put((old, new), preview);
         drop(cache_guard);
 
         // Trigger re-render to show the detailed diff
@@ -726,7 +738,11 @@ fn build_preview_from_str<'a>(
     assert!(cur.1 == *expected_line, "Expected line didn't match actual",);
 
     let before = before.iter().map(|(_, l)| to_line_plain(l));
-    let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
+    let diff = preview
+        .old_line_diffs
+        .clone()
+        .into_iter()
+        .chain(preview.new_line_diffs.clone());
     let after = after.iter().map(|(_, l)| to_line_plain(l));
     line_list(before, diff, after, num_lines_to_show, wrap)
         .map_err(|e| anyhow!("failed to combine lines: {e}"))
@@ -957,7 +973,7 @@ const LONG_LINE_THRESHOLD: usize = 5_000;
 fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
     // Check if any line in the search result is long
     let max_line_len = match &result.search_result.content {
-        MatchContent::Lines { content, .. } => content.len(),
+        MatchContent::Line { content, .. } => content.len(),
         MatchContent::ByteRange {
             expected_content, ..
         } => expected_content.len(),
@@ -1006,7 +1022,7 @@ fn build_preview_from_file<'a>(
                 };
                 // TODO(multiline): handle multiple lines correctly
                 let expected_line = match &result.search_result.content {
-                    MatchContent::Lines { content, .. } => content,
+                    MatchContent::Line { content, .. } => content,
                     MatchContent::ByteRange {
                         expected_content, ..
                     } => expected_content,
@@ -1016,7 +1032,11 @@ fn build_preview_from_file<'a>(
                 }
 
                 let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
-                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
+                let diff = preview
+                    .old_line_diffs
+                    .clone()
+                    .into_iter()
+                    .chain(preview.new_line_diffs.clone());
                 let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
 
                 let mut list = line_list(before, diff, after, num_lines_to_show, wrap)
@@ -1051,7 +1071,7 @@ fn build_preview_from_file<'a>(
                 };
                 // TODO(multiline): handle multiple lines correctly
                 let expected_line = match &result.search_result.content {
-                    MatchContent::Lines { content, .. } => content,
+                    MatchContent::Line { content, .. } => content,
                     MatchContent::ByteRange {
                         expected_content, ..
                     } => expected_content,
@@ -1061,7 +1081,11 @@ fn build_preview_from_file<'a>(
                 }
 
                 let before = before.iter().map(|(_, l)| to_line_plain(l));
-                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
+                let diff = preview
+                    .old_line_diffs
+                    .clone()
+                    .into_iter()
+                    .chain(preview.new_line_diffs.clone());
                 let after = after.iter().map(|(_, l)| to_line_plain(l));
                 line_list(before, diff, after, num_lines_to_show, wrap)
                     .map_err(|e| anyhow!("failed to combine lines: {e}"))
@@ -1070,44 +1094,54 @@ fn build_preview_from_file<'a>(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SearchResultListItem<'a> {
     file_path: Line<'a>,
     result: &'a SearchResultWithReplacement,
     is_primary_selected: bool,
 }
 
-struct SearchResultPreview {
-    old_line_diff: StyledLine,
-    new_line_diff: StyledLine,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SearchResultPreview {
+    old_line_diffs: Vec<StyledLine>,
+    new_line_diffs: Vec<StyledLine>,
 }
 
 /// Creates a simple diff without character-level granularity - just shows entire lines as red/green
-fn simple_diff(old_line: &str, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
-    let old_diffs = vec![
-        Diff {
-            text: "- ".to_owned(),
-            fg_colour: DiffColour::Red,
-            bg_colour: None,
-        },
-        Diff {
-            text: old_line.to_owned(),
-            fg_colour: DiffColour::Red,
-            bg_colour: None,
-        },
-    ];
-    let new_diffs = vec![
-        Diff {
-            text: "+ ".to_owned(),
-            fg_colour: DiffColour::Green,
-            bg_colour: None,
-        },
-        Diff {
-            text: new_line.to_owned(),
-            fg_colour: DiffColour::Green,
-            bg_colour: None,
-        },
-    ];
-    (old_diffs, new_diffs)
+fn simple_diff(old: &MatchContent, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
+    match old {
+        MatchContent::ByteRange { .. } => {
+            // TODO(mutliline): handle
+            todo!()
+        }
+        MatchContent::Line { content, .. } => {
+            let old_diffs = vec![
+                Diff {
+                    text: "- ".to_owned(),
+                    fg_colour: DiffColour::Red,
+                    bg_colour: None,
+                },
+                Diff {
+                    text: content.clone(),
+                    fg_colour: DiffColour::Red,
+                    bg_colour: None,
+                },
+            ];
+            let new_diffs = vec![
+                Diff {
+                    text: "+ ".to_owned(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+                Diff {
+                    text: new_line.to_owned(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+            ];
+            (old_diffs, new_diffs)
+        }
+    }
 }
 
 fn build_search_result_preview(
@@ -1115,18 +1149,15 @@ fn build_search_result_preview(
     event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
     // TODO(multiline): handle mutliple lines correctly here
-    let old_line = result.search_result.content_string();
+    let old_line = &result.search_result.content;
     let new_line = &result.replacement;
     let cache_key = (old_line.clone(), new_line.clone());
 
     // Check cache first
     let mut cache_guard = cache::diff_cache().lock().unwrap();
 
-    if let Some((cached_old, cached_new)) = cache_guard.get(&cache_key) {
-        let preview = SearchResultPreview {
-            old_line_diff: diff_to_line(cached_old.iter()),
-            new_line_diff: diff_to_line(cached_new.iter()),
-        };
+    if let Some(preview) = cache_guard.get(&cache_key) {
+        let preview = preview.clone();
         drop(cache_guard);
         return preview;
     }
@@ -1137,10 +1168,10 @@ fn build_search_result_preview(
     spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
 
     // Return simple diff immediately
-    let (old_diffs, new_diffs) = simple_diff(&old_line, new_line);
+    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
     SearchResultPreview {
-        old_line_diff: diff_to_line(old_diffs.iter()),
-        new_line_diff: diff_to_line(new_diffs.iter()),
+        old_line_diffs: vec![diff_to_line(old_diffs.iter())],
+        new_line_diffs: vec![diff_to_line(new_diffs.iter())],
     }
 }
 
