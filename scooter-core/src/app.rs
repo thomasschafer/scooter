@@ -906,7 +906,7 @@ impl<'a> App {
                         file_searcher.replace(),
                     )
                 }
-                MatchContent::Lines { content, .. } => {
+                MatchContent::Line { content, .. } => {
                     let Some(replacement) = replace_all_if_match(
                         content,
                         file_searcher.search(),
@@ -1170,7 +1170,7 @@ impl<'a> App {
                 // Immediately update replacement on selected fields - the remainder will be updated async
                 if let Some(highlighted) = state.primary_selected_field_mut() {
                     let content = match &highlighted.search_result.content {
-                        MatchContent::Lines { content, .. } => content.clone(),
+                        MatchContent::Line { content, .. } => content.clone(),
                         MatchContent::ByteRange {
                             expected_content, ..
                         } => expected_content.clone(),

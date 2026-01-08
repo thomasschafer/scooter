@@ -44,17 +44,17 @@ impl Searcher {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct LinePos {
     pub line: usize, // 1-indexed
     pub byte_pos: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum MatchContent {
     /// Line-mode: Replace all occurrences of pattern on the line
     /// Used for non-multiline search where we replace ALL matches on a single line
-    Lines {
+    Line {
         line_number: usize,
         content: String,
         line_ending: LineEnding,
@@ -89,7 +89,7 @@ impl SearchResult {
     ) -> Self {
         Self {
             path,
-            content: MatchContent::Lines {
+            content: MatchContent::Line {
                 line_number,
                 content,
                 line_ending,
@@ -124,7 +124,7 @@ impl SearchResult {
     /// Returns the full content string for this match (including line ending for Lines mode)
     pub fn content_string(&self) -> String {
         match &self.content {
-            MatchContent::Lines {
+            MatchContent::Line {
                 content,
                 line_ending,
                 ..
@@ -138,7 +138,7 @@ impl SearchResult {
     /// Returns start line number
     pub fn start_line_number(&self) -> usize {
         match &self.content {
-            MatchContent::Lines { line_number, .. } => *line_number,
+            MatchContent::Line { line_number, .. } => *line_number,
             MatchContent::ByteRange { start_line, .. } => start_line.line,
         }
     }
@@ -146,7 +146,7 @@ impl SearchResult {
     /// Returns end line number
     pub fn end_line_number(&self) -> usize {
         match &self.content {
-            MatchContent::Lines { line_number, .. } => *line_number,
+            MatchContent::Line { line_number, .. } => *line_number,
             MatchContent::ByteRange { end_line, .. } => end_line.line,
         }
     }
@@ -1400,39 +1400,39 @@ mod tests {
         assert_eq!(results[0].start_line_number(), 2);
         assert_eq!(results[0].end_line_number(), 2);
         let MatchContent::ByteRange {
-            byte_start: bs0,
-            byte_end: be0,
+            byte_start: byte_start_0,
+            byte_end: byte_end_0,
             ..
         } = &results[0].content
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*bs0, *be0), (4, 6));
+        assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
 
         // Second match: "bar" at bytes 12-14 on line 2 (same line!)
         assert_eq!(results[1].start_line_number(), 2);
         assert_eq!(results[1].end_line_number(), 2);
         let MatchContent::ByteRange {
-            byte_start: bs1,
-            byte_end: be1,
+            byte_start: byte_start_1,
+            byte_end: byte_end_1,
             ..
         } = &results[1].content
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*bs1, *be1), (12, 14));
+        assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
 
         // Third match: "bar" at bytes 20-22 on line 3
         assert_eq!(results[2].start_line_number(), 3);
         assert_eq!(results[2].end_line_number(), 3);
         let MatchContent::ByteRange {
-            byte_start: bs2,
-            byte_end: be2,
+            byte_start: byte_start_2,
+            byte_end: byte_end_2,
             ..
         } = &results[2].content
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*bs2, *be2), (20, 22));
+        assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
     }
 }
