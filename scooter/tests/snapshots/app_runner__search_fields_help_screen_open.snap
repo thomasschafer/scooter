@@ -18,12 +18,12 @@ expression: snapshot
     ┌──│  <space>  toggle checkbox                                                         │       
     │ X│    <A-u>  unlock pre-populated fields                                             │       
     └──│    <C-l>  toggle text wrapping in preview                                         │       
-    ┌Fi│    <C-r>  reset                                                                   │─┐     
-    │  │    <C-h>  help                                                                    │ │     
-    └──│    <esc>  close popup                                                             │─┘     
-    ┌Fi│    <C-c>  quit                                                                    │─┐     
-    │  └───────────────────────────────────────────────────────────────────────────────────┘ │     
-    └────────────────────────────────────────────────────────────────────────────────────────┘     
+    ┌Fi│    <C-t>  toggle hidden files                                                     │─┐     
+    │  │    <C-r>  reset                                                                   │ │     
+    └──│    <C-h>  help                                                                    │─┘     
+    ┌Fi│    <esc>  close popup                                                             │─┐     
+    │  │    <C-c>  quit                                                                    │ │     
+    └──└───────────────────────────────────────────────────────────────────────────────────┘─┘     
                                                                                                    
                                                                                                    
                                                                                                    

@@ -26,6 +26,7 @@ pub(crate) enum CommandGeneral {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandSearchFields {
     TogglePreviewWrapping,
+    ToggleHiddenFiles,
     SearchFocusFields(CommandSearchFocusFields),
     SearchFocusResults(CommandSearchFocusResults),
 }
@@ -129,10 +130,13 @@ impl KeyMap {
         let search_common = build_map!(
             search,
             &mut conflicts,
-            [(
-                toggle_preview_wrapping,
-                CommandSearchFields::TogglePreviewWrapping
-            )]
+            [
+                (
+                    toggle_preview_wrapping,
+                    CommandSearchFields::TogglePreviewWrapping
+                ),
+                (toggle_hidden_files, CommandSearchFields::ToggleHiddenFiles)
+            ]
         );
 
         let search_fields = build_map!(

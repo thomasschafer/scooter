@@ -87,6 +87,7 @@ pub enum BackgroundProcessingEvent {
 #[derive(Debug)]
 pub enum AppEvent {
     PerformSearch,
+    DismissToast { generation: u64 },
 }
 
 #[derive(Debug)]
@@ -438,6 +439,12 @@ pub enum Popup {
     Text { title: String, body: String },
 }
 
+#[derive(Debug, Clone)]
+struct Toast {
+    message: String,
+    generation: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppRunConfig {
@@ -490,6 +497,7 @@ impl Default for EventChannels {
 pub struct UIState {
     pub current_screen: Screen,
     pub popup: Option<Popup>,
+    toast: Option<Toast>,
     errors: Vec<AppError>,
 }
 
@@ -498,6 +506,7 @@ impl UIState {
         Self {
             current_screen,
             popup: None,
+            toast: None,
             errors: Vec::new(),
         }
     }
@@ -640,6 +649,10 @@ impl<'a> App {
                 self.perform_search_unwrap();
                 EventHandlingResult::Rerender
             }
+            AppEvent::DismissToast { generation } => {
+                self.dismiss_toast_if_generation_matches(generation);
+                EventHandlingResult::Rerender
+            }
         }
     }
 
@@ -696,7 +709,45 @@ impl<'a> App {
     }
 
     // Called when searching explicitly: shows error popup if validation fails
+    fn perform_search_with_error_popup(&mut self) {
+        if !self.errors().is_empty() {
+            self.set_popup(Popup::Error);
+        } else if self.search_fields.search().text().is_empty() {
+            self.add_error(AppError {
+                name: "Search field must not be empty".to_string(),
+                long: "Please enter some search text".to_string(),
+            });
+        } else {
+            let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen
+            else {
+                panic!(
+                    "Expected SearchFields, found {:?}",
+                    self.ui_state.current_screen.name()
+                );
+            };
+            search_fields_state.focussed_section = FocussedSection::SearchResults;
+            // Check if search has been performed
+            if search_fields_state.search_state.is_some() {
+                if self.run_config.immediate_replace && self.search_has_completed() {
+                    self.perform_replacement();
+                }
+            } else {
+                self.perform_search_if_valid();
+            }
+        }
+    }
+
     pub fn perform_search_if_valid(&mut self) {
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            panic!(
+                "Expected SearchFields, found {:?}",
+                self.ui_state.current_screen.name()
+            );
+        };
+        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+            timer.abort();
+        }
+
         let Some(search_config) = self.validate_fields().unwrap() else {
             return;
         };
@@ -707,6 +758,7 @@ impl<'a> App {
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
     // TODO: how can we enforce validation by type system - e.g. pass in searcher?
     fn perform_search_unwrap(&mut self) {
+        self.cancel_search();
         let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return;
         };
@@ -1009,35 +1061,7 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusFields::TriggerSearch => {
-                if !self.errors().is_empty() {
-                    self.set_popup(Popup::Error);
-                } else if self.search_fields.search().text().is_empty() {
-                    self.add_error(AppError {
-                        name: "Search field must not be empty".to_string(),
-                        long: "Please enter some search text".to_string(),
-                    });
-                } else {
-                    let Screen::SearchFields(ref mut search_fields_state) =
-                        self.ui_state.current_screen
-                    else {
-                        panic!(
-                            "Expected SearchFields, found {:?}",
-                            self.ui_state.current_screen.name()
-                        );
-                    };
-                    search_fields_state.focussed_section = FocussedSection::SearchResults;
-                    // Check if search has been performed
-                    if search_fields_state.search_state.is_some() {
-                        if self.run_config.immediate_replace && self.search_has_completed() {
-                            self.perform_replacement();
-                        }
-                    } else {
-                        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-                            timer.abort();
-                        }
-                        self.perform_search_if_valid();
-                    }
-                }
+                self.perform_search_with_error_popup();
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusFields::FocusPreviousField => {
@@ -1274,6 +1298,16 @@ impl<'a> App {
                 match command {
                     CommandSearchFields::TogglePreviewWrapping => {
                         self.config.preview.wrap_text = !self.config.preview.wrap_text;
+                        self.show_toggle_toast("Text wrapping", self.config.preview.wrap_text);
+                        EventHandlingResult::Rerender
+                    }
+                    CommandSearchFields::ToggleHiddenFiles => {
+                        if matches!(self.input_source, InputSource::Stdin(_)) {
+                            return EventHandlingResult::None;
+                        }
+                        self.run_config.include_hidden = !self.run_config.include_hidden;
+                        self.show_toggle_toast("Hidden files", self.run_config.include_hidden);
+                        self.perform_search_if_valid();
                         EventHandlingResult::Rerender
                     }
                     CommandSearchFields::SearchFocusFields(command) => {
@@ -1507,6 +1541,41 @@ impl<'a> App {
         self.ui_state.popup = Some(popup);
     }
 
+    pub fn toast_message(&self) -> Option<&str> {
+        self.ui_state.toast.as_ref().map(|t| t.message.as_str())
+    }
+
+    fn show_toast(&mut self, message: String) {
+        let generation = self.ui_state.toast.as_ref().map_or(1, |t| t.generation + 1);
+        self.ui_state.toast = Some(Toast {
+            message,
+            generation,
+        });
+
+        let toast_timeout_ms = 1500;
+
+        let event_sender = self.event_channels.sender.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(toast_timeout_ms)).await;
+            let _ = event_sender.send(Event::Internal(InternalEvent::App(
+                AppEvent::DismissToast { generation },
+            )));
+        });
+    }
+
+    fn show_toggle_toast(&mut self, name: &str, enabled: bool) {
+        let status = if enabled { "ON" } else { "OFF" };
+        self.show_toast(format!("{name}: {status}"));
+    }
+
+    fn dismiss_toast_if_generation_matches(&mut self, generation: u64) {
+        if let Some(toast) = &self.ui_state.toast
+            && toast.generation == generation
+        {
+            self.ui_state.toast = None;
+        }
+    }
+
     pub fn keymaps_all(&self) -> Vec<(String, String)> {
         self.keymaps_impl(false)
     }
@@ -1633,6 +1702,13 @@ impl<'a> App {
                     "toggle text wrapping in preview",
                     Show::FullOnly,
                 ));
+                if matches!(self.input_source, InputSource::Directory(_)) {
+                    keys.push(keymap!(
+                        search.toggle_hidden_files,
+                        "toggle hidden files",
+                        Show::FullOnly,
+                    ));
+                }
                 keys
             }
             Screen::PerformingReplacement(_) => vec![],

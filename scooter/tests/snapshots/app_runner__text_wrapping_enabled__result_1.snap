@@ -26,9 +26,9 @@ expression: snapshot.as_ref()
       ↪  fit on one line so it will initially be truncated, but REPLACED can toggle text           
       ↪ wrapping so that it all shows up on the screen.                                            
       Some more lines here which aren't                                                            
-      quite as long.                                                                               
-      Some                                                                                         
-      more lines further                                                                           
+      quite as long.                  ┌───────────────────┐                                        
+      Some                            │ Text wrapping: ON │                                        
+      more lines further              └───────────────────┘                                        
       on                                                                                           
                                                                                                    
  <space> toggle / <esc> back to search fields / <enter> replace selected / <C-h> help / <C-c> quit

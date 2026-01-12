@@ -145,6 +145,8 @@ impl Default for KeysGeneral {
 pub struct KeysSearch {
     /// Toggle wrapping of lines that don't fit within the width of the preview
     pub toggle_preview_wrapping: Keys,
+    /// Toggle inclusion of hidden files and directories, such as those whose name starts with a dot (.)
+    pub toggle_hidden_files: Keys,
     #[serde(default)]
     /// Commands available on the search screen, when the search fields are focussed
     pub fields: KeysSearchFocusFields,
@@ -160,6 +162,7 @@ impl Default for KeysSearch {
                 KeyCode::Char('l'),
                 KeyModifiers::CONTROL
             )],
+            toggle_hidden_files: keys![KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)],
             fields: KeysSearchFocusFields::default(),
             results: KeysSearchFocusResults::default(),
         }
