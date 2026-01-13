@@ -29,6 +29,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -89,6 +90,7 @@ test_with_both_regex_modes!(
             replacement_text: "XXX",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -143,6 +145,7 @@ test_with_both_regex_modes!(
             replacement_text: "user: $1 (contact: $2 at",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -162,6 +165,7 @@ test_with_both_regex_modes!(
             replacement_text: "[$3/$2/$1]",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -220,6 +224,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "const",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
     };
@@ -239,6 +244,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "Section $1",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
     };
@@ -258,6 +264,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: ", ",
         fixed_strings: true,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
     };
@@ -327,6 +334,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED_CODE",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -371,6 +379,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "FINAL_VERSION",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -415,6 +424,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "DOCS_REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -477,6 +487,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
         };
@@ -529,6 +540,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -574,6 +586,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "variable",
             fixed_strings,
             match_case: false,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -621,6 +634,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -671,6 +685,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -715,6 +730,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
         };
@@ -764,6 +780,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -798,6 +815,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -844,6 +862,7 @@ test_with_both_regex_modes!(
             replacement_text: "replacement",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -884,6 +903,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "replacement",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -956,6 +976,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1014,6 +1035,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1078,6 +1100,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1224,6 +1247,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1360,6 +1384,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1422,6 +1447,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1453,6 +1479,7 @@ test_with_both_regex_modes!(test_text_regex_replacement, |advanced_regex| async 
         replacement_text: "XXX",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex,
     };
@@ -1484,6 +1511,7 @@ test_with_both_regex_modes!(
             replacement_text: "user: $1 (contact: $2 at $3)",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1508,6 +1536,7 @@ test_with_both_regex_modes!(
             replacement_text: "[$3/$2/$1]",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1540,6 +1569,7 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "const",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
     };
@@ -1567,6 +1597,7 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "Section $1",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
     };
@@ -1598,6 +1629,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
         };
@@ -1630,6 +1662,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1650,6 +1683,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "variable",
             fixed_strings,
             match_case: false,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1678,6 +1712,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1693,6 +1728,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1708,6 +1744,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1733,6 +1770,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1761,6 +1799,7 @@ test_with_both_regex_modes!(
             replacement_text: "replacement",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1793,6 +1832,7 @@ test_with_both_regex_modes!(
             replacement_text: "REPLACED",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1816,6 +1856,43 @@ test_with_both_regex_modes!(
     }
 );
 
+test_with_both_regex_modes!(test_text_multiline_matches, |advanced_regex| async move {
+    let input_text = indoc! {"
+            This is a line with START
+            END of pattern here.
+
+            Another line START with
+            END in next line.
+
+            START pattern on this line only END."
+    };
+
+    let search_config = SearchConfig {
+        search_text: r"START.*\nEND",
+        replacement_text: "REPLACED",
+        fixed_strings: false,
+        match_case: true,
+        multiline: true,
+        match_whole_word: false,
+        advanced_regex,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        indoc! {"
+                This is a line with REPLACED of pattern here.
+
+                Another line REPLACED in next line.
+
+                START pattern on this line only END."
+        }
+    );
+
+    Ok(())
+});
+
 test_with_both_regex_modes_and_fixed_strings!(
     test_text_preserve_line_endings,
     |advanced_regex, fixed_strings| async move {
@@ -1826,6 +1903,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1844,6 +1922,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1862,6 +1941,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1880,6 +1960,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1900,6 +1981,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1929,6 +2011,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -1960,6 +2043,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };

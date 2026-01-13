@@ -245,6 +245,13 @@ def run_scooter_stdin_no_tui_test [input: string, scooter_binary: string, search
     do { echo $input | ^$scooter_binary ...$flags } | complete
 }
 
+def strip_ansi_codes [text: string] {
+    # Strip ALL ANSI escape sequences (but preserve line endings)
+    $text
+    | str replace --all --regex '\x1b\[[0-9;?]*[@-~]' ''  # CSI sequences (end with letter/symbol)
+    | str replace --all --regex '\x1b[@-_]' ''             # Other 2-byte escape sequences
+}
+
 def run_expect_command [command: string] {
     let expect_script = 'log_user 0; spawn bash -c "' + $command + '"; log_user 1; expect -timeout -1 eof; puts $expect_out(buffer)'
     ^expect -c $expect_script | complete
@@ -259,7 +266,7 @@ def assert_test_result [result: record, expected_output: string, test_name: stri
     }
 
     # Strip ANSI escape codes from stdout for comparison
-    let cleaned_stdout = ($result.stdout | ansi strip)
+    let cleaned_stdout = (strip_ansi_codes $result.stdout)
 
     if $cleaned_stdout != $expected_output {
         print $"❌ FAILED: ($test_name) - output mismatch"
@@ -296,8 +303,8 @@ def assert_output_contains [result: record, expected_text: string, test_name: st
         return 1
     }
 
-    # Strip ANSI escape codes from stdout for comparison
-    let cleaned_stdout = ($result.stdout | ansi strip)
+    # Strip ANSI escape codes from stdout for comparison (preserves line endings)
+    let cleaned_stdout = (strip_ansi_codes $result.stdout)
 
     if not ($cleaned_stdout | str contains $expected_text) {
         print $"❌ FAILED: ($test_name) - missing expected text\n"
@@ -392,6 +399,12 @@ def test_stdin_processing [scooter_binary: string] {
     0
 }
 
+def assert_tui_output_contains [result: record, expected_text: string, test_name: string] {
+    # TUI outputs CRLF, so convert LF in expected text to CRLF for easier test writing
+    let expected_with_crlf = ($expected_text | str replace --all "\n" "\r\n")
+    assert_output_contains $result $expected_with_crlf $test_name
+}
+
 def test_stdin_tui_mode [scooter_binary: string] {
     print "Testing stdin processing in TUI mode..."
 
@@ -399,9 +412,9 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let command1 = $"echo 'test foo content' | ($scooter_binary) -s 'foo' -r 'bar' -X"
     let result1 = run_expect_command $command1
     let test_failed = (
-        assert_output_contains
+        assert_tui_output_contains
         $result1
-        "test bar content\nSuccessful replacements (lines): 1\nIgnored (lines): 0\nErrors: 0"
+        "test bar content\n\nSuccessful replacements (lines): 1\nIgnored (lines): 0\nErrors: 0"
         "TUI immediate mode with stdin: single line"
     )
     if $test_failed != 0 {
@@ -413,9 +426,9 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let command2 = $"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X"
     let result2 = run_expect_command $command2
     let test_failed = (
-        assert_output_contains
+        assert_tui_output_contains
         $result2
-        "hello world baz bar\nline two with baz\nline three\nSuccessful replacements (lines): 2\nIgnored (lines): 0\nErrors: 0"
+        "hello world baz bar\nline two with baz\nline three\n\nSuccessful replacements (lines): 2\nIgnored (lines): 0\nErrors: 0"
         "TUI immediate mode with stdin: multiline with printed results"
     )
     if $test_failed != 0 {
@@ -438,14 +451,11 @@ def test_stdin_edge_cases [scooter_binary: string] {
         print $"Stderr: ($result1.stderr)"
         return 1
     }
-
     # Verify that both "and" occurrences were replaced
-    let checks1 = ["tabs plus", "CRLF plus"]
-    for text in $checks1 {
-        let test_failed = assert_output_contains $result1 $text "special characters replacement"
-        if $test_failed != 0 {
-            return 1
-        }
+    let expected_special = "line with\ttabs plus\r\nCRLF plus\nnormal LF"
+    let test_failed = assert_output_contains $result1 $expected_special "special characters replacement"
+    if $test_failed != 0 {
+        return 1
     }
 
     # Test with Unicode characters

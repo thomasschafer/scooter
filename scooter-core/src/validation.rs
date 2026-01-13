@@ -19,6 +19,7 @@ pub struct SearchConfig<'a> {
     pub advanced_regex: bool,
     pub match_whole_word: bool,
     pub match_case: bool,
+    pub multiline: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,12 +123,13 @@ pub fn validate_search_configuration<H: ValidationErrorHandler>(
         ValidationResult::Success(parsed_dir_config),
     ) = (search_pattern, parsed_dir_config)
     {
-        let search_config = ParsedSearchConfig {
+        let parsed_search_config = ParsedSearchConfig {
             search: search_pattern,
             replace: search_config.replacement_text.to_owned(),
+            multiline: search_config.multiline,
         };
         Ok(ValidationResult::Success((
-            search_config,
+            parsed_search_config,
             parsed_dir_config,
         )))
     } else {
@@ -229,6 +231,7 @@ mod tests {
             advanced_regex: false,
             match_whole_word: false,
             match_case: false,
+            multiline: false,
         }
     }
 
@@ -327,6 +330,7 @@ mod tests {
                 fixed_strings: true,
                 match_whole_word: true,
                 match_case: true,
+                multiline: false,
                 advanced_regex: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
@@ -345,6 +349,7 @@ mod tests {
                 fixed_strings: true,
                 match_whole_word: false,
                 match_case: false,
+                multiline: false,
                 advanced_regex: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
@@ -360,6 +365,7 @@ mod tests {
                 fixed_strings: true,
                 match_whole_word: true,
                 match_case: false,
+                multiline: false,
                 advanced_regex: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
@@ -378,6 +384,7 @@ mod tests {
                 fixed_strings: true,
                 match_whole_word: true,
                 match_case: true,
+                multiline: false,
                 advanced_regex: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
@@ -393,6 +400,7 @@ mod tests {
                 fixed_strings: false,
                 match_whole_word: true,
                 match_case: false,
+                multiline: false,
                 advanced_regex: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
@@ -412,6 +420,7 @@ mod tests {
                 match_whole_word: false,
                 match_case: false, // forces regex wrapping
                 advanced_regex: false,
+                multiline: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
             test_helpers::assert_pattern_contains(&converted, &[r"\(foo", "(?i)"]);
@@ -426,6 +435,7 @@ mod tests {
                 match_whole_word: false,
                 match_case: false, // forces regex wrapping
                 advanced_regex: false,
+                multiline: false,
             };
             let converted = parse_search_text(&search_config).unwrap();
             test_helpers::assert_pattern_contains(

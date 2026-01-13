@@ -29,9 +29,12 @@ use crate::{
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     line_reader::{BufReadExt, LineEnding},
     replace::{self, PerformingReplacementState, ReplaceState},
-    replace::{add_replacement, replacement_if_match},
+    replace::{add_replacement, replace_all_if_match, replacement_for_match},
     search::Searcher,
-    search::{FileSearcher, ParsedSearchConfig, SearchResult, SearchResultWithReplacement},
+    search::{
+        FileSearcher, MatchContent, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
+        contains_search, search_multiline,
+    },
     utils::{Either, Either::Left, Either::Right, ceil_div},
     validation::{
         DirConfig, SearchConfig, ValidationErrorHandler, ValidationResult,
@@ -443,6 +446,7 @@ pub enum Popup {
 pub struct AppRunConfig {
     pub include_hidden: bool,
     pub advanced_regex: bool,
+    pub multiline: bool,
     pub immediate_search: bool,
     pub immediate_replace: bool,
     pub print_results: bool,
@@ -455,6 +459,7 @@ impl Default for AppRunConfig {
         Self {
             include_hidden: false,
             advanced_regex: false,
+            multiline: false,
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
@@ -808,14 +813,35 @@ impl<'a> App {
             .as_ref()
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
-            match replacement_if_match(
-                &res.search_result.line,
-                file_searcher.search(),
-                file_searcher.replace(),
-            ) {
-                Some(replacement) => res.replacement = replacement,
-                None => return EventHandlingResult::Rerender, // TODO: can we handle this better?
-            }
+            let replacement = match &res.search_result.content {
+                MatchContent::ByteRange {
+                    expected_content, ..
+                } => {
+                    if !contains_search(expected_content, file_searcher.search()) {
+                        // Handle race condition where search results are being updated
+                        // The new search results will already have the correct replacement so no need to update
+                        return EventHandlingResult::Rerender;
+                    }
+                    replacement_for_match(
+                        expected_content,
+                        file_searcher.search(),
+                        file_searcher.replace(),
+                    )
+                }
+                MatchContent::Line { content, .. } => {
+                    let Some(replacement) = replace_all_if_match(
+                        content,
+                        file_searcher.search(),
+                        file_searcher.replace(),
+                    ) else {
+                        // Handle race condition where search results are being updated
+                        // The new search results will already have the correct replacement so no need to update
+                        return EventHandlingResult::Rerender;
+                    };
+                    replacement
+                }
+            };
+            res.replacement = replacement;
         }
         preview_update_state.replacements_updated += end - start + 1;
 
@@ -1092,14 +1118,20 @@ impl<'a> App {
         if let FieldName::Replace = self.search_fields.highlighted_field().name {
             if let Some(ref mut state) = search_fields_state.search_state {
                 // Immediately update replacement on selected fields - the remainder will be updated async
-                if let Some(highlighted) = state.primary_selected_field_mut()
-                    && let Some(updated) = replacement_if_match(
-                        &highlighted.search_result.line,
+                if let Some(highlighted) = state.primary_selected_field_mut() {
+                    let content = match &highlighted.search_result.content {
+                        MatchContent::Line { content, .. } => content.clone(),
+                        MatchContent::ByteRange {
+                            expected_content, ..
+                        } => expected_content.clone(),
+                    };
+                    if let Some(updated) = replace_all_if_match(
+                        &content,
                         file_searcher.search(),
                         file_searcher.replace(),
-                    )
-                {
-                    highlighted.replacement = updated;
+                    ) {
+                        highlighted.replacement = updated;
+                    }
                 }
 
                 // Debounce replacement requests
@@ -1180,7 +1212,7 @@ impl<'a> App {
                             .sender
                             .send(Event::LaunchEditor((
                                 path.clone(),
-                                selected.search_result.line_number,
+                                selected.search_result.start_line_number(),
                             )))
                             .expect("Failed to send event");
                     }
@@ -1368,6 +1400,7 @@ impl<'a> App {
             advanced_regex: self.run_config.advanced_regex,
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
+            multiline: self.run_config.multiline,
         };
         let dir_config = match &self.input_source {
             InputSource::Directory(directory) => Some(DirConfig {
@@ -1421,32 +1454,46 @@ impl<'a> App {
                         });
                     }
                     SearchStrategy::Text { haystack, config } => {
-                        let cursor = Cursor::new(haystack.as_bytes());
-                        for (idx, line_result) in cursor.lines_with_endings().enumerate() {
-                            if cancelled.load(Ordering::Relaxed) {
-                                break;
-                            }
-
-                            let (line_ending, line) = match read_line(line_result) {
-                                Ok(res) => res,
-                                Err(e) => {
-                                    debug!("Error when reading line {idx}: {e}");
-                                    continue;
+                        // When multiline is enabled, search the entire haystack at once
+                        if config.multiline {
+                            for result in search_multiline(&haystack, &config.search, None) {
+                                if cancelled.load(Ordering::Relaxed) {
+                                    break;
                                 }
-                            };
-                            if replacement_if_match(&line, &config.search, &config.replace)
-                                .is_some()
-                            {
-                                let result = SearchResult {
-                                    path: None,
-                                    line_number: idx + 1,
-                                    line,
-                                    line_ending,
-                                    included: true,
-                                };
                                 // Ignore error - likely state reset, thread about to be killed
                                 let _ = sender_for_search
                                     .send(BackgroundProcessingEvent::AddSearchResult(result));
+                            }
+                        } else {
+                            // Default line-by-line search
+                            let cursor = Cursor::new(haystack.as_bytes());
+                            for (idx, line_result) in cursor.lines_with_endings().enumerate() {
+                                if cancelled.load(Ordering::Relaxed) {
+                                    break;
+                                }
+
+                                let (line_ending, line) = match read_line(line_result) {
+                                    Ok(res) => res,
+                                    Err(e) => {
+                                        debug!("Error when reading line {idx}: {e}");
+                                        continue;
+                                    }
+                                };
+                                if replace_all_if_match(&line, &config.search, &config.replace)
+                                    .is_some()
+                                {
+                                    let line_number = idx + 1;
+                                    let result = SearchResult::new_line(
+                                        None,
+                                        line_number,
+                                        line,
+                                        line_ending,
+                                        true,
+                                    );
+                                    // Ignore error - likely state reset, thread about to be killed
+                                    let _ = sender_for_search
+                                        .send(BackgroundProcessingEvent::AddSearchResult(result));
+                                }
                             }
                         }
                     }
@@ -1839,14 +1886,15 @@ mod tests {
     }
 
     fn search_result_with_replacement(included: bool) -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
-                line: "foo".to_owned(),
-                line_ending: LineEnding::Lf,
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("random/file")),
+                line_num,
+                "foo".to_owned(),
+                LineEnding::Lf,
                 included,
-            },
+            ),
             replacement: "bar".to_owned(),
             replace_result: None,
         }
@@ -1855,13 +1903,13 @@ mod tests {
     fn build_test_results(num_results: usize) -> Vec<SearchResultWithReplacement> {
         (0..num_results)
             .map(|i| SearchResultWithReplacement {
-                search_result: SearchResult {
-                    path: Some(PathBuf::from(format!("test{i}.txt"))),
-                    line_number: 1,
-                    line: format!("test line {i}").to_string(),
-                    line_ending: LineEnding::Lf,
-                    included: true,
-                },
+                search_result: SearchResult::new_line(
+                    Some(PathBuf::from(format!("test{i}.txt"))),
+                    1,
+                    format!("test line {i}").to_string(),
+                    LineEnding::Lf,
+                    true,
+                ),
                 replacement: format!("replacement {i}").to_string(),
                 replace_result: None,
             })
@@ -1960,42 +2008,45 @@ mod tests {
     }
 
     fn success_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
-                line: "foo".to_owned(),
-                line_ending: LineEnding::Lf,
-                included: true,
-            },
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("random/file")),
+                line_num,
+                "foo".to_owned(),
+                LineEnding::Lf,
+                true,
+            ),
             replacement: "bar".to_owned(),
             replace_result: Some(ReplaceResult::Success),
         }
     }
 
     fn ignored_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
-                line: "foo".to_owned(),
-                line_ending: LineEnding::Lf,
-                included: false,
-            },
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("random/file")),
+                line_num,
+                "foo".to_owned(),
+                LineEnding::Lf,
+                false,
+            ),
             replacement: "bar".to_owned(),
             replace_result: None,
         }
     }
 
     fn error_result() -> SearchResultWithReplacement {
+        let line_num = random_num();
         SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("random/file")),
-                line_number: random_num(),
-                line: "foo".to_owned(),
-                line_ending: LineEnding::Lf,
-                included: true,
-            },
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("random/file")),
+                line_num,
+                "foo".to_owned(),
+                LineEnding::Lf,
+                true,
+            ),
             replacement: "bar".to_owned(),
             replace_result: Some(ReplaceResult::Error("error".to_owned())),
         }
