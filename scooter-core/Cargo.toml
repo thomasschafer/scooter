@@ -45,7 +45,7 @@ syntect = "5.3.0"
 tempfile = "3.24.0"
 termini = "1.0.0"
 tokio = { version = "1.49.0", features = ["full"] }
-toml = "0.9.10"
+toml = "0.9.11"
 unicode-width = "0.2.0"
 
 [dev-dependencies]
