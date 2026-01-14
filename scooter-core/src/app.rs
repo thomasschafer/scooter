@@ -627,7 +627,7 @@ impl<'a> App {
         };
 
         if search_immediately {
-            app.perform_search_if_valid();
+            app.perform_search_background();
         }
 
         Ok(app)
@@ -646,7 +646,7 @@ impl<'a> App {
     fn handle_app_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
         match app_event {
             AppEvent::PerformSearch => {
-                self.perform_search_unwrap();
+                self.perform_search_already_validated();
                 EventHandlingResult::Rerender
             }
             AppEvent::DismissToast { generation } => {
@@ -677,6 +677,10 @@ impl<'a> App {
     pub fn cancel_in_progress_tasks(&mut self) {
         self.cancel_search();
         self.cancel_replacement();
+
+        if let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen {
+            search_fields_state.cancel_preview_updates();
+        }
     }
 
     pub fn reset(&mut self) {
@@ -708,8 +712,19 @@ impl<'a> App {
         get_bg_receiver!(self)
     }
 
-    // Called when searching explicitly: shows error popup if validation fails
-    fn perform_search_with_error_popup(&mut self) {
+    /// Called when searching explicitly: shows error popup if there have been validation failures
+    //
+    /// NOTE: validation should have been performed (with `validate_fields`) before calling
+    // TODO: how can we enforce validation by type system?
+    fn perform_search_foreground(&mut self) {
+        if !matches!(self.ui_state.current_screen, Screen::SearchFields(_)) {
+            log::warn!(
+                "Called perform_search_with_error_popup on screen {}",
+                self.ui_state.current_screen.name()
+            );
+            return;
+        }
+
         if !self.errors().is_empty() {
             self.set_popup(Popup::Error);
         } else if self.search_fields.search().text().is_empty() {
@@ -732,36 +747,45 @@ impl<'a> App {
                     self.perform_replacement();
                 }
             } else {
-                self.perform_search_if_valid();
+                self.perform_search_background();
             }
         }
     }
 
-    pub fn perform_search_if_valid(&mut self) {
-        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
-            panic!(
-                "Expected SearchFields, found {:?}",
+    /// Called when searching in the background e.g. when entering chars into the search field: does not show
+    /// error popup if there are validation errors
+    pub fn perform_search_background(&mut self) {
+        if !matches!(self.ui_state.current_screen, Screen::SearchFields(_)) {
+            log::warn!(
+                "Called perform_search_if_valid on screen {}",
                 self.ui_state.current_screen.name()
             );
-        };
-        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-            timer.abort();
+            return;
         }
 
         let Some(search_config) = self.validate_fields().unwrap() else {
             return;
         };
         self.searcher = Some(search_config);
-        self.perform_search_unwrap();
+        self.perform_search_already_validated();
     }
 
     /// NOTE: validation should have been performed (with `validate_fields`) before calling
     // TODO: how can we enforce validation by type system - e.g. pass in searcher?
-    fn perform_search_unwrap(&mut self) {
+    fn perform_search_already_validated(&mut self) {
         self.cancel_search();
         let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            log::warn!(
+                "Called perform_search_unwrap on screen {}",
+                self.ui_state.current_screen.name()
+            );
             return;
         };
+        search_fields_state.cancel_preview_updates();
+        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+            timer.abort();
+        }
+
         if self.search_fields.search().text().is_empty() {
             search_fields_state.search_state = None;
         }
@@ -1061,7 +1085,7 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusFields::TriggerSearch => {
-                self.perform_search_with_error_popup();
+                self.perform_search_foreground();
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusFields::FocusPreviousField => {
@@ -1307,7 +1331,7 @@ impl<'a> App {
                         }
                         self.run_config.include_hidden = !self.run_config.include_hidden;
                         self.show_toggle_toast("Hidden files", self.run_config.include_hidden);
-                        self.perform_search_if_valid();
+                        self.perform_search_background();
                         EventHandlingResult::Rerender
                     }
                     CommandSearchFields::SearchFocusFields(command) => {

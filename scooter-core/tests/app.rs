@@ -139,7 +139,7 @@ fn test_error_popup_invalid_input_impl(search_fields: &SearchFieldValues<'_>) {
     .unwrap();
 
     // Simulate search being triggered in background
-    app.perform_search_if_valid();
+    app.perform_search_background();
     assert!(app.popup().is_none());
 
     // Hitting enter should show popup
