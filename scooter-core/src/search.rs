@@ -220,10 +220,6 @@ impl FileSearcher {
     where
         F: FnMut() -> FileVisitor + Send,
     {
-        if let Some(cancelled) = cancelled {
-            cancelled.store(false, Ordering::Relaxed);
-        }
-
         let walker = self.build_walker();
         walker.run(|| {
             let mut on_file_found = file_handler();
@@ -274,10 +270,6 @@ impl FileSearcher {
     ///
     /// The number of files that had replacements performed in them.
     pub fn walk_files_and_replace(&self, cancelled: Option<&AtomicBool>) -> usize {
-        if let Some(cancelled) = cancelled {
-            cancelled.store(false, Ordering::Relaxed);
-        }
-
         let num_files_replaced_in = std::sync::Arc::new(AtomicUsize::new(0));
 
         let walker = self.build_walker();

@@ -68,6 +68,10 @@ expression: app.keymaps_all()
         "toggle text wrapping in preview",
     ),
     (
+        "<C-t>",
+        "toggle hidden files",
+    ),
+    (
         "<C-r>",
         "reset",
     ),

@@ -1453,6 +1453,40 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
 
         None => {}
     }
+
+    if let Some(message) = app.toast_message() {
+        render_toast(message, frame, content_area);
+    }
+}
+
+fn render_toast(message: &str, frame: &mut Frame<'_>, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let message_width = UnicodeWidthStr::width(message);
+    let toast_width = u16::try_from(message_width.saturating_add(4))
+        .unwrap_or(u16::MAX)
+        .min(area.width);
+    let toast_height = 3.min(area.height);
+
+    let toast_area = Rect {
+        x: area.x + (area.width.saturating_sub(toast_width)) / 2,
+        y: area.y + area.height.saturating_sub(toast_height + 2),
+        width: toast_width,
+        height: toast_height,
+    };
+
+    let block = Block::bordered()
+        .border_style(Style::default().fg(Color::Green))
+        .style(Style::default());
+
+    let paragraph = Paragraph::new(message)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    frame.render_widget(Clear, toast_area);
+    frame.render_widget(paragraph, toast_area);
 }
 
 fn render_text_popup(title: &str, body: &str, frame: &mut Frame<'_>, area: Rect) {

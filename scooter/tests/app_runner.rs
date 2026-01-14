@@ -2694,6 +2694,85 @@ test_with_both_regex_modes!(
     }
 );
 
+test_with_both_regex_modes!(
+    test_toggle_hidden_files_keybinding,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "dir1/file1.txt" => text!(
+                "This is a text file",
+            ),
+            ".dir2/file2.rs" => text!(
+                "This is a file in a hidden directory",
+            ),
+            ".file3.txt" => text!(
+                "This is a hidden text file",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        // Search for "is" - should only find 1 result (hidden files excluded by default)
+        send_chars(r"\bis\b", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Results: 1"), 100).await?;
+
+        // Toggle hidden files on
+        send_key_with_modifiers(KeyCode::Char('t'), KeyModifiers::CONTROL, &event_sender);
+
+        // Wait for toast and re-search to complete - should now have 3 results
+        wait_for_match(&mut snapshot_rx, Pattern::string("Hidden files: ON"), 100).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Results: 3"), 1000).await?;
+
+        // Toggle hidden files off again
+        send_key_with_modifiers(KeyCode::Char('t'), KeyModifiers::CONTROL, &event_sender);
+
+        // Should go back to 1 result
+        wait_for_match(&mut snapshot_rx, Pattern::string("Hidden files: OFF"), 100).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Results: 1"), 1000).await?;
+
+        // Toggle hidden files back on for the replacement
+        send_key_with_modifiers(KeyCode::Char('t'), KeyModifiers::CONTROL, &event_sender);
+
+        // Should have 3 results again
+        wait_for_match(&mut snapshot_rx, Pattern::string("Hidden files: ON"), 100).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Results: 3"), 1000).await?;
+
+        // Perform the replacement
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        // Verify all files were replaced (including hidden ones)
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => text!(
+                "This REPLACED a text file",
+            ),
+            ".dir2/file2.rs" => text!(
+                "This REPLACED a file in a hidden directory",
+            ),
+            ".file3.txt" => text!(
+                "This REPLACED a hidden text file",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(src)? {

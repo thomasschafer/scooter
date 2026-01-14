@@ -211,8 +211,6 @@ pub fn perform_replacement(
     validation_search_config: Option<FileSearcher>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        cancelled.store(false, Ordering::Relaxed);
-
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let num_ignored = crate::replace::spawn_replace_included(
             search_results,
