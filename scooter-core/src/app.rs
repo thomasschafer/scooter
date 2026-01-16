@@ -449,6 +449,7 @@ struct Toast {
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppRunConfig {
     pub include_hidden: bool,
+    pub include_git_folders: bool,
     pub advanced_regex: bool,
     pub immediate_search: bool,
     pub immediate_replace: bool,
@@ -461,6 +462,7 @@ impl Default for AppRunConfig {
     fn default() -> Self {
         Self {
             include_hidden: false,
+            include_git_folders: false,
             advanced_regex: false,
             immediate_search: false,
             immediate_replace: false,
@@ -1432,6 +1434,7 @@ impl<'a> App {
                 include_globs: Some(self.search_fields.include_files().text()),
                 exclude_globs: Some(self.search_fields.exclude_files().text()),
                 include_hidden: self.run_config.include_hidden,
+                include_git_folders: self.run_config.include_git_folders,
                 directory: directory.clone(),
             }),
             InputSource::Stdin(_) => None,

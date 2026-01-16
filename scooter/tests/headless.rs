@@ -37,6 +37,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -97,6 +98,7 @@ test_with_both_regex_modes!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -151,6 +153,7 @@ test_with_both_regex_modes!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -170,6 +173,7 @@ test_with_both_regex_modes!(
             include_globs: Some("logs.txt"),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -228,6 +232,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         include_globs: Some("code.rs"),
         exclude_globs: Some(""),
         include_hidden: false,
+        include_git_folders: false,
     };
 
     let result = run_headless(search_config, dir_config);
@@ -247,6 +252,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         include_globs: Some("*.md"),
         exclude_globs: Some(""),
         include_hidden: false,
+        include_git_folders: false,
     };
 
     let result = run_headless(search_config, dir_config);
@@ -266,6 +272,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         include_globs: Some("*.csv"),
         exclude_globs: Some(""),
         include_hidden: false,
+        include_git_folders: false,
     };
 
     let result = run_headless(search_config, dir_config);
@@ -335,6 +342,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("**/*.rs"),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -379,6 +387,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("**/*.rs"),
             exclude_globs: Some("tests/**"),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -423,6 +432,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("**/*.md,**/*.txt"),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -485,6 +495,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -537,6 +548,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -582,6 +594,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -629,6 +642,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -679,6 +693,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -723,6 +738,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -772,6 +788,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false, // Default behavior
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -806,6 +823,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: true, // Include hidden files
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -823,6 +841,138 @@ test_with_both_regex_modes_and_fixed_strings!(
             ),
             ".config/settings.txt" => text!(
                 "Settings file with REPLACEMENT"
+            ),
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_ignores_git_folders_by_default,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "visible.txt" => text!(
+                "This is a visible file with PATTERN"
+            ),
+            ".git/config" => text!(
+                "Git config file with PATTERN"
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "Git object with PATTERN"
+            ),
+            "submodule/.git/config" => text!(
+                "Nested git config with PATTERN"
+            ),
+            // .git as a file (used in worktrees)
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/PATTERN"
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: true, // Include hidden to ensure .git exclusion is separate
+            include_git_folders: false,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Success: 1 file updated\n".to_string(),);
+
+        // Only visible file should be modified, .git folders and files untouched
+        assert_test_files!(
+            &temp_dir,
+            "visible.txt" => text!(
+                "This is a visible file with REPLACEMENT"
+            ),
+            ".git/config" => text!(
+                "Git config file with PATTERN"
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "Git object with PATTERN"
+            ),
+            "submodule/.git/config" => text!(
+                "Nested git config with PATTERN"
+            ),
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/PATTERN"
+            ),
+        );
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_includes_git_folders_with_flag,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "visible.txt" => text!(
+                "This is a visible file with PATTERN"
+            ),
+            ".git/config" => text!(
+                "Git config file with PATTERN"
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "Git object with PATTERN"
+            ),
+            "submodule/.git/config" => text!(
+                "Nested git config with PATTERN"
+            ),
+            // .git as a file (used in worktrees)
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/PATTERN"
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: "PATTERN",
+            replacement_text: "REPLACEMENT",
+            fixed_strings,
+            match_case: true,
+            match_whole_word: false,
+            advanced_regex,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: true,
+            include_git_folders: true,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Success: 5 files updated\n".to_string(),);
+
+        // All files should be modified including .git folders and files
+        assert_test_files!(
+            &temp_dir,
+            "visible.txt" => text!(
+                "This is a visible file with REPLACEMENT"
+            ),
+            ".git/config" => text!(
+                "Git config file with REPLACEMENT"
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "Git object with REPLACEMENT"
+            ),
+            "submodule/.git/config" => text!(
+                "Nested git config with REPLACEMENT"
+            ),
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/REPLACEMENT"
             ),
         );
 
@@ -852,6 +1002,7 @@ test_with_both_regex_modes!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -892,6 +1043,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("{{"), // Invalid glob pattern
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -964,6 +1116,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("*.txt"),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -1022,6 +1175,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("*.txt"),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -1086,6 +1240,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some("*.txt"),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -1232,6 +1387,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some("**/*.rs"),
             exclude_globs: Some("tests/**"),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);
@@ -1368,6 +1524,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             include_globs: Some(""),
             exclude_globs: Some(""),
             include_hidden: false,
+            include_git_folders: false,
         };
 
         let result = run_headless(search_config, dir_config);

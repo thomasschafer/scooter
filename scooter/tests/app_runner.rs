@@ -2773,6 +2773,145 @@ test_with_both_regex_modes!(
     }
 );
 
+test_with_both_regex_modes!(
+    test_ignores_git_folders_by_default,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "dir1/file1.txt" => text!(
+                "This is a text file",
+            ),
+            ".git/config" => text!(
+                "This is a git config file",
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "This is a git object file",
+            ),
+            "submodule/.git/config" => text!(
+                "This is a nested git config",
+            ),
+            // .git as a file (used in worktrees)
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/this",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                include_hidden: true, // Include hidden to ensure .git exclusion is separate
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars(r"\bis\b", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => text!(
+                "This REPLACED a text file",
+            ),
+            ".git/config" => text!(
+                "This is a git config file",
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "This is a git object file",
+            ),
+            "submodule/.git/config" => text!(
+                "This is a nested git config",
+            ),
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/this",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_includes_git_folders_with_flag,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "dir1/file1.txt" => text!(
+                "This is a text file",
+            ),
+            ".git/config" => text!(
+                "This is a git config file",
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "This is a git object file",
+            ),
+            "submodule/.git/config" => text!(
+                "This is a nested git config",
+            ),
+            // .git as a file (used in worktrees)
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/this",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                include_hidden: true,
+                include_git_folders: true,
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 10).await?;
+
+        send_chars(r"\bis\b", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "dir1/file1.txt" => text!(
+                "This REPLACED a text file",
+            ),
+            ".git/config" => text!(
+                "This REPLACED a git config file",
+            ),
+            ".git/objects/pack/packfile" => text!(
+                "This REPLACED a git object file",
+            ),
+            "submodule/.git/config" => text!(
+                "This REPLACED a nested git config",
+            ),
+            "worktree/.git" => text!(
+                "gitdir: /path/to/main/.git/worktrees/this",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
     std::fs::create_dir_all(&dst)?;
     for entry in std::fs::read_dir(src)? {

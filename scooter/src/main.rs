@@ -37,6 +37,10 @@ struct Args {
     #[arg(short = '.', long, action = clap::ArgAction::SetTrue)]
     hidden: bool,
 
+    /// Include `.git` folders (both at the root and in subdirectories)
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    include_git_folders: bool,
+
     /// Log level (trace, debug, info, warn, error)
     #[arg(
         long,
@@ -188,6 +192,9 @@ fn validate_stdin_usage(args: &Args, stdin_content: Option<&str>) -> anyhow::Res
         if args.hidden {
             bail!("Cannot use --hidden flag when processing stdin");
         }
+        if args.include_git_folders {
+            bail!("Cannot use --include-git-folders flag when processing stdin");
+        }
         if args.files_to_include.is_some() {
             bail!("Cannot use --files-to-include when processing stdin");
         }
@@ -218,6 +225,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
             search_field_values: args.into(),
             app_run_config: AppRunConfig {
                 include_hidden: args.hidden,
+                include_git_folders: args.include_git_folders,
                 advanced_regex: args.advanced_regex,
                 immediate_search: args.immediate_search || immediate,
                 immediate_replace: args.immediate_replace || immediate,
@@ -293,6 +301,7 @@ fn dir_config_from_args(args: &Args) -> DirConfig<'_> {
         include_globs: args.files_to_include.as_deref(),
         exclude_globs: args.files_to_exclude.as_deref(),
         include_hidden: args.hidden,
+        include_git_folders: args.include_git_folders,
         directory: args.directory.clone(),
     }
 }
@@ -319,6 +328,7 @@ mod tests {
         Args {
             directory: env::current_dir().unwrap(),
             hidden: false,
+            include_git_folders: false,
             log_level: LevelFilter::Info,
             advanced_regex: false,
             immediate_search: false,
