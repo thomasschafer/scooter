@@ -27,6 +27,7 @@ pub struct DirConfig<'a> {
     pub exclude_globs: Option<&'a str>,
     pub directory: PathBuf,
     pub include_hidden: bool,
+    pub include_git_folders: bool,
 }
 pub trait ValidationErrorHandler {
     fn handle_search_text_error(&mut self, error: &str, detail: &str);
@@ -206,6 +207,11 @@ fn parse_overrides<H: ValidationErrorHandler>(
         error_handler.handle_exclude_files_error("Couldn't parse glob pattern", &e.to_string());
         success = false;
     }
+    if !dir_config.include_git_folders {
+        overrides
+            .add("!.git")
+            .expect("Failed to add `!.git` exclusion");
+    }
     if !success {
         return Ok(ValidationResult::ValidationErrors);
     }
@@ -269,6 +275,7 @@ mod tests {
             exclude_globs: None,
             directory: std::env::temp_dir(),
             include_hidden: false,
+            include_git_folders: false,
         };
         let mut error_handler = SimpleErrorHandler::new();
 
