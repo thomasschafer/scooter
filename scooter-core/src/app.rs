@@ -1168,20 +1168,14 @@ impl<'a> App {
         if let FieldName::Replace = self.search_fields.highlighted_field().name {
             if let Some(ref mut state) = search_fields_state.search_state {
                 // Immediately update replacement on selected fields - the remainder will be updated async
-                if let Some(highlighted) = state.primary_selected_field_mut() {
-                    let content = match &highlighted.search_result.content {
-                        MatchContent::Line { content, .. } => content.clone(),
-                        MatchContent::ByteRange {
-                            expected_content, ..
-                        } => expected_content.clone(),
-                    };
-                    if let Some(updated) = replace_all_if_match(
-                        &content,
+                if let Some(highlighted) = state.primary_selected_field_mut()
+                    && let Some(updated) = replace_all_if_match(
+                        highlighted.search_result.content.matched_text(),
                         file_searcher.search(),
                         file_searcher.replace(),
-                    ) {
-                        highlighted.replacement = updated;
-                    }
+                    )
+                {
+                    highlighted.replacement = updated;
                 }
 
                 // Debounce replacement requests

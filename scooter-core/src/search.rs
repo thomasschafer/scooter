@@ -16,7 +16,7 @@ use crate::{
     replace::{self, ReplaceResult},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Line {
     pub content: String,
     pub line_ending: LineEnding,
@@ -62,12 +62,25 @@ pub enum MatchContent {
     /// Byte-mode: Replace only the specific byte range
     /// Used for multiline search where we track individual matches precisely
     ByteRange {
-        start_line: LinePos,
-        end_line: LinePos,
-        byte_start: usize, // Absolute position in file (for replacement)
-        byte_end: usize,
-        expected_content: String, // Just the matched bytes
+        lines: Vec<(usize, Line)>, // Line numbers (1-indexed) and line contents
+        match_start_in_first_line: usize, // Byte offset where match starts in first line
+        match_end_in_last_line: usize, // Byte offset where match ends in last line (exclusive)
+        byte_start: usize,         // Absolute position in file
+        byte_end: usize,           // Absolute position in file (inclusive)
+        expected_content: String,  // The matched bytes
     },
+}
+
+impl MatchContent {
+    /// Returns the matched text without line ending
+    pub fn matched_text(&self) -> &str {
+        match self {
+            MatchContent::Line { content, .. } => content,
+            MatchContent::ByteRange {
+                expected_content, ..
+            } => expected_content,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,20 +112,50 @@ impl SearchResult {
     }
 
     /// Creates a `SearchResult` with byte-range content
+    #[allow(clippy::too_many_arguments)]
     pub fn new_byte_range(
         path: Option<PathBuf>,
-        start_line: LinePos,
-        end_line: LinePos,
+        lines: Vec<(usize, Line)>,
+        match_start_in_first_line: usize,
+        match_end_in_last_line: usize,
         byte_start: usize,
         byte_end: usize,
         expected_content: String,
         included: bool,
     ) -> Self {
+        assert!(!lines.is_empty(), "ByteRange must have at least one line");
+        assert!(
+            match_start_in_first_line <= lines[0].1.content.len(),
+            "match_start_in_first_line ({}) exceeds first line length ({})",
+            match_start_in_first_line,
+            lines[0].1.content.len()
+        );
+        assert!(
+            match_end_in_last_line <= lines.last().unwrap().1.content.len(),
+            "match_end_in_last_line ({}) exceeds last line length ({})",
+            match_end_in_last_line,
+            lines.last().unwrap().1.content.len()
+        );
+        assert!(
+            byte_start <= byte_end,
+            "byte_start ({byte_start}) must be <= byte_end ({byte_end})",
+        );
+
+        for i in 1..lines.len() {
+            assert!(
+                lines[i].0 == lines[i - 1].0 + 1,
+                "Line numbers must be sequential: {} followed by {}",
+                lines[i - 1].0,
+                lines[i].0
+            );
+        }
+
         Self {
             path,
             content: MatchContent::ByteRange {
-                start_line,
-                end_line,
+                lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
                 byte_start,
                 byte_end,
                 expected_content,
@@ -139,7 +182,12 @@ impl SearchResult {
     pub fn start_line_number(&self) -> usize {
         match &self.content {
             MatchContent::Line { line_number, .. } => *line_number,
-            MatchContent::ByteRange { start_line, .. } => start_line.line,
+            MatchContent::ByteRange { lines, .. } => {
+                lines
+                    .first()
+                    .expect("ByteRange must have at least one line")
+                    .0
+            }
         }
     }
 
@@ -147,7 +195,12 @@ impl SearchResult {
     pub fn end_line_number(&self) -> usize {
         match &self.content {
             MatchContent::Line { line_number, .. } => *line_number,
-            MatchContent::ByteRange { end_line, .. } => end_line.line,
+            MatchContent::ByteRange { lines, .. } => {
+                lines
+                    .last()
+                    .expect("ByteRange must have at least one line")
+                    .0
+            }
         }
     }
 }
@@ -551,7 +604,13 @@ pub(crate) fn search_multiline(
     };
 
     matches
-        .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
+        .map(|(start, end)| {
+            assert!(
+                start < end,
+                "Found match with start < end: start = {start}, end = {end}",
+            );
+            create_search_result_from_bytes(start, end, path, &line_index)
+        })
         .collect()
 }
 
@@ -593,35 +652,118 @@ impl<'a> LineIndex<'a> {
             self.newline_positions[line_num - 2] + 1
         }
     }
+
+    /// Get the byte offset where a line ends (exclusive, i.e., points to newline or end of content)
+    fn line_end_byte(&self, line_num: usize) -> usize {
+        assert!(line_num >= 1, "Line numbers are 1-indexed");
+        // The end of line N is at the N-1 index in newline_positions (0-indexed)
+        if line_num <= self.newline_positions.len() {
+            self.newline_positions[line_num - 1]
+        } else {
+            // Last line without trailing newline
+            self.content.len()
+        }
+    }
+
+    /// Returns the total number of lines in the content
+    fn total_lines(&self) -> usize {
+        // Number of newlines + 1, unless the file is empty
+        if self.content.is_empty() {
+            0
+        } else {
+            self.newline_positions.len() + 1
+        }
+    }
+
+    /// Extract full lines from `start_line` to `end_line` (both 1-indexed, inclusive)
+    pub(crate) fn extract_lines(&self, start_line: usize, end_line: usize) -> Vec<(usize, Line)> {
+        assert!(start_line >= 1, "Line numbers are 1-indexed");
+        assert!(start_line <= end_line, "start_line must be <= end_line");
+
+        (start_line..=end_line)
+            .map(|line_num| {
+                let start = self.line_start_byte(line_num);
+                let end = self.line_end_byte(line_num);
+                let content = self.content[start..end].to_string();
+
+                // Determine line ending
+                let line_ending = if line_num <= self.newline_positions.len() {
+                    let newline_pos = self.newline_positions[line_num - 1];
+                    if newline_pos > 0
+                        && self.content.as_bytes().get(newline_pos.saturating_sub(1))
+                            == Some(&b'\r')
+                    {
+                        LineEnding::CrLf
+                    } else {
+                        LineEnding::Lf
+                    }
+                } else {
+                    LineEnding::None
+                };
+
+                (
+                    line_num,
+                    Line {
+                        content,
+                        line_ending,
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
-/// Create a `SearchResult` from byte offsets in the content
+/// Create a `SearchResult` from byte offsets in the content.
+/// `end_byte` is exclusive (standard Rust range semantics).
 fn create_search_result_from_bytes(
     start_byte: usize,
     end_byte: usize,
     path: Option<&Path>,
     line_index: &LineIndex<'_>,
 ) -> SearchResult {
+    debug_assert!(
+        start_byte < end_byte,
+        "Zero-length matches are not supported: start_byte={start_byte}, end_byte={end_byte}"
+    );
+
     let start_line_num = line_index.line_number_at(start_byte);
-    let end_line_num = line_index.line_number_at(end_byte.saturating_sub(1));
+    // end_byte is exclusive, so we use end_byte - 1 for the line number
+    let mut end_line_num = line_index.line_number_at(end_byte.saturating_sub(1));
 
     // Compute byte offsets within each line (for preview highlighting)
-    let start_byte_in_line = start_byte - line_index.line_start_byte(start_line_num);
-    let end_byte_in_line = end_byte.saturating_sub(1) - line_index.line_start_byte(end_line_num);
+    let match_start_in_first_line = start_byte - line_index.line_start_byte(start_line_num);
 
-    // Extract the matched content (byte offsets are exclusive end, make inclusive for indexing)
+    let last_line_start = line_index.line_start_byte(end_line_num);
+    let last_line_end = line_index.line_end_byte(end_line_num);
+    let last_line_content_len = last_line_end - last_line_start;
+
+    // Check if match extends into the line ending (newline)
+    // If so, and there's a next line, include it so the preview shows the merge
+    let match_end_in_last_line = if end_byte > last_line_start + last_line_content_len {
+        // Match extends past line content into line ending
+        let has_next_line = end_line_num < line_index.total_lines();
+        if has_next_line {
+            // Include next line with match_end = 0 (match doesn't extend into its content)
+            end_line_num += 1;
+            0
+        } else {
+            last_line_content_len
+        }
+    } else {
+        end_byte - last_line_start
+    };
+
+    // Extract full lines containing the match
+    let lines = line_index.extract_lines(start_line_num, end_line_num);
+
+    // Extract the matched content
     let expected_content = line_index.content[start_byte..end_byte].to_string();
 
     SearchResult::new_byte_range(
         path.map(Path::to_path_buf),
-        LinePos {
-            line: start_line_num,
-            byte_pos: start_byte_in_line,
-        },
-        LinePos {
-            line: end_line_num,
-            byte_pos: end_byte_in_line,
-        },
+        lines,
+        match_start_in_first_line,
+        match_end_in_last_line,
         start_byte,
         end_byte.saturating_sub(1), // Convert from exclusive to inclusive
         expected_content,
