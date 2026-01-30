@@ -893,6 +893,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };
@@ -959,6 +960,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
         };

@@ -13,6 +13,7 @@ use scooter_core::{
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
     replace::{PerformingReplacementState, ReplaceState},
+    search,
     utils::{
         self, HighlightedLine, last_n_chars, read_lines_range_highlighted, relative_path,
         strip_control_chars,
@@ -192,7 +193,7 @@ fn diff_to_line<'a>(diff: impl Iterator<Item = &'a Diff>) -> StyledLine {
         if let Some(bg) = &d.bg_colour {
             style = style.bg(diff_col_to_ratatui(bg));
         }
-        (Cow::Owned(strip_control_chars(&d.text)), Some(style))
+        styled_segment(&d.text, style)
     })
     .collect()
 }
@@ -506,10 +507,17 @@ fn spawn_compute_diff(old: MatchContent, new: String, event_sender: UnboundedSen
     tokio::spawn(async move {
         // Compute the detailed character-level diff
         let preview = match old.clone() {
-            MatchContent::ByteRange { .. } => {
-                // TODO(mutliline): handle
-                todo!()
-            }
+            MatchContent::ByteRange {
+                lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
+                ..
+            } => build_multiline_diff(
+                &lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
+                &new,
+            ),
             MatchContent::Line { content, .. } => {
                 let (old_diffs, new_diffs) = line_diff(&content, &new);
                 SearchResultPreview {
@@ -730,21 +738,21 @@ fn build_preview_from_str<'a>(
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
 
-    // `num_lines_to_show - 1` because diff takes up 2 lines
-    let (before, cur, after) =
-        utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
-    // TODO(multiline): update this for multiline
-    let expected_line = &result.search_result.content_string();
-    assert!(cur.1 == *expected_line, "Expected line didn't match actual",);
+    let (before, cur, after) = utils::split_indexed_lines(
+        lines,
+        line_idx,
+        preview.context_lines_to_show(num_lines_to_show),
+    )?;
 
+    assert!(
+        cur.1 == expected_first_line_content(result),
+        "Expected line didn't match actual",
+    );
+
+    let after = filter_after_for_multiline(after, result);
     let before = before.iter().map(|(_, l)| to_line_plain(l));
-    let diff = preview
-        .old_line_diffs
-        .clone()
-        .into_iter()
-        .chain(preview.new_line_diffs.clone());
     let after = after.iter().map(|(_, l)| to_line_plain(l));
-    line_list(before, diff, after, num_lines_to_show, wrap)
+    line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
         .map_err(|e| anyhow!("failed to combine lines: {e}"))
 }
 
@@ -971,16 +979,11 @@ fn loading_lines<'a>(syntax_highlighting_theme: Option<&Theme>, true_colour: boo
 const LONG_LINE_THRESHOLD: usize = 5_000;
 
 fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
-    // Check if any line in the search result is long
-    let max_line_len = match &result.search_result.content {
-        MatchContent::Line { content, .. } => content.len(),
-        MatchContent::ByteRange {
-            expected_content, ..
-        } => expected_content.len(),
-    };
-    max_line_len.max(result.replacement.len()) > LONG_LINE_THRESHOLD
+    let content_len = result.search_result.content.matched_text().len();
+    content_len.max(result.replacement.len()) > LONG_LINE_THRESHOLD
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_preview_from_file<'a>(
     num_lines_to_show: u16,
     result: &SearchResultWithReplacement,
@@ -1012,35 +1015,25 @@ fn build_preview_from_file<'a>(
         )? {
             LinesOrLoading::Loading => Ok(loading_lines(Some(theme), true_colour)),
             LinesOrLoading::Lines(lines) => {
-                // `num_lines_to_show - 1` because diff takes up 2 lines
                 let Ok((before, cur, after)) = utils::split_indexed_lines(
                     lines,
                     line_idx,
-                    num_lines_to_show.saturating_sub(1),
+                    preview.context_lines_to_show(num_lines_to_show),
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                // TODO(multiline): handle multiple lines correctly
-                let expected_line = match &result.search_result.content {
-                    MatchContent::Line { content, .. } => content,
-                    MatchContent::ByteRange {
-                        expected_content, ..
-                    } => expected_content,
-                };
-                if cur.1.iter().map(|(_, s)| s).join("") != *expected_line {
+
+                if cur.1.iter().map(|(_, s)| s).join("") != expected_first_line_content(result) {
                     bail!("File has changed since search (lines don't match)");
                 }
 
+                let after = filter_after_for_multiline(after, result);
                 let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
-                let diff = preview
-                    .old_line_diffs
-                    .clone()
-                    .into_iter()
-                    .chain(preview.new_line_diffs.clone());
                 let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
 
-                let mut list = line_list(before, diff, after, num_lines_to_show, wrap)
-                    .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
+                let mut list =
+                    line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
+                        .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
                 if let Some(bg) = theme
                     .settings
                     .background
@@ -1061,33 +1054,22 @@ fn build_preview_from_file<'a>(
         )? {
             LinesOrLoading::Loading => Ok(loading_lines(None, true_colour)),
             LinesOrLoading::Lines(lines) => {
-                // `num_lines_to_show - 1` because diff takes up 2 lines
                 let Ok((before, cur, after)) = utils::split_indexed_lines(
                     lines,
                     line_idx,
-                    num_lines_to_show.saturating_sub(1),
+                    preview.context_lines_to_show(num_lines_to_show),
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                // TODO(multiline): handle multiple lines correctly
-                let expected_line = match &result.search_result.content {
-                    MatchContent::Line { content, .. } => content,
-                    MatchContent::ByteRange {
-                        expected_content, ..
-                    } => expected_content,
-                };
-                if cur.1 != *expected_line {
+
+                if cur.1 != expected_first_line_content(result) {
                     bail!("File has changed since search (lines don't match)");
                 }
 
+                let after = filter_after_for_multiline(after, result);
                 let before = before.iter().map(|(_, l)| to_line_plain(l));
-                let diff = preview
-                    .old_line_diffs
-                    .clone()
-                    .into_iter()
-                    .chain(preview.new_line_diffs.clone());
                 let after = after.iter().map(|(_, l)| to_line_plain(l));
-                line_list(before, diff, after, num_lines_to_show, wrap)
+                line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
                     .map_err(|e| anyhow!("failed to combine lines: {e}"))
             }
         }
@@ -1107,40 +1089,272 @@ pub(crate) struct SearchResultPreview {
     new_line_diffs: Vec<StyledLine>,
 }
 
+impl SearchResultPreview {
+    /// Compute how many context lines to request, accounting for diff height.
+    /// Always returns at least 1 to avoid errors in downstream processing.
+    fn context_lines_to_show(&self, num_lines_to_show: u16) -> u16 {
+        let diff_height = self.old_line_diffs.len() + self.new_line_diffs.len();
+        let extra = diff_height.saturating_sub(1);
+        num_lines_to_show
+            .saturating_sub(extra.try_into().unwrap_or(u16::MAX))
+            .max(1)
+    }
+
+    /// Returns all diff lines (old then new) for display
+    fn diff_lines(&self) -> impl Iterator<Item = StyledLine> + '_ {
+        self.old_line_diffs
+            .iter()
+            .cloned()
+            .chain(self.new_line_diffs.iter().cloned())
+    }
+}
+
+/// Get the expected first line content for validation
+fn expected_first_line_content(result: &SearchResultWithReplacement) -> &str {
+    match &result.search_result.content {
+        MatchContent::Line { content, .. } => content.as_str(),
+        MatchContent::ByteRange { lines, .. } => &lines[0].1.content,
+    }
+}
+
+/// Filter `after` context to exclude lines that are part of a multiline match
+fn filter_after_for_multiline<T>(
+    after: Vec<(usize, T)>,
+    result: &SearchResultWithReplacement,
+) -> Vec<(usize, T)> {
+    let end_line_idx = result.search_result.end_line_number() - 1;
+    after
+        .into_iter()
+        .filter(|(idx, _)| *idx > end_line_idx)
+        .collect()
+}
+
+/// Helper to push a styled text segment if non-empty
+fn push_styled_segment(line: &mut StyledLine, text: &str, style: Style) {
+    if !text.is_empty() {
+        line.push(styled_segment(text, style));
+    }
+}
+
+/// Build a styled line with three regions: before, middle (highlighted), after
+fn build_three_region_line(
+    line_prefix: &str,
+    content: &str,
+    highlight_start: usize,
+    highlight_end: usize,
+    text_style: Style,
+    highlight_style: Style,
+) -> StyledLine {
+    let mut line = vec![styled_segment(line_prefix, text_style)];
+    push_styled_segment(&mut line, &content[..highlight_start], text_style);
+    push_styled_segment(
+        &mut line,
+        &content[highlight_start..highlight_end],
+        highlight_style,
+    );
+    push_styled_segment(&mut line, &content[highlight_end..], text_style);
+    line
+}
+
+/// Get the slice of `content` that overlaps with a global byte range.
+/// Returns an empty string if the ranges don't overlap.
+fn slice_in_global_range(
+    content: &str,
+    content_start: usize,
+    range_start: usize,
+    range_end: usize,
+) -> &str {
+    let content_end = content_start + content.len();
+    if content_end <= range_start || content_start >= range_end {
+        return "";
+    }
+    let start = range_start.saturating_sub(content_start);
+    let end = (range_end - content_start).min(content.len());
+
+    debug_assert!(
+        content.is_char_boundary(start),
+        "start {} is not a UTF-8 char boundary in content of len {}",
+        start,
+        content.len()
+    );
+    debug_assert!(
+        content.is_char_boundary(end),
+        "end {} is not a UTF-8 char boundary in content of len {}",
+        end,
+        content.len()
+    );
+
+    &content[start..end]
+}
+
+/// Build a multiline diff preview for `ByteRange` matches.
+fn build_multiline_diff(
+    lines: &[(usize, search::Line)],
+    match_start_in_first_line: usize,
+    match_end_in_last_line: usize,
+    replacement: &str,
+) -> SearchResultPreview {
+    debug_assert!(!lines.is_empty(), "lines must not be empty");
+
+    let first_line = &lines[0].1;
+    let last_line = &lines.last().unwrap().1;
+
+    debug_assert!(
+        match_start_in_first_line <= first_line.content.len(),
+        "match_start_in_first_line ({}) exceeds first line length ({})",
+        match_start_in_first_line,
+        first_line.content.len()
+    );
+    debug_assert!(
+        match_end_in_last_line <= last_line.content.len(),
+        "match_end_in_last_line ({}) exceeds last line length ({})",
+        match_end_in_last_line,
+        last_line.content.len()
+    );
+    debug_assert!(
+        first_line
+            .content
+            .is_char_boundary(match_start_in_first_line),
+        "match_start_in_first_line must be at UTF-8 boundary"
+    );
+    debug_assert!(
+        last_line.content.is_char_boundary(match_end_in_last_line),
+        "match_end_in_last_line must be at UTF-8 boundary"
+    );
+
+    let red_text = Style::new().fg(Color::Red);
+    let red_bg = Style::new().fg(Color::Black).bg(Color::Red);
+    let green_text = Style::new().fg(Color::Green);
+    let green_bg = Style::new().fg(Color::Black).bg(Color::Green);
+
+    // Build OLD lines - style: [prefix] [matched portion] [suffix]
+    let old_line_diffs: Vec<StyledLine> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, (_, line))| {
+            let is_first = i == 0;
+            let is_last = i == lines.len() - 1;
+            let match_start = if is_first {
+                match_start_in_first_line
+            } else {
+                0
+            };
+            let match_end = if is_last {
+                match_end_in_last_line
+            } else {
+                line.content.len()
+            };
+            build_three_region_line(
+                "- ",
+                &line.content,
+                match_start,
+                match_end,
+                red_text,
+                red_bg,
+            )
+        })
+        .collect();
+
+    // Build NEW lines - join prefix + replacement + suffix, split by newlines, style by region
+    let (full_new, prefix_end) = reconstruct_new_content(
+        lines,
+        match_start_in_first_line,
+        match_end_in_last_line,
+        replacement,
+    );
+    let replacement_end = prefix_end + replacement.len();
+
+    let mut new_line_diffs = Vec::new();
+    let mut pos = 0;
+    for line_content in full_new.split('\n') {
+        let mut line = vec![styled_segment("+ ", green_text)];
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, 0, prefix_end),
+            green_text,
+        );
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, prefix_end, replacement_end),
+            green_bg,
+        );
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, replacement_end, usize::MAX),
+            green_text,
+        );
+        new_line_diffs.push(line);
+        pos += line_content.len() + 1;
+    }
+
+    SearchResultPreview {
+        old_line_diffs,
+        new_line_diffs,
+    }
+}
+
+/// Reconstructs the full new content after replacement for multiline matches.
+/// Returns `(full_new_content, prefix_len)` where `prefix_len` is the length of unchanged prefix.
+fn reconstruct_new_content(
+    lines: &[(usize, search::Line)],
+    match_start_in_first_line: usize,
+    match_end_in_last_line: usize,
+    replacement: &str,
+) -> (String, usize) {
+    let prefix = &lines[0].1.content[..match_start_in_first_line];
+    let suffix = &lines.last().unwrap().1.content[match_end_in_last_line..];
+    (format!("{prefix}{replacement}{suffix}"), prefix.len())
+}
+
+/// Creates a styled segment with control characters stripped
+fn styled_segment(text: &str, style: Style) -> (Cow<'static, str>, Option<Style>) {
+    (Cow::Owned(strip_control_chars(text)), Some(style))
+}
+
+/// Creates a simple styled line (prefix + content, all same color)
+fn simple_styled_line(prefix: &str, content: &str, colour: Color) -> StyledLine {
+    let style = Style::new().fg(colour);
+    vec![
+        styled_segment(prefix, style),
+        styled_segment(content, style),
+    ]
+}
+
 /// Creates a simple diff without character-level granularity - just shows entire lines as red/green
-fn simple_diff(old: &MatchContent, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
+fn simple_diff(old: &MatchContent, new_content: &str) -> SearchResultPreview {
     match old {
-        MatchContent::ByteRange { .. } => {
-            // TODO(mutliline): handle
-            todo!()
+        MatchContent::ByteRange {
+            lines,
+            match_start_in_first_line,
+            match_end_in_last_line,
+            ..
+        } => {
+            let old_line_diffs: Vec<StyledLine> = lines
+                .iter()
+                .map(|(_, line)| simple_styled_line("- ", &line.content, Color::Red))
+                .collect();
+
+            let (full_new_content, _) = reconstruct_new_content(
+                lines,
+                *match_start_in_first_line,
+                *match_end_in_last_line,
+                new_content,
+            );
+
+            let new_line_diffs: Vec<StyledLine> = full_new_content
+                .split('\n')
+                .map(|line| simple_styled_line("+ ", line, Color::Green))
+                .collect();
+
+            SearchResultPreview {
+                old_line_diffs,
+                new_line_diffs,
+            }
         }
-        MatchContent::Line { content, .. } => {
-            let old_diffs = vec![
-                Diff {
-                    text: "- ".to_owned(),
-                    fg_colour: DiffColour::Red,
-                    bg_colour: None,
-                },
-                Diff {
-                    text: content.clone(),
-                    fg_colour: DiffColour::Red,
-                    bg_colour: None,
-                },
-            ];
-            let new_diffs = vec![
-                Diff {
-                    text: "+ ".to_owned(),
-                    fg_colour: DiffColour::Green,
-                    bg_colour: None,
-                },
-                Diff {
-                    text: new_line.to_owned(),
-                    fg_colour: DiffColour::Green,
-                    bg_colour: None,
-                },
-            ];
-            (old_diffs, new_diffs)
-        }
+        MatchContent::Line { content, .. } => SearchResultPreview {
+            old_line_diffs: vec![simple_styled_line("- ", content, Color::Red)],
+            new_line_diffs: vec![simple_styled_line("+ ", new_content, Color::Green)],
+        },
     }
 }
 
@@ -1148,10 +1362,9 @@ fn build_search_result_preview(
     result: &SearchResultWithReplacement,
     event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
-    // TODO(multiline): handle mutliple lines correctly here
-    let old_line = &result.search_result.content;
-    let new_line = &result.replacement;
-    let cache_key = (old_line.clone(), new_line.clone());
+    let old_content = &result.search_result.content;
+    let replacement = &result.replacement;
+    let cache_key = (old_content.clone(), replacement.clone());
 
     // Check cache first
     let mut cache_guard = cache::diff_cache().lock().unwrap();
@@ -1165,14 +1378,10 @@ fn build_search_result_preview(
     drop(cache_guard);
 
     // Cache miss - spawn background task to compute detailed diff
-    spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
+    spawn_compute_diff(old_content.clone(), replacement.clone(), event_sender);
 
     // Return simple diff immediately
-    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
-    SearchResultPreview {
-        old_line_diffs: vec![diff_to_line(old_diffs.iter())],
-        new_line_diffs: vec![diff_to_line(new_diffs.iter())],
-    }
+    simple_diff(old_content, replacement)
 }
 
 fn search_result<'a>(
