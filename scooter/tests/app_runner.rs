@@ -3416,3 +3416,439 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+test_with_both_regex_modes!(test_multiline_search_preview, |advanced_regex| async move {
+    let temp_dir = create_test_files!(
+        "file1.txt" => text!(
+            "line 1",
+            "foo bar",
+            "baz qux",
+            "line 4",
+            "foo bar",
+            "baz qux",
+            "line 7",
+        ),
+    );
+
+    let app_config = AppConfig {
+        directory: temp_dir.path().to_path_buf(),
+        app_run_config: AppRunConfig {
+            advanced_regex,
+            multiline: true,
+            ..AppRunConfig::default()
+        },
+        ..AppConfig::default()
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_config_and_width(app_config, 50)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    // Search for multiline pattern "foo bar\nbaz"
+    send_chars(r"foo bar\nbaz", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("REPLACED", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+    let snapshot =
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+    assert_snapshot_with_filters("multiline_search_preview_result_1", snapshot);
+
+    // Navigate down to second result
+    send_key(KeyCode::Down, &event_sender);
+    let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 200).await?;
+    assert_snapshot_with_filters("multiline_search_preview_result_2", snapshot);
+
+    // Perform the replacement
+    send_key(KeyCode::Enter, &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+    assert_test_files!(
+        temp_dir,
+        "file1.txt" => text!(
+            "line 1",
+            "REPLACED qux",
+            "line 4",
+            "REPLACED qux",
+            "line 7",
+        ),
+    );
+
+    shutdown(event_sender, run_handle).await
+});
+
+test_with_both_regex_modes!(
+    test_multiline_search_single_line_match,
+    |advanced_regex| async move {
+        // Test multiline mode with matches that only span a single line
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "foo bar baz",
+                "test line",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for single-line pattern in multiline mode
+        send_chars("foo", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("multiline_single_line_match_preview", snapshot);
+
+        // Perform the replacement
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "hello world",
+                "REPLACED bar baz",
+                "test line",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_search_three_line_match,
+    |advanced_regex| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "line 1",
+                "start match",
+                "middle line",
+                "end match",
+                "line 5",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for pattern spanning 3 lines
+        send_chars(r"start match\nmiddle line\nend match", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("SINGLE LINE", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("multiline_three_line_match_preview", snapshot);
+
+        // Perform the replacement
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "line 1",
+                "SINGLE LINE",
+                "line 5",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_match_at_file_start,
+    |advanced_regex| async move {
+        // Test multiline match starting at line 1 (no context before)
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "first line",
+                "second line",
+                "third line",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for pattern at file start
+        send_chars(r"first line\nsecond", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "REPLACED line",
+                "third line",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_match_at_file_end,
+    |advanced_regex| async move {
+        // Test multiline match ending at last line (no context after)
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "first line",
+                "second line",
+                "third line",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for pattern at file end
+        send_chars(r"second line\nthird line", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "first line",
+                "REPLACED",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_match_with_empty_line,
+    |advanced_regex| async move {
+        // Test multiline match containing an empty line
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "before",
+                "start",
+                "",
+                "end",
+                "after",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for pattern spanning empty line
+        send_chars(r"start\n\nend", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "before",
+                "REPLACED",
+                "after",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_replacement_collapses_lines,
+    |advanced_regex| async move {
+        // Test that multiline match can be collapsed to shorter text
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "before",
+                "line 1 here",
+                "line 2 here",
+                "after",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace multiline pattern with shorter text (keeps "here" suffix)
+        send_chars(r"line 1 here\nline 2", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("MERGED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "before",
+                "MERGED here",
+                "after",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_replacement_to_single_line,
+    |advanced_regex| async move {
+        // Test that 3-line match can be replaced with single line
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "before",
+                "start",
+                "middle",
+                "end",
+                "after",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace 3 full lines with single word
+        send_chars(r"start\nmiddle\nend", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("CONDENSED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "before",
+                "CONDENSED",
+                "after",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
