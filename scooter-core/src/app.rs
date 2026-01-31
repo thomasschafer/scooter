@@ -892,19 +892,13 @@ impl<'a> App {
             .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
             let replacement = match &res.search_result.content {
-                MatchContent::ByteRange {
-                    expected_content, ..
-                } => {
-                    if !contains_search(expected_content, file_searcher.search()) {
+                MatchContent::ByteRange { content, .. } => {
+                    if !contains_search(content, file_searcher.search()) {
                         // Handle race condition where search results are being updated
                         // The new search results will already have the correct replacement so no need to update
                         return EventHandlingResult::Rerender;
                     }
-                    replacement_for_match(
-                        expected_content,
-                        file_searcher.search(),
-                        file_searcher.replace(),
-                    )
+                    replacement_for_match(content, file_searcher.search(), file_searcher.replace())
                 }
                 MatchContent::Line { content, .. } => {
                     let Some(replacement) = replace_all_if_match(

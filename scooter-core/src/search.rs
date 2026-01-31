@@ -65,9 +65,9 @@ pub enum MatchContent {
         lines: Vec<(usize, Line)>, // Line numbers (1-indexed) and line contents
         match_start_in_first_line: usize, // Byte offset where match starts in first line
         match_end_in_last_line: usize, // Byte offset where match ends in last line (exclusive)
-        byte_start: usize,         // Absolute position in file
-        byte_end: usize,           // Absolute position in file (inclusive)
-        expected_content: String,  // The matched bytes
+        byte_start: usize,         // Absolute byte position in file
+        byte_end: usize,           // Absolute byte position in file (exclusive)
+        content: String,           // The matched bytes
     },
 }
 
@@ -75,10 +75,7 @@ impl MatchContent {
     /// Returns the matched text without line ending
     pub fn matched_text(&self) -> &str {
         match self {
-            MatchContent::Line { content, .. } => content,
-            MatchContent::ByteRange {
-                expected_content, ..
-            } => expected_content,
+            MatchContent::Line { content, .. } | MatchContent::ByteRange { content, .. } => content,
         }
     }
 }
@@ -120,7 +117,7 @@ impl SearchResult {
         match_end_in_last_line: usize,
         byte_start: usize,
         byte_end: usize,
-        expected_content: String,
+        content: String,
         included: bool,
     ) -> Self {
         assert!(!lines.is_empty(), "ByteRange must have at least one line");
@@ -137,8 +134,8 @@ impl SearchResult {
             lines.last().unwrap().1.content.len()
         );
         assert!(
-            byte_start <= byte_end,
-            "byte_start ({byte_start}) must be <= byte_end ({byte_end})",
+            byte_start < byte_end,
+            "byte_start ({byte_start}) must be < byte_end ({byte_end})",
         );
 
         for i in 1..lines.len() {
@@ -158,7 +155,7 @@ impl SearchResult {
                 match_end_in_last_line,
                 byte_start,
                 byte_end,
-                expected_content,
+                content,
             },
             included,
         }
@@ -172,9 +169,7 @@ impl SearchResult {
                 line_ending,
                 ..
             } => format!("{}{}", content, line_ending.as_str()),
-            MatchContent::ByteRange {
-                expected_content, ..
-            } => expected_content.clone(),
+            MatchContent::ByteRange { content, .. } => content.clone(),
         }
     }
 
@@ -765,7 +760,7 @@ fn create_search_result_from_bytes(
         match_start_in_first_line,
         match_end_in_last_line,
         start_byte,
-        end_byte.saturating_sub(1), // Convert from exclusive to inclusive
+        end_byte,
         expected_content,
         true,
     )
@@ -1338,7 +1333,8 @@ mod tests {
             assert_eq!(results[0].end_line_number(), 2);
             assert_eq!(results[0].path, None);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange content");
@@ -1356,7 +1352,8 @@ mod tests {
             assert_eq!(results[0].start_line_number(), 1);
             assert_eq!(results[0].end_line_number(), 2);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange content");
@@ -1405,7 +1402,8 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange");
@@ -1421,7 +1419,8 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange");
@@ -1437,7 +1436,8 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange");
@@ -1458,7 +1458,8 @@ mod tests {
             assert_eq!(results[0].path, None);
             assert_eq!(results[0].included, true);
             let MatchContent::ByteRange {
-                expected_content, ..
+                content: expected_content,
+                ..
             } = &results[0].content
             else {
                 panic!("Expected ByteRange");
@@ -1487,7 +1488,7 @@ mod tests {
             assert_eq!(result.start_line_number(), 2);
             assert_eq!(result.end_line_number(), 2);
             let MatchContent::ByteRange {
-                expected_content,
+                content: expected_content,
                 byte_start,
                 byte_end,
                 ..
@@ -1496,8 +1497,7 @@ mod tests {
                 panic!("Expected ByteRange");
             };
             assert_eq!(expected_content, "line2");
-            // Note: create_search_result_from_bytes converts exclusive end to inclusive (subtracts 1)
-            assert_eq!((*byte_start, *byte_end), (6, 10));
+            assert_eq!((*byte_start, *byte_end), (6, 11));
         }
 
         #[test]
@@ -1510,7 +1510,7 @@ mod tests {
             assert_eq!(result.start_line_number(), 1);
             assert_eq!(result.end_line_number(), 2);
             let MatchContent::ByteRange {
-                expected_content,
+                content: expected_content,
                 byte_start,
                 byte_end,
                 ..
@@ -1519,8 +1519,7 @@ mod tests {
                 panic!("Expected ByteRange");
             };
             assert_eq!(expected_content, "line1\nline2");
-            // Note: create_search_result_from_bytes converts exclusive end to inclusive (subtracts 1)
-            assert_eq!((*byte_start, *byte_end), (0, 10));
+            assert_eq!((*byte_start, *byte_end), (0, 11));
         }
     }
 
@@ -1529,7 +1528,7 @@ mod tests {
         // "foo\nbar baz bar qux\nbar\nbux\n"
         //  0123 456789012345678 901234567
         //       ^     ^         ^
-        //       4-6   12-14     20-22
+        //       4-7   12-15     20-23  (exclusive end)
         let content = "foo\nbar baz bar qux\nbar\nbux\n";
         let search = SearchType::Fixed("bar".to_string());
 
@@ -1538,7 +1537,7 @@ mod tests {
         // Should find 3 matches: 2 on line 2, 1 on line 3
         assert_eq!(results.len(), 3);
 
-        // First match: "bar" at bytes 4-6 on line 2
+        // First match: "bar" at bytes 4-7 on line 2
         assert_eq!(results[0].start_line_number(), 2);
         assert_eq!(results[0].end_line_number(), 2);
         let MatchContent::ByteRange {
@@ -1549,9 +1548,9 @@ mod tests {
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
+        assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
 
-        // Second match: "bar" at bytes 12-14 on line 2 (same line!)
+        // Second match: "bar" at bytes 12-15 on line 2 (same line!)
         assert_eq!(results[1].start_line_number(), 2);
         assert_eq!(results[1].end_line_number(), 2);
         let MatchContent::ByteRange {
@@ -1562,9 +1561,9 @@ mod tests {
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
+        assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
 
-        // Third match: "bar" at bytes 20-22 on line 3
+        // Third match: "bar" at bytes 20-23 on line 3
         assert_eq!(results[2].start_line_number(), 3);
         assert_eq!(results[2].end_line_number(), 3);
         let MatchContent::ByteRange {
@@ -1575,6 +1574,6 @@ mod tests {
         else {
             panic!("Expected ByteRange");
         };
-        assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
+        assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
     }
 }
