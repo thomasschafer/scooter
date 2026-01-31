@@ -288,7 +288,7 @@ fn mark_conflicting_replacements(results: &mut [SearchResultWithReplacement]) {
             )
         };
 
-        if last_end_byte.is_some_and(|last_end| *byte_start <= last_end) {
+        if last_end_byte.is_some_and(|last_end| *byte_start < last_end) {
             result.replace_result = Some(ReplaceResult::Error(
                 "Conflicts with previous replacement".to_owned(),
             ));
@@ -412,7 +412,7 @@ fn replace_byte_mode(
             let MatchContent::ByteRange {
                 byte_start,
                 byte_end,
-                expected_content,
+                content,
                 ..
             } = &result.search_result.content
             else {
@@ -429,7 +429,7 @@ fn replace_byte_mode(
             }
 
             // Read the expected match bytes
-            let match_len = byte_end - byte_start + 1;
+            let match_len = byte_end - byte_start;
             let mut actual_bytes = Vec::with_capacity(match_len);
             let bytes_read = Read::by_ref(&mut input)
                 .take(match_len as u64)
@@ -443,7 +443,7 @@ fn replace_byte_mode(
             }
 
             // Full read - check if content matches
-            if actual_bytes != expected_content.as_bytes() {
+            if actual_bytes != content.as_bytes() {
                 result.replace_result =
                     Some(ReplaceResult::Error("File changed since search".to_owned()));
                 writer.write_all(&actual_bytes)?;
@@ -451,7 +451,7 @@ fn replace_byte_mode(
                 result.replace_result = Some(ReplaceResult::Success);
                 writer.write_all(result.replacement.as_bytes())?;
             }
-            current_pos = byte_end + 1;
+            current_pos = *byte_end;
         }
 
         // Copy remaining bytes
@@ -516,7 +516,6 @@ pub fn add_replacement(
     search: &SearchType,
     replace: &str,
 ) -> Option<SearchResultWithReplacement> {
-    // For line-mode, use just the content without line ending
     let replacement = replace_all_if_match(search_result.content.matched_text(), search, replace)?;
     Some(SearchResultWithReplacement {
         search_result,
@@ -3316,7 +3315,7 @@ mod tests {
             replacement: &str,
         ) -> SearchResultWithReplacement {
             let expected_content = line_content[match_start..match_end].to_string();
-            let byte_end = byte_start + expected_content.len() - 1;
+            let byte_end = byte_start + expected_content.len();
 
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
@@ -3341,28 +3340,29 @@ mod tests {
         }
 
         /// Helper to create a `ByteRange` `SearchResult` for testing multiline replacement.
-        /// `byte_start` and `byte_end` define the byte range to replace (inclusive end).
-        /// Lines are constructed from the expected_content.
+        /// `byte_start` and `byte_end` define the byte range to replace (exclusive end).
+        /// Lines are constructed from the `content`.
         fn create_byte_range_result(
             path: &str,
             start_line: usize,
             end_line: usize,
             byte_start: usize,
             byte_end: usize,
-            expected_content: &str,
+            content: &str,
             replacement: &str,
         ) -> SearchResultWithReplacement {
-            // Parse expected_content into lines
+            // Parse `content` into lines
             let mut lines: Vec<(usize, Line)> = Vec::new();
             let mut line_num = start_line;
-            let mut remaining = expected_content;
+            let mut remaining = content;
 
             while !remaining.is_empty() {
                 let (content, line_ending, rest) = if let Some(crlf_pos) = remaining.find("\r\n") {
                     let lf_pos = remaining.find('\n');
                     // Check if \n comes before \r\n (meaning standalone \n)
-                    if lf_pos.is_some() && lf_pos.unwrap() < crlf_pos {
-                        let pos = lf_pos.unwrap();
+                    if let Some(pos) = lf_pos
+                        && pos < crlf_pos
+                    {
                         (&remaining[..pos], LineEnding::Lf, &remaining[pos + 1..])
                     } else {
                         (
@@ -3417,7 +3417,7 @@ mod tests {
                     match_end_in_last_line,
                     byte_start,
                     byte_end,
-                    expected_content.to_string(),
+                    content.to_string(),
                     true,
                 ),
                 replacement: replacement.to_string(),
@@ -3452,16 +3452,15 @@ mod tests {
             }
 
             // Build expected content from lines
-            let expected_content =
-                lines_content
-                    .iter()
-                    .fold(String::new(), |mut acc, (content, ending)| {
-                        use std::fmt::Write;
-                        write!(acc, "{}{}", content, ending.as_str()).unwrap();
-                        acc
-                    });
+            let content = lines_content
+                .iter()
+                .fold(String::new(), |mut acc, (content, ending)| {
+                    use std::fmt::Write;
+                    write!(acc, "{}{}", content, ending.as_str()).unwrap();
+                    acc
+                });
 
-            let byte_end = byte_start + expected_content.len() - 1;
+            let byte_end = byte_start + content.len();
             let end_line = start_line + lines_content.len() - 1;
 
             create_byte_range_result(
@@ -3470,7 +3469,7 @@ mod tests {
                 end_line,
                 byte_start,
                 byte_end,
-                &expected_content,
+                &content,
                 replacement,
             )
         }
@@ -3486,13 +3485,13 @@ mod tests {
                 "line 1\nline 2\nline 3\nline 4\nline 5\n",
             );
 
-            // Replace lines 2-4: "line 2\nline 3\nline 4\n" = bytes 7-27
+            // Replace lines 2-4: "line 2\nline 3\nline 4\n" = bytes 7-28 (exclusive end)
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 2,
                 4,
                 7,
-                27,
+                28,
                 "line 2\nline 3\nline 4\n",
                 "REPLACED\n",
             )];
@@ -3516,23 +3515,23 @@ mod tests {
             );
 
             let mut results = vec![
-                // Replace lines 1-2: "line 1\nline 2\n" = bytes 0-13
+                // Replace lines 1-2: "line 1\nline 2\n" = bytes 0-14 (exclusive end)
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     1,
                     2,
                     0,
-                    13,
+                    14,
                     "line 1\nline 2\n",
                     "FIRST\n",
                 ),
-                // Replace lines 5-7: "line 5\nline 6\nline 7\n" = bytes 28-48
+                // Replace lines 5-7: "line 5\nline 6\nline 7\n" = bytes 28-49 (exclusive end)
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     5,
                     7,
                     28,
-                    48,
+                    49,
                     "line 5\nline 6\nline 7\n",
                     "SECOND\n",
                 ),
@@ -3557,15 +3556,15 @@ mod tests {
                 "line 1\nline 2\nline 3\nline 4\nline 5\n",
             );
 
-            // First replacement: lines 2-4 = bytes 7-27
-            // Second replacement: lines 3-5 = bytes 14-34 (overlaps with first)
+            // First replacement: lines 2-4 = bytes 7-28 (exclusive end)
+            // Second replacement: lines 3-5 = bytes 14-35 (exclusive end, overlaps with first)
             let mut results = vec![
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     2,
                     4,
                     7,
-                    27,
+                    28,
                     "line 2\nline 3\nline 4\n",
                     "FIRST\n",
                 ),
@@ -3574,7 +3573,7 @@ mod tests {
                     3,
                     5,
                     14,
-                    34,
+                    35,
                     "line 3\nline 4\nline 5\n",
                     "SECOND\n",
                 ),
@@ -3610,33 +3609,33 @@ mod tests {
             let file_path = create_test_file(&temp_dir, "test.txt", &file_content);
 
             let mut results = vec![
-                // First: lines 9-11 = bytes 56-78
+                // First: lines 9-11 = bytes 56-79 (exclusive end)
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     9,
                     11,
                     56,
-                    78,
+                    79,
                     "line 9\nline 10\nline 11\n",
                     "FIRST\n",
                 ),
-                // Second: lines 10-13 = bytes 63-94 (overlaps with first)
+                // Second: lines 10-13 = bytes 63-95 (exclusive end, overlaps with first)
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     10,
                     13,
                     63,
-                    94,
+                    95,
                     "line 10\nline 11\nline 12\nline 13\n",
                     "SECOND\n",
                 ),
-                // Third: line 12 = bytes 79-86 (no overlap with first after first succeeds)
+                // Third: line 12 = bytes 79-87 (exclusive end, no overlap with first after first succeeds)
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     12,
                     12,
                     79,
-                    86,
+                    87,
                     "line 12\n",
                     "THIRD\n",
                 ),
@@ -4175,49 +4174,49 @@ mod tests {
             // Should find 3 matches: 2 on line 2, 1 on line 3
             assert_eq!(search_results.len(), 3);
 
-            // First match: "bar" at bytes 4-6 on line 2
+            // First match: "bar" at bytes 4-7 on line 2 (exclusive end)
             assert_eq!(search_results[0].start_line_number(), 2);
             assert_eq!(search_results[0].end_line_number(), 2);
             let MatchContent::ByteRange {
                 byte_start: byte_start_0,
                 byte_end: byte_end_0,
-                expected_content: ec0,
+                content: ec0,
                 ..
             } = &search_results[0].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
+            assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
             assert_eq!(ec0, "bar");
 
-            // Second match: "bar" at bytes 12-14 on line 2 (same line!)
+            // Second match: "bar" at bytes 12-15 on line 2 (same line!)
             assert_eq!(search_results[1].start_line_number(), 2);
             assert_eq!(search_results[1].end_line_number(), 2);
             let MatchContent::ByteRange {
                 byte_start: byte_start_1,
                 byte_end: byte_end_1,
-                expected_content: ec1,
+                content: ec1,
                 ..
             } = &search_results[1].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
+            assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
             assert_eq!(ec1, "bar");
 
-            // Third match: "bar" at bytes 20-22 on line 3
+            // Third match: "bar" at bytes 20-23 on line 3
             assert_eq!(search_results[2].start_line_number(), 3);
             assert_eq!(search_results[2].end_line_number(), 3);
             let MatchContent::ByteRange {
                 byte_start: byte_start_2,
                 byte_end: byte_end_2,
-                expected_content: ec2,
+                content: ec2,
                 ..
             } = &search_results[2].content
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
+            assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
             assert_eq!(ec2, "bar");
 
             // Convert to replacements
@@ -4287,9 +4286,9 @@ mod tests {
             else {
                 panic!("Expected ByteRange");
             };
-            assert_eq!((*byte_start_0, *byte_end_0), (4, 6));
-            assert_eq!((*byte_start_1, *byte_end_1), (12, 14));
-            assert_eq!((*byte_start_2, *byte_end_2), (20, 22));
+            assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
+            assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
+            assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4330,7 +4329,7 @@ mod tests {
             byte_start: usize,
             byte_end: usize,
         ) -> SearchResultWithReplacement {
-            let expected_content = format!("content-{byte_start}-{byte_end}");
+            let content = format!("content-{byte_start}-{byte_end}");
             let lines: Vec<(usize, Line)> = (start_line..=end_line)
                 .map(|line_num| {
                     (
@@ -4351,7 +4350,7 @@ mod tests {
                     last_line_content_len, // match_end_in_last_line (entire last line)
                     byte_start,
                     byte_end,
-                    expected_content,
+                    content,
                     true,
                 ),
                 replacement: "REPLACED".to_string(),
@@ -4450,8 +4449,8 @@ mod tests {
         }
 
         #[test]
-        fn test_byte_offsets_touching_conflict() {
-            // Byte offsets are inclusive, so end=5 and start=5 should conflict
+        fn test_byte_offsets_touching_no_conflict() {
+            // Byte offsets are exclusive, so end=5 and start=5 are adjacent, not overlapping
             let mut results = vec![
                 create_replacement_result(1, 1, 0, 5),
                 create_replacement_result(1, 1, 5, 10),
@@ -4460,13 +4459,9 @@ mod tests {
             mark_conflicting_replacements(&mut results);
 
             assert_eq!(results.len(), 2);
+            // Adjacent ranges should not conflict
             assert_eq!(results[0].replace_result, None);
-            assert_eq!(
-                results[1].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
+            assert_eq!(results[1].replace_result, None);
         }
 
         #[test]
@@ -4553,7 +4548,7 @@ mod tests {
 
         #[test]
         fn test_chain_of_overlapping_conflicts() {
-            // All overlap: 0-10, 5-15, 10-20
+            // With exclusive end: 0-10 and 5-15 overlap, but 0-10 and 10-20 are adjacent
             let mut results = vec![
                 create_replacement_result(1, 1, 0, 10),
                 create_replacement_result(1, 1, 5, 15),
@@ -4563,19 +4558,17 @@ mod tests {
             mark_conflicting_replacements(&mut results);
 
             assert_eq!(results.len(), 3);
+            // First succeeds
             assert_eq!(results[0].replace_result, None);
+            // Second conflicts (5-15 overlaps with 0-10 at bytes 5-9)
             assert_eq!(
                 results[1].replace_result,
                 Some(ReplaceResult::Error(
                     "Conflicts with previous replacement".to_owned()
                 ))
             );
-            assert_eq!(
-                results[2].replace_result,
-                Some(ReplaceResult::Error(
-                    "Conflicts with previous replacement".to_owned()
-                ))
-            );
+            // Third does NOT conflict (10-20 starts exactly where 0-10 ends, they're adjacent)
+            assert_eq!(results[2].replace_result, None);
         }
 
         #[test]
@@ -4615,7 +4608,7 @@ mod tests {
             end_line: usize,
             byte_start: usize,
             byte_end: usize,
-            expected_content: &str,
+            content: &str,
             replacement: &str,
         ) -> SearchResultWithReplacement {
             let lines: Vec<(usize, Line)> = (start_line..=end_line)
@@ -4638,7 +4631,7 @@ mod tests {
                     last_line_content_len, // match_end_in_last_line (entire last line)
                     byte_start,
                     byte_end,
-                    expected_content.to_string(),
+                    content.to_string(),
                     true,
                 ),
                 replacement: replacement.to_string(),
@@ -4651,13 +4644,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Replace "world" (bytes 6-10) with "rust"
+            // Replace "world" (bytes 6-11, exclusive end) with "rust"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "rust",
             )];
@@ -4671,13 +4664,13 @@ mod tests {
         #[test]
         fn test_byte_mode_happy_path_multiple_replacements() {
             let temp_dir = TempDir::new().unwrap();
-            // "foo bar baz qux" - bytes: foo=0-2, bar=4-6, baz=8-10, qux=12-14
+            // "foo bar baz qux" - bytes: foo=0-3, bar=4-7, baz=8-11, qux=12-15 (exclusive end)
             let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz qux");
 
             let mut results = vec![
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 14, "qux", "DDD"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 3, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 11, "baz", "CCC"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 15, "qux", "DDD"),
             ];
 
             let result = replace_in_file(&mut results);
@@ -4693,13 +4686,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Replace "hello" (bytes 0-4) with "hi"
+            // Replace "hello" (bytes 0-5, exclusive end) with "hi"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 0,
-                4,
+                5,
                 "hello",
                 "hi",
             )];
@@ -4715,13 +4708,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Replace "world" (bytes 6-10) with "everyone"
+            // Replace "world" (bytes 6-11, exclusive end) with "everyone"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "everyone",
             )];
@@ -4744,7 +4737,7 @@ mod tests {
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world", // Expected
                 "rust",
             )];
@@ -4767,13 +4760,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Create result expecting bytes 6-10 ("world")
+            // Create result expecting bytes 6-11 ("world", exclusive end)
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "rust",
             )];
@@ -4795,13 +4788,13 @@ mod tests {
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world hi world");
 
             let mut results = vec![
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 6, 10, "world", "rust"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 6, 11, "world", "rust"),
                 create_byte_range_result(
                     file_path.to_str().unwrap(),
                     1,
                     1,
                     15,
-                    19,
+                    20,
                     "world",
                     "blah",
                 ),
@@ -4823,13 +4816,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world test");
 
-            // Create result expecting bytes 6-10 ("world")
+            // Create result expecting bytes 6-11 ("world", exclusive end)
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "rust",
             )];
@@ -4848,13 +4841,13 @@ mod tests {
         #[test]
         fn test_byte_mode_file_truncated_multiple_replacements() {
             let temp_dir = TempDir::new().unwrap();
-            // "foo bar baz qux" - bytes: foo=0-2, bar=4-6, baz=8-10, qux=12-14
+            // "foo bar baz qux" - bytes: foo=0-3, bar=4-7, baz=8-11, qux=12-15 (exclusive end)
             let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz qux");
 
             let mut results = vec![
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 14, "qux", "DDD"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 3, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 11, "baz", "CCC"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 15, "qux", "DDD"),
             ];
 
             // Truncate file after "foo bar " (8 bytes) - first replacement succeeds,
@@ -4878,8 +4871,8 @@ mod tests {
             let file_path = create_test_file(&temp_dir, "test.txt", "foo bar baz");
 
             let mut results = vec![
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "foo", "AAA"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "baz", "CCC"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 3, "foo", "AAA"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 11, "baz", "CCC"),
             ];
 
             // Change content at second match position
@@ -4903,13 +4896,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Replace "world" (5 chars) with "everyone" (8 chars)
+            // Replace "world" (5 chars) with "everyone" (8 chars), bytes 6-11 exclusive
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "everyone",
             )];
@@ -4923,16 +4916,16 @@ mod tests {
         #[test]
         fn test_byte_mode_multiline_replacement() {
             let temp_dir = TempDir::new().unwrap();
-            // "line1\nline2\nline3\n" - line1\n = 0-5, line2\n = 6-11, line3\n = 12-17
+            // "line1\nline2\nline3\n" - line1\n = 0-6, line2\n = 6-12, line3\n = 12-18 (exclusive end)
             let file_path = create_test_file(&temp_dir, "test.txt", "line1\nline2\nline3\n");
 
-            // Replace "line2\n" (bytes 6-11) with "REPLACED\n"
+            // Replace "line2\n" (bytes 6-12, exclusive end) with "REPLACED\n"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 2,
                 2,
                 6,
-                11,
+                12,
                 "line2\n",
                 "REPLACED\n",
             )];
@@ -4949,13 +4942,13 @@ mod tests {
             // "line1\nline2\nline3\n"
             let file_path = create_test_file(&temp_dir, "test.txt", "line1\nline2\nline3\n");
 
-            // Replace bytes spanning lines 1-2 (bytes 0-11 = "line1\nline2\n")
+            // Replace bytes spanning lines 1-2 (bytes 0-12, exclusive end = "line1\nline2\n")
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 2,
                 0,
-                11,
+                12,
                 "line1\nline2\n",
                 "REPLACED\n",
             )];
@@ -4971,13 +4964,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello");
 
-            // Create result expecting bytes 0-4 ("hello")
+            // Create result expecting bytes 0-5 ("hello", exclusive end)
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 0,
-                4,
+                5,
                 "hello",
                 "world",
             )];
@@ -4998,13 +4991,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world and more");
 
-            // Replace only "world" (bytes 6-10), should preserve " and more"
+            // Replace only "world" (bytes 6-11, exclusive end), should preserve " and more"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "rust",
             )];
@@ -5020,13 +5013,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
-            // Replace "world" with empty string
+            // Replace "world" with empty string, bytes 6-11 (exclusive end)
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "",
             )];
@@ -5044,13 +5037,13 @@ mod tests {
             // h=0, e=1, l=2, l=3, o=4, space=5, 世=6-8, 界=9-11, space=12, t=13, e=14, s=15, t=16
             let file_path = create_test_file(&temp_dir, "test.txt", "hello 世界 test");
 
-            // Replace "世界" (bytes 6-11) with "world"
+            // Replace "世界" (bytes 6-12, exclusive end) with "world"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                11,
+                12,
                 "世界",
                 "world",
             )];
@@ -5066,13 +5059,13 @@ mod tests {
             let temp_dir = TempDir::new().unwrap();
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world test");
 
-            // Replace "world" (bytes 6-10) with "世界"
+            // Replace "world" (bytes 6-11, exclusive end) with "世界"
             let mut results = vec![create_byte_range_result(
                 file_path.to_str().unwrap(),
                 1,
                 1,
                 6,
-                10,
+                11,
                 "world",
                 "世界",
             )];
@@ -5086,13 +5079,13 @@ mod tests {
         #[test]
         fn test_byte_mode_multiple_unicode_replacements() {
             let temp_dir = TempDir::new().unwrap();
-            // "aaa bbb ccc" - a=0-2, space=3, b=4-6, space=7, c=8-10
+            // "aaa bbb ccc" - a=0-3, space=3, b=4-7, space=7, c=8-11 (exclusive end)
             let file_path = create_test_file(&temp_dir, "test.txt", "aaa bbb ccc");
 
             let mut results = vec![
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 2, "aaa", "日"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 4, 6, "bbb", "本"),
-                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 10, "ccc", "語"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 0, 3, "aaa", "日"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 4, 7, "bbb", "本"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 8, 11, "ccc", "語"),
             ];
 
             let result = replace_in_file(&mut results);
