@@ -27,6 +27,7 @@ pub(crate) enum CommandGeneral {
 pub(crate) enum CommandSearchFields {
     TogglePreviewWrapping,
     ToggleHiddenFiles,
+    ToggleMultiline,
     SearchFocusFields(CommandSearchFocusFields),
     SearchFocusResults(CommandSearchFocusResults),
 }
@@ -135,7 +136,8 @@ impl KeyMap {
                     toggle_preview_wrapping,
                     CommandSearchFields::TogglePreviewWrapping
                 ),
-                (toggle_hidden_files, CommandSearchFields::ToggleHiddenFiles)
+                (toggle_hidden_files, CommandSearchFields::ToggleHiddenFiles),
+                (toggle_multiline, CommandSearchFields::ToggleMultiline),
             ]
         );
 

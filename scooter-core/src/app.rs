@@ -1356,6 +1356,12 @@ impl<'a> App {
                         self.perform_search_background();
                         EventHandlingResult::Rerender
                     }
+                    CommandSearchFields::ToggleMultiline => {
+                        self.run_config.multiline = !self.run_config.multiline;
+                        self.show_toggle_toast("Multiline", self.run_config.multiline);
+                        self.perform_search_background();
+                        EventHandlingResult::Rerender
+                    }
                     CommandSearchFields::SearchFocusFields(command) => {
                         if !matches!(
                             search_fields_state.focussed_section,
@@ -1771,6 +1777,11 @@ impl<'a> App {
                         Show::FullOnly,
                     ));
                 }
+                keys.push(keymap!(
+                    search.toggle_multiline,
+                    "toggle multiline",
+                    Show::FullOnly,
+                ));
                 keys
             }
             Screen::PerformingReplacement(_) => vec![],

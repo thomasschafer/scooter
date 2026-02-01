@@ -3306,7 +3306,7 @@ mod tests {
         /// `match_start` and `match_end` are byte positions within the line content.
         /// `byte_start` is the absolute byte offset in the file.
         fn create_single_line_byte_range_result(
-            path: &PathBuf,
+            path: &Path,
             line_number: usize,
             line_content: &str,
             match_start: usize,
@@ -3319,7 +3319,7 @@ mod tests {
 
             SearchResultWithReplacement {
                 search_result: SearchResult::new_byte_range(
-                    Some(path.clone()),
+                    Some(path.to_path_buf()),
                     vec![(
                         line_number,
                         Line {

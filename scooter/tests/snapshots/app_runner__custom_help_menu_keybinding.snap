@@ -10,15 +10,15 @@ expression: snapshot
     │                                                                                        │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     
     ┌───┐                                                                                          
-    │   │ Fixed strings                                                                            
-    └──┌───────────────────────────────────────Help────────────────────────────────────────┐       
-    ┌──│  <enter>  jump to results                                                         │       
-    │  │    <tab>  focus next                                                              │       
-    └──│  <S-tab>  focus previous                                                          │       
-    ┌──│  <space>  toggle checkbox                                                         │       
-    │ X│    <A-u>  unlock pre-populated fields                                             │       
-    └──│    <C-l>  toggle text wrapping in preview                                         │       
-    ┌Fi│    <C-t>  toggle hidden files                                                     │─┐     
+    │  ┌───────────────────────────────────────Help────────────────────────────────────────┐       
+    └──│  <enter>  jump to results                                                         │       
+    ┌──│    <tab>  focus next                                                              │       
+    │  │  <S-tab>  focus previous                                                          │       
+    └──│  <space>  toggle checkbox                                                         │       
+    ┌──│    <A-u>  unlock pre-populated fields                                             │       
+    │ X│    <C-l>  toggle text wrapping in preview                                         │       
+    └──│    <C-t>  toggle hidden files                                                     │       
+    ┌Fi│    <A-m>  toggle multiline                                                        │─┐     
     │  │    <C-r>  reset                                                                   │ │     
     └──│     <F1>  help                                                                    │─┘     
     ┌Fi│    <esc>  close popup                                                             │─┐     
