@@ -149,6 +149,8 @@ pub struct KeysSearch {
     pub toggle_hidden_files: Keys,
     /// Toggle multiline search mode, which allows patterns to match across line boundaries
     pub toggle_multiline: Keys,
+    /// Toggle interpretation of escape sequences in replacement text (\n becomes newline, \t becomes tab, \\ becomes backslash)
+    pub toggle_interpret_escape_sequences: Keys,
     #[serde(default)]
     /// Commands available on the search screen, when the search fields are focussed
     pub fields: KeysSearchFocusFields,
@@ -166,6 +168,7 @@ impl Default for KeysSearch {
             )],
             toggle_hidden_files: keys![KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)],
             toggle_multiline: keys![KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT)],
+            toggle_interpret_escape_sequences: keys![], // Unbound by default
             fields: KeysSearchFocusFields::default(),
             results: KeysSearchFocusResults::default(),
         }

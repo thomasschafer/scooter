@@ -1311,6 +1311,7 @@ mod tests {
         assert_eq!(last_n_chars(s, 9), "👋 World 🌍");
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_typescript_syntax_available() {
         let syntax_set = two_face::syntax::extra_no_newlines();

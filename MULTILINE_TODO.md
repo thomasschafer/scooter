@@ -2,6 +2,14 @@
 
 ## UX enhancements
 
+### ~~Interpret escape sequences in replacement text~~ DONE
+Implemented with config option and toggleable command:
+- `\n` → newline, `\r` → carriage return, `\t` → tab, `\\` → literal backslash
+- Config key: `search.interpret_escape_sequences` (boolean, default: false)
+- Added `ToggleInterpretEscapeSequences` command (unbound by default, can be bound via config)
+- Handler in `app.rs` shows "Escape sequences: ON/OFF" toast and triggers re-search
+- `interpret_escapes()` function in `replace.rs` with comprehensive tests
+
 ### ~~Keyboard shortcut to toggle multiline~~ DONE
 Implemented with `Alt+M`:
 - Added `toggle_multiline` to `KeysSearch` in `keys.rs`

@@ -28,6 +28,7 @@ pub(crate) enum CommandSearchFields {
     TogglePreviewWrapping,
     ToggleHiddenFiles,
     ToggleMultiline,
+    ToggleInterpretEscapeSequences,
     SearchFocusFields(CommandSearchFocusFields),
     SearchFocusResults(CommandSearchFocusResults),
 }
@@ -138,6 +139,10 @@ impl KeyMap {
                 ),
                 (toggle_hidden_files, CommandSearchFields::ToggleHiddenFiles),
                 (toggle_multiline, CommandSearchFields::ToggleMultiline),
+                (
+                    toggle_interpret_escape_sequences,
+                    CommandSearchFields::ToggleInterpretEscapeSequences
+                ),
             ]
         );
 
