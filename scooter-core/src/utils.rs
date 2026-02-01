@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Error, bail};
 use ignore::overrides::OverrideBuilder;
-use syntect::{
+use two_face::re_exports::syntect::{
     easy::HighlightLines,
     highlighting::{Style, Theme},
     parsing::SyntaxSet,
@@ -395,8 +395,8 @@ pub fn add_overrides(
 #[cfg(test)]
 mod tests {
     use std::io::Write;
-    use syntect::highlighting::ThemeSet;
     use tempfile::NamedTempFile;
+    use two_face::re_exports::syntect::highlighting::ThemeSet;
 
     use super::*;
 
@@ -868,7 +868,7 @@ mod tests {
     }
 
     fn get_syntax() -> SyntaxSet {
-        SyntaxSet::load_defaults_nonewlines()
+        two_face::syntax::extra_no_newlines()
     }
 
     #[allow(clippy::type_complexity)]
@@ -1309,5 +1309,24 @@ mod tests {
     fn test_emoji() {
         let s = "Hello 👋 World 🌍";
         assert_eq!(last_n_chars(s, 9), "👋 World 🌍");
+    }
+
+    #[test]
+    fn test_typescript_syntax_available() {
+        let syntax_set = two_face::syntax::extra_no_newlines();
+
+        let ts_syntax = syntax_set.find_syntax_by_extension("ts");
+        assert!(ts_syntax.is_some(), "TypeScript syntax should be available");
+        assert_eq!(ts_syntax.unwrap().name, "TypeScript");
+
+        let tsx_syntax = syntax_set.find_syntax_by_extension("tsx");
+        assert!(
+            tsx_syntax.is_some(),
+            "TypeScript React syntax should be available"
+        );
+        assert_eq!(tsx_syntax.unwrap().name, "TypeScriptReact");
+
+        let js_syntax = syntax_set.find_syntax_by_extension("js");
+        assert!(js_syntax.is_some(), "JavaScript syntax should be available");
     }
 }
