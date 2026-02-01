@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use syntect::highlighting::Color as SyntectColour;
+use two_face::re_exports::syntect::highlighting::Color as SyntectColour;
 
 // Finds the index (0-5) for an RGB component corresponding to the closest xterm cube level:
 // 0, 95, 135, 175, 215 or 255.

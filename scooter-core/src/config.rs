@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-use syntect::highlighting::{Theme, ThemeSet};
+use two_face::re_exports::syntect::highlighting::{Theme, ThemeSet};
 
 mod keys;
 pub use keys::*;

@@ -1792,9 +1792,9 @@ dependencies = [
  "scooter-core",
  "serial_test",
  "simple-log",
- "syntect",
  "tempfile",
  "tokio",
+ "two-face",
  "unicode-segmentation",
  "unicode-width 0.2.0",
 ]
@@ -1822,11 +1822,11 @@ dependencies = [
  "simple-log",
  "steel-core",
  "steel-derive",
- "syntect",
  "tempfile",
  "termini",
  "tokio",
  "toml",
+ "two-face",
  "unicode-width 0.2.0",
 ]
 
@@ -2414,6 +2414,17 @@ name = "tstr_proc_macros"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e78122066b0cb818b8afd08f7ed22f7fdbc3e90815035726f0840d0d26c0747a"
+
+[[package]]
+name = "two-face"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b285c51f8a6ade109ed4566d33ac4fb289fb5d6cf87ed70908a5eaf65e948e34"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "syntect",
+]
 
 [[package]]
 name = "typed-arena"

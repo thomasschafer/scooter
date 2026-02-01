@@ -29,11 +29,11 @@ use std::{
     sync::{Arc, OnceLock, atomic::Ordering},
     time::Duration,
 };
-use syntect::{
+use tokio::sync::mpsc::UnboundedSender;
+use two_face::re_exports::syntect::{
     highlighting::{FontStyle, Style as SyntectStyle, Theme},
     parsing::SyntaxSet,
 };
-use tokio::sync::mpsc::UnboundedSender;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -485,7 +485,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
             }
         }
 
-        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let syntax_set = SYNTAX_SET.get_or_init(two_face::syntax::extra_no_newlines);
         let full = match read_lines_range_highlighted(&path, None, None, &theme, syntax_set, true) {
             Ok(full) => full.collect(),
             Err(e) => {
@@ -566,7 +566,7 @@ fn read_lines_range_highlighted_with_cache(
         Ok(LinesOrLoading::Loading)
     } else {
         // Read highlighted window synchronously
-        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let syntax_set = SYNTAX_SET.get_or_init(two_face::syntax::extra_no_newlines);
         let lines =
             read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
                 .collect::<Vec<_>>();
@@ -623,7 +623,7 @@ fn spawn_highlight_window(
     event_sender: UnboundedSender<Event>,
 ) {
     tokio::spawn(async move {
-        let syntax_set = SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_nonewlines);
+        let syntax_set = SYNTAX_SET.get_or_init(two_face::syntax::extra_no_newlines);
         let lines = match read_lines_range_highlighted(
             &path,
             Some(start),
