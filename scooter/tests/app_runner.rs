@@ -1,4 +1,5 @@
 use anyhow::bail;
+
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
 use insta::assert_snapshot;
@@ -2766,6 +2767,102 @@ test_with_both_regex_modes!(
             ),
             ".file3.txt" => text!(
                 "This REPLACED a hidden text file",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_toggle_multiline_keybinding,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "first line",
+                "second line",
+                "third line",
+            ),
+            "file2.txt" => text!(
+                "other content",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for pattern that spans lines - multiline is off by default, so no results
+        send_chars(r"first.*\nsecond", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 0.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Toggle multiline on
+        send_key_with_modifiers(KeyCode::Char('m'), KeyModifiers::ALT, &event_sender);
+
+        // Wait for toast and re-search to complete - should now have 1 result
+        wait_for_match(&mut snapshot_rx, Pattern::string("Multiline: ON"), 100).await?;
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 1.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Toggle multiline off again
+        send_key_with_modifiers(KeyCode::Char('m'), KeyModifiers::ALT, &event_sender);
+
+        // Should go back to 0 results - verify toast and search completion
+        wait_for_match(&mut snapshot_rx, Pattern::string("Multiline: OFF"), 1000).await?;
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 0.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Toggle multiline back on for the replacement
+        send_key_with_modifiers(KeyCode::Char('m'), KeyModifiers::ALT, &event_sender);
+
+        // Should have 1 result again
+        wait_for_match(&mut snapshot_rx, Pattern::string("Multiline: ON"), 100).await?;
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 1.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Perform the replacement
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        // Verify file was replaced
+        // Pattern "first.*\nsecond" matches "first line\nsecond", leaving " line" after REPLACED
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "REPLACED line",
+                "third line",
+            ),
+            "file2.txt" => text!(
+                "other content",
             )
         );
 
