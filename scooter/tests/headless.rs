@@ -32,6 +32,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -94,6 +95,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -150,6 +152,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -171,6 +174,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -231,6 +235,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -252,6 +257,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -273,6 +279,7 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -344,6 +351,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -390,6 +398,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -436,6 +445,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -500,6 +510,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -554,6 +565,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir1.path().to_path_buf(),
@@ -601,6 +613,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir2.path().to_path_buf(),
@@ -650,6 +663,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -702,6 +716,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -748,6 +763,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -799,6 +815,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -835,6 +852,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -896,6 +914,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -963,6 +982,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1017,6 +1037,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1059,6 +1080,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1133,6 +1155,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1193,6 +1216,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1259,6 +1283,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1407,6 +1432,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1545,6 +1571,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1609,6 +1636,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1641,6 +1669,7 @@ test_with_both_regex_modes!(test_text_regex_replacement, |advanced_regex| async 
         multiline: false,
         match_whole_word: false,
         advanced_regex,
+        interpret_escape_sequences: false,
     };
 
     let result = run_headless_with_stdin(input_text, search_config);
@@ -1673,6 +1702,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1698,6 +1728,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result2 = run_headless_with_stdin(input_text2, search_config2);
@@ -1731,6 +1762,7 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
 
     let result = run_headless_with_stdin(input_text, search_config);
@@ -1759,6 +1791,7 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
 
     let result2 = run_headless_with_stdin(input_text2, search_config2);
@@ -1791,6 +1824,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1824,6 +1858,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_sensitive = run_headless_with_stdin(input_text, search_config_sensitive);
@@ -1845,6 +1880,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_insensitive = run_headless_with_stdin(input_text, search_config_insensitive);
@@ -1874,6 +1910,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(empty_text, search_config);
@@ -1890,6 +1927,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(single_line, search_config);
@@ -1906,6 +1944,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(single_line_no_match, search_config);
@@ -1932,6 +1971,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1961,6 +2001,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1994,6 +2035,7 @@ test_with_both_regex_modes!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -2034,6 +2076,7 @@ test_with_both_regex_modes!(test_text_multiline_matches, |advanced_regex| async 
         multiline: true,
         match_whole_word: false,
         advanced_regex,
+        interpret_escape_sequences: false,
     };
 
     let result = run_headless_with_stdin(input_text, search_config);
@@ -2065,6 +2108,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_lf = run_headless_with_stdin(input_lf, search_config);
@@ -2084,6 +2128,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_crlf = run_headless_with_stdin(input_crlf, search_config_crlf);
@@ -2103,6 +2148,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_mixed = run_headless_with_stdin(input_mixed, search_config_mixed);
@@ -2122,6 +2168,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_no_trailing =
@@ -2143,6 +2190,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_empty_lines = run_headless_with_stdin(input_empty_lines, search_config_empty);
@@ -2173,6 +2221,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -2205,6 +2254,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(&input_text, search_config);
