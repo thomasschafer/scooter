@@ -204,12 +204,16 @@ fn detect_true_colour() -> bool {
 pub struct SearchConfig {
     /// Whether to disable fields set by CLI flags. Set to `false` to allow editing of these pre-populated fields. Defaults to `true`.
     pub disable_prepopulated_fields: bool,
+    /// Whether to interpret escape sequences in replacement text. When enabled, `\n` becomes a newline,
+    /// `\t` becomes a tab, and `\\` becomes a literal backslash. Defaults to `false`.
+    pub interpret_escape_sequences: bool,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             disable_prepopulated_fields: true,
+            interpret_escape_sequences: false,
         }
     }
 }
@@ -321,6 +325,7 @@ disable_prepopulated_fields = false
                 style: StyleConfig { true_color: false },
                 search: SearchConfig {
                     disable_prepopulated_fields: false,
+                    interpret_escape_sequences: false,
                 },
                 keys: KeysConfig::default(),
             }

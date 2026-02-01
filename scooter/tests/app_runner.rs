@@ -2871,6 +2871,162 @@ test_with_both_regex_modes!(
 );
 
 test_with_both_regex_modes!(
+    test_toggle_escape_sequences_keybinding,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "line one",
+                "line two",
+            )
+        );
+
+        // Create config with a keybinding for toggle_interpret_escape_sequences
+        let mut keys_config = KeysConfig::default();
+        keys_config.search.toggle_interpret_escape_sequences = keys![CoreKeyEvent::new(
+            CoreKeyCode::Char('e'),
+            CoreKeyModifiers::ALT
+        )];
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let user_config = Config {
+            keys: keys_config,
+            ..Config::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_custom_config(config, user_config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for "one" and replace with "1\n2" - escape sequences off by default
+        send_chars("one", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"1\n2", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 1.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Perform replacement with escape sequences OFF - should get literal \n
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        // Verify file has literal \n (4 characters: 1, \, n, 2)
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                r"line 1\n2",
+                "line two",
+            )
+        );
+
+        // Reset and try again with escape sequences ON
+        send_key_with_modifiers(KeyCode::Char('r'), KeyModifiers::CONTROL, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Toggle escape sequences ON
+        send_key_with_modifiers(KeyCode::Char('e'), KeyModifiers::ALT, &event_sender);
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::string("Escape sequences: ON"),
+            100,
+        )
+        .await?;
+
+        // Search and replace - now \n should become actual newline
+        send_chars(r"1\\n2", &event_sender); // Search for the literal \n we just inserted
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"X\nY", &event_sender); // Replace with X<newline>Y
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 1.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        // Verify file now has actual newline
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "line X",
+                "Y",
+                "line two",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_escape_sequences_with_config_enabled,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world blah",
+                "some more text",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                interpret_escape_sequences: true, // Enabled from start
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "there\nfriend"
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"there\nfriend", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 1.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        // Verify \n was interpreted as newline
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "hello there",
+                "friend blah",
+                "some more text",
+            )
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
     test_ignores_git_folders_by_default,
     |advanced_regex: bool| async move {
         let temp_dir = create_test_files!(

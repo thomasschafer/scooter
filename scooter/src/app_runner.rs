@@ -121,7 +121,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(app_config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(mut app_config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
@@ -131,6 +131,10 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         if let Some(ref editor_command) = app_config.editor_command_override {
             user_config.editor_open.command = Some(editor_command.clone());
         }
+
+        // Initialize runtime config from user config file
+        app_config.app_run_config.interpret_escape_sequences =
+            user_config.search.interpret_escape_sequences;
 
         Self::new(
             app_config,
