@@ -459,6 +459,7 @@ pub struct AppRunConfig {
     pub immediate_replace: bool,
     pub print_results: bool,
     pub print_on_exit: bool,
+    pub interpret_escape_sequences: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -473,6 +474,7 @@ impl Default for AppRunConfig {
             immediate_replace: false,
             print_results: false,
             print_on_exit: false,
+            interpret_escape_sequences: false,
         }
     }
 }
@@ -1362,6 +1364,16 @@ impl<'a> App {
                         self.perform_search_background();
                         EventHandlingResult::Rerender
                     }
+                    CommandSearchFields::ToggleInterpretEscapeSequences => {
+                        self.run_config.interpret_escape_sequences =
+                            !self.run_config.interpret_escape_sequences;
+                        self.show_toggle_toast(
+                            "Escape sequences",
+                            self.run_config.interpret_escape_sequences,
+                        );
+                        self.perform_search_background();
+                        EventHandlingResult::Rerender
+                    }
                     CommandSearchFields::SearchFocusFields(command) => {
                         if !matches!(
                             search_fields_state.focussed_section,
@@ -1455,6 +1467,7 @@ impl<'a> App {
             match_whole_word: self.search_fields.whole_word().checked,
             match_case: self.search_fields.match_case().checked,
             multiline: self.run_config.multiline,
+            interpret_escape_sequences: self.run_config.interpret_escape_sequences,
         };
         let dir_config = match &self.input_source {
             InputSource::Directory(directory) => Some(DirConfig {
@@ -1780,6 +1793,11 @@ impl<'a> App {
                 keys.push(keymap!(
                     search.toggle_multiline,
                     "toggle multiline",
+                    Show::FullOnly,
+                ));
+                keys.push(keymap!(
+                    search.toggle_interpret_escape_sequences,
+                    "toggle escape sequences",
                     Show::FullOnly,
                 ));
                 keys

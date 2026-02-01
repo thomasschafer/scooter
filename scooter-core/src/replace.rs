@@ -620,6 +620,51 @@ pub fn replacement_for_match(matched_text: &str, search: &SearchType, replace: &
     }
 }
 
+/// Interpret escape sequences in replacement text.
+///
+/// Converts:
+/// - `\n` → newline
+/// - `\r` → carriage return
+/// - `\t` → tab
+/// - `\\` → literal backslash
+///
+/// Other escape sequences are left as-is (e.g., `\x` remains `\x`).
+pub fn interpret_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('n') => {
+                    chars.next();
+                    result.push('\n');
+                }
+                Some('r') => {
+                    chars.next();
+                    result.push('\r');
+                }
+                Some('t') => {
+                    chars.next();
+                    result.push('\t');
+                }
+                Some('\\') => {
+                    chars.next();
+                    result.push('\\');
+                }
+                _ => {
+                    // Leave unrecognized escape sequences as-is
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplaceStats {
     pub num_successes: usize,
@@ -686,6 +731,61 @@ mod tests {
         commands::CommandResults,
         replace::{self, ReplaceState},
     };
+
+    use super::interpret_escapes;
+
+    mod interpret_escapes_tests {
+        use super::*;
+
+        #[test]
+        fn test_newline() {
+            assert_eq!(interpret_escapes(r"\n"), "\n");
+            assert_eq!(interpret_escapes(r"foo\nbar"), "foo\nbar");
+            assert_eq!(interpret_escapes(r"\n\n"), "\n\n");
+        }
+
+        #[test]
+        fn test_tab() {
+            assert_eq!(interpret_escapes(r"\t"), "\t");
+            assert_eq!(interpret_escapes(r"foo\tbar"), "foo\tbar");
+        }
+
+        #[test]
+        fn test_carriage_return() {
+            assert_eq!(interpret_escapes(r"\r"), "\r");
+            assert_eq!(interpret_escapes(r"\r\n"), "\r\n");
+        }
+
+        #[test]
+        fn test_backslash() {
+            assert_eq!(interpret_escapes(r"\\"), "\\");
+            assert_eq!(interpret_escapes(r"\\n"), "\\n");
+            assert_eq!(interpret_escapes(r"foo\\bar"), "foo\\bar");
+        }
+
+        #[test]
+        fn test_unrecognized_escapes_left_as_is() {
+            assert_eq!(interpret_escapes(r"\x"), "\\x");
+            assert_eq!(interpret_escapes(r"\a"), "\\a");
+            assert_eq!(interpret_escapes(r"\u0041"), "\\u0041");
+        }
+
+        #[test]
+        fn test_trailing_backslash() {
+            assert_eq!(interpret_escapes(r"foo\"), "foo\\");
+        }
+
+        #[test]
+        fn test_no_escapes() {
+            assert_eq!(interpret_escapes("hello world"), "hello world");
+            assert_eq!(interpret_escapes(""), "");
+        }
+
+        #[test]
+        fn test_mixed() {
+            assert_eq!(interpret_escapes(r"line1\nline2\ttab\\slash"), "line1\nline2\ttab\\slash");
+        }
+    }
 
     fn create_search_result_with_replacement(
         path: &str,
@@ -1851,6 +1951,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1870,6 +1971,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1889,6 +1991,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1912,6 +2015,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1931,6 +2035,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1950,6 +2055,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1969,6 +2075,7 @@ mod tests {
                         replacement_text: "restaurant",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -1992,6 +2099,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2011,6 +2119,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2030,6 +2139,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2053,6 +2163,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2072,6 +2183,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2091,6 +2203,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2121,6 +2234,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2141,6 +2255,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2161,6 +2276,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2185,6 +2301,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2205,6 +2322,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2225,6 +2343,7 @@ mod tests {
                         replacement_text: "NUM",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2245,6 +2364,7 @@ mod tests {
                         replacement_text: "XX",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2270,6 +2390,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2290,6 +2411,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2310,6 +2432,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2334,6 +2457,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2354,6 +2478,7 @@ mod tests {
                         replacement_text: "earth",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2374,6 +2499,7 @@ mod tests {
                         replacement_text: "XXX-XX-XXXX",
                         advanced_regex: false,
                         multiline: false,
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2403,6 +2529,7 @@ mod tests {
                         multiline: false,
                         match_case: true,
                         replacement_text: "domain",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2427,6 +2554,7 @@ mod tests {
                         multiline: false,
                         match_case: true,
                         replacement_text: "report",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2447,6 +2575,7 @@ mod tests {
                         multiline: false,
                         match_case: true,
                         replacement_text: "earth",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2471,6 +2600,7 @@ mod tests {
                         multiline: false,
                         match_case: false,
                         replacement_text: "domain",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2495,6 +2625,7 @@ mod tests {
                         multiline: false,
                         match_case: false,
                         replacement_text: "earth",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2519,6 +2650,7 @@ mod tests {
                         multiline: false,
                         match_case: true,
                         replacement_text: "XX:XX",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2543,6 +2675,7 @@ mod tests {
                         multiline: false,
                         match_case: true,
                         replacement_text: "earth",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2567,6 +2700,7 @@ mod tests {
                         multiline: false,
                         match_case: false,
                         replacement_text: "ERROR",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2591,6 +2725,7 @@ mod tests {
                         multiline: false,
                         match_case: false,
                         replacement_text: "GREEK",
+                        interpret_escape_sequences: false,
                     };
                     let parsed = test_helpers::must_parse_search_config(search_config);
 
@@ -2612,6 +2747,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2630,6 +2766,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2644,6 +2781,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2662,6 +2800,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2676,6 +2815,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2690,6 +2830,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2708,6 +2849,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2722,6 +2864,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2740,6 +2883,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2754,6 +2898,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2772,6 +2917,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2786,6 +2932,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2804,6 +2951,7 @@ mod tests {
                 replacement_text: "earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2818,6 +2966,7 @@ mod tests {
                 replacement_text: "ea+rth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2837,6 +2986,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2851,6 +3001,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2870,6 +3021,7 @@ mod tests {
                 replacement_text: "hi earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2884,6 +3036,7 @@ mod tests {
                 replacement_text: "hi earth",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2903,6 +3056,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2917,6 +3071,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2931,6 +3086,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2945,6 +3101,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2965,6 +3122,7 @@ mod tests {
                 replacement_text: "TEST",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2980,6 +3138,7 @@ mod tests {
                 replacement_text: "TEST",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -2995,6 +3154,7 @@ mod tests {
                 replacement_text: "TEST",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3014,6 +3174,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3028,6 +3189,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3047,6 +3209,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3061,6 +3224,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3080,6 +3244,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3099,6 +3264,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3118,6 +3284,7 @@ mod tests {
                 replacement_text: "NEW",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3137,6 +3304,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3151,6 +3319,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3170,6 +3339,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3189,6 +3359,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(
@@ -3203,6 +3374,7 @@ mod tests {
                 replacement_text: "X",
                 advanced_regex: false,
                 multiline: false,
+                interpret_escape_sequences: false,
             };
             let parsed = test_helpers::must_parse_search_config(search_config);
             assert_eq!(

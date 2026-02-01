@@ -236,6 +236,7 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
                 print_on_exit: args.print_on_exit,
+                interpret_escape_sequences: false, // Initialized from config file in app_runner
             },
             stdin_content,
             editor_command_override: args.editor_command.clone(),
@@ -320,6 +321,7 @@ fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
         match_whole_word: args.match_whole_word,
         match_case: !args.case_insensitive,
         multiline: args.multiline,
+        interpret_escape_sequences: false, // TODO: Add CLI flag if needed for headless mode
     }
 }
 
