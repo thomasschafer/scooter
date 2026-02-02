@@ -4105,3 +4105,54 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+test_with_both_regex_modes!(
+    test_stdin_multiline_search_and_replace,
+    |advanced_regex| async move {
+        // Test that multiline search works with stdin input
+        let stdin_content = "foo bar\nbaz blah\nqux\n".to_string();
+
+        let app_config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                print_results: true,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 80)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search for multiline pattern that spans 2 lines
+        send_chars(r"foo.*\n.*z", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        // Perform the replacement - for stdin mode, the app exits after replacement
+        // without showing "Success!" screen, so we just wait for the app to complete
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Performing replacement"), 1000).await?;
+
+        // Wait for the app to finish (it exits after stdin replacement)
+        let timeout_res = tokio::time::timeout(Duration::from_secs(2), async {
+            run_handle.await.unwrap();
+        })
+        .await;
+        assert!(
+            timeout_res.is_ok(),
+            "App didn't complete in a reasonable time"
+        );
+
+        Ok(())
+    }
+);
