@@ -9,16 +9,6 @@ pub enum DiffColour {
     Black,
 }
 
-impl DiffColour {
-    pub fn to_str(&self) -> &str {
-        match self {
-            DiffColour::Red => "red",
-            DiffColour::Green => "green",
-            DiffColour::Black => "black",
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Diff {
     pub text: String,
@@ -32,16 +22,8 @@ pub fn line_diff<'a>(old_line: &'a str, new_line: &'a str) -> (Vec<Diff>, Vec<Di
         .timeout(std::time::Duration::from_millis(100))
         .diff_chars(old_line, new_line);
 
-    let mut old_spans = vec![Diff {
-        text: "- ".to_owned(),
-        fg_colour: DiffColour::Red,
-        bg_colour: None,
-    }];
-    let mut new_spans = vec![Diff {
-        text: "+ ".to_owned(),
-        fg_colour: DiffColour::Green,
-        bg_colour: None,
-    }];
+    let mut old_spans = Vec::new();
+    let mut new_spans = Vec::new();
 
     for change_group in group_by(diff.iter_all_changes(), |c1, c2| c1.tag() == c2.tag()) {
         let first_change = change_group.first().unwrap(); // group_by should never return an empty group
@@ -87,31 +69,17 @@ mod tests {
     fn test_identical_lines() {
         let (old_actual, new_actual) = line_diff("hello", "hello");
 
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-        ];
+        let old_expected = vec![Diff {
+            text: "hello".to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        }];
 
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
-        ];
+        let new_expected = vec![Diff {
+            text: "hello".to_owned(),
+            fg_colour: DiffColour::Green,
+            bg_colour: None,
+        }];
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
@@ -122,11 +90,6 @@ mod tests {
         let (old_actual, new_actual) = line_diff("hello", "hallo");
 
         let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: DiffColour::Red,
@@ -145,11 +108,6 @@ mod tests {
         ];
 
         let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
             Diff {
                 text: "h".to_owned(),
                 fg_colour: DiffColour::Green,
@@ -175,31 +133,17 @@ mod tests {
     fn test_completely_different_strings() {
         let (old_actual, new_actual) = line_diff("foo", "bar");
 
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "foo".to_owned(),
-                fg_colour: DiffColour::Black,
-                bg_colour: Some(DiffColour::Red),
-            },
-        ];
+        let old_expected = vec![Diff {
+            text: "foo".to_owned(),
+            fg_colour: DiffColour::Black,
+            bg_colour: Some(DiffColour::Red),
+        }];
 
-        let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
-            Diff {
-                text: "bar".to_owned(),
-                fg_colour: DiffColour::Black,
-                bg_colour: Some(DiffColour::Green),
-            },
-        ];
+        let new_expected = vec![Diff {
+            text: "bar".to_owned(),
+            fg_colour: DiffColour::Black,
+            bg_colour: Some(DiffColour::Green),
+        }];
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
@@ -209,17 +153,8 @@ mod tests {
     fn test_empty_strings() {
         let (old_actual, new_actual) = line_diff("", "");
 
-        let old_expected = vec![Diff {
-            text: "- ".to_owned(),
-            fg_colour: DiffColour::Red,
-            bg_colour: None,
-        }];
-
-        let new_expected = vec![Diff {
-            text: "+ ".to_owned(),
-            fg_colour: DiffColour::Green,
-            bg_colour: None,
-        }];
+        let old_expected: Vec<Diff> = vec![];
+        let new_expected: Vec<Diff> = vec![];
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
@@ -229,25 +164,13 @@ mod tests {
     fn test_addition_at_end() {
         let (old_actual, new_actual) = line_diff("hello", "hello!");
 
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-        ];
+        let old_expected = vec![Diff {
+            text: "hello".to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        }];
 
         let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
             Diff {
                 text: "hello".to_owned(),
                 fg_colour: DiffColour::Green,
@@ -268,25 +191,13 @@ mod tests {
     fn test_addition_at_start() {
         let (old_actual, new_actual) = line_diff("hello", "!hello");
 
-        let old_expected = vec![
-            Diff {
-                text: "- ".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-            Diff {
-                text: "hello".to_owned(),
-                fg_colour: DiffColour::Red,
-                bg_colour: None,
-            },
-        ];
+        let old_expected = vec![Diff {
+            text: "hello".to_owned(),
+            fg_colour: DiffColour::Red,
+            bg_colour: None,
+        }];
 
         let new_expected = vec![
-            Diff {
-                text: "+ ".to_owned(),
-                fg_colour: DiffColour::Green,
-                bg_colour: None,
-            },
             Diff {
                 text: "!".to_owned(),
                 fg_colour: DiffColour::Black,
@@ -301,5 +212,97 @@ mod tests {
 
         assert_eq!(old_expected, old_actual);
         assert_eq!(new_expected, new_actual);
+    }
+
+    #[test]
+    fn test_newline_in_new_content() {
+        let (old_actual, new_actual) = line_diff("hello", "hel\nlo");
+
+        // Old content is unchanged but may be split into segments by the diff algorithm
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "hello");
+
+        // New content should contain the newline in the diff
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "hel\nlo");
+    }
+
+    #[test]
+    fn test_newline_in_old_content() {
+        let (old_actual, new_actual) = line_diff("hel\nlo", "hello");
+
+        // Old content contains the newline
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "hel\nlo");
+
+        // New content has it removed
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "hello");
+    }
+
+    #[test]
+    fn test_replacement_with_only_newlines() {
+        let (old_actual, new_actual) = line_diff("abc", "\n\n");
+
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "abc");
+
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "\n\n");
+    }
+
+    #[test]
+    fn test_unicode_multibyte_chars() {
+        let (old_actual, new_actual) = line_diff("héllo", "hëllo");
+
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "héllo");
+
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "hëllo");
+    }
+
+    #[test]
+    fn test_unicode_cjk_characters() {
+        let (old_actual, new_actual) = line_diff("世界", "世間");
+
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "世界");
+
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "世間");
+    }
+
+    #[test]
+    fn test_empty_to_nonempty() {
+        let (old_actual, new_actual) = line_diff("", "hello");
+
+        assert!(old_actual.is_empty());
+
+        assert_eq!(new_actual.len(), 1);
+        assert_eq!(new_actual[0].text, "hello");
+        assert_eq!(new_actual[0].bg_colour, Some(DiffColour::Green));
+    }
+
+    #[test]
+    fn test_nonempty_to_empty() {
+        let (old_actual, new_actual) = line_diff("hello", "");
+
+        assert_eq!(old_actual.len(), 1);
+        assert_eq!(old_actual[0].text, "hello");
+        assert_eq!(old_actual[0].bg_colour, Some(DiffColour::Red));
+
+        assert!(new_actual.is_empty());
+    }
+
+    #[test]
+    fn test_crlf_in_content() {
+        let (old_actual, new_actual) = line_diff("hello", "hel\r\nlo");
+
+        let old_text: String = old_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(old_text, "hello");
+
+        let new_text: String = new_actual.iter().map(|d| d.text.as_str()).collect();
+        assert_eq!(new_text, "hel\r\nlo");
     }
 }
