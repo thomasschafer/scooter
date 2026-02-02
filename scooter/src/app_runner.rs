@@ -589,37 +589,80 @@ fn write_results_to_stderr_impl(
     let mut num_successes = 0;
     let mut num_ignored = 0;
 
+    // Map from start_line_number to the match result
     let mut line_map = state
         .replace_results
         .iter_mut()
         .map(|res| (res.search_result.start_line_number(), res))
         .collect::<HashMap<_, _>>();
 
-    let cursor = Cursor::new(state.stdin.as_bytes());
-    for (idx, line_result) in cursor.lines_with_endings().enumerate() {
-        let line_number = idx + 1; // Ensure line-number is 1-indexed
+    // Track line number to skip until (for multiline matches)
+    let mut skip_until_line: Option<usize> = None;
 
-        let (content, ending) = line_result?;
-        let mut line = String::from_utf8(content)?;
-        line.push_str(ending.as_str()); // Add newline for writing later
-
-        let line_new = line_map
-            .get_mut(&line_number)
-            .and_then(|res| {
-                // TODO(multiline): handle multiple lines correctly here
-                let expected_line = &res.search_result.content_string();
-                assert_eq!(line, *expected_line, "line has changed since search");
-                if res.search_result.included {
-                    res.replace_result = Some(ReplaceResult::Success);
-                    num_successes += 1;
-                    Some(res.replacement.as_str())
-                } else {
-                    num_ignored += 1;
-                    None
-                }
+    // Collect all lines upfront for multiline match handling
+    let all_lines: Vec<(String, &str)> = {
+        let cursor = Cursor::new(state.stdin.as_bytes());
+        cursor
+            .lines_with_endings()
+            .map(|line_result| {
+                let (content, ending) = line_result?;
+                let line = String::from_utf8(content)?;
+                Ok((line, ending.as_str()))
             })
-            .unwrap_or(&line);
-        write!(io::stderr(), "{line_new}")?;
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
+
+    // Helper to collect content for a range of lines
+    let collect_lines = |start: usize, end: usize| -> String {
+        let mut collected = String::new();
+        for line_idx in start..=end {
+            let (content, ending) = &all_lines[line_idx - 1];
+            collected.push_str(content);
+            collected.push_str(ending);
+        }
+        collected
+    };
+
+    for (idx, (line_content, ending)) in all_lines.iter().enumerate() {
+        let line_number = idx + 1; // 1-indexed
+
+        // Skip lines that are part of a multiline match we already processed
+        if let Some(skip_end) = skip_until_line {
+            if line_number <= skip_end {
+                continue;
+            }
+            skip_until_line = None;
+        }
+
+        if let Some(res) = line_map.get_mut(&line_number) {
+            let end_line = res.search_result.end_line_number();
+            let is_multiline = end_line > line_number;
+
+            // Collect the actual content from stdin for this match
+            let actual_content = if is_multiline {
+                skip_until_line = Some(end_line);
+                collect_lines(line_number, end_line)
+            } else {
+                format!("{line_content}{ending}")
+            };
+
+            assert_eq!(
+                actual_content,
+                res.search_result.content_string(),
+                "content has changed since search"
+            );
+
+            if res.search_result.included {
+                res.replace_result = Some(ReplaceResult::Success);
+                num_successes += 1;
+                write!(io::stderr(), "{}", res.replacement)?;
+            } else {
+                num_ignored += 1;
+                write!(io::stderr(), "{actual_content}")?;
+            }
+        } else {
+            write!(io::stderr(), "{line_content}{ending}")?;
+        }
     }
 
     let res = if return_stats {
