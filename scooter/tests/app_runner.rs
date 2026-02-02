@@ -3026,6 +3026,169 @@ test_with_both_regex_modes!(
     }
 );
 
+// Tests for escape sequence and multiline combinations - 4 variants
+// These tests verify the preview rendering for replacements containing \n
+
+test_with_both_regex_modes!(
+    test_preview_escape_off_multiline_off,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "another line",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: false,
+                interpret_escape_sequences: false,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (literal, not interpreted)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("preview_escape_off_multiline_off", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_preview_escape_on_multiline_off,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "another line",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: false,
+                interpret_escape_sequences: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (interpreted as newline)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("preview_escape_on_multiline_off", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_preview_escape_off_multiline_on,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "another line",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                interpret_escape_sequences: false,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (literal, not interpreted)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("preview_escape_off_multiline_on", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_preview_escape_on_multiline_on,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "another line",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                interpret_escape_sequences: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (interpreted as newline)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("preview_escape_on_multiline_on", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
 test_with_both_regex_modes!(
     test_ignores_git_folders_by_default,
     |advanced_regex: bool| async move {
@@ -4154,5 +4317,151 @@ test_with_both_regex_modes!(
         );
 
         Ok(())
+    }
+);
+
+// Stdin preview tests - verify preview rendering for stdin input with escape/multiline combinations
+
+test_with_both_regex_modes!(
+    test_stdin_preview_escape_off_multiline_off,
+    |advanced_regex: bool| async move {
+        let stdin_content = "hello world\nanother line\n".to_string();
+
+        let config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: false,
+                interpret_escape_sequences: false,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (literal, not interpreted)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("stdin_preview_escape_off_multiline_off", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_stdin_preview_escape_on_multiline_off,
+    |advanced_regex: bool| async move {
+        let stdin_content = "hello world\nanother line\n".to_string();
+
+        let config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: false,
+                interpret_escape_sequences: true,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (interpreted as newline)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("stdin_preview_escape_on_multiline_off", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_stdin_preview_escape_off_multiline_on,
+    |advanced_regex: bool| async move {
+        let stdin_content = "hello world\nanother line\n".to_string();
+
+        let config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                interpret_escape_sequences: false,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (literal, not interpreted)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("stdin_preview_escape_off_multiline_on", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_stdin_preview_escape_on_multiline_on,
+    |advanced_regex: bool| async move {
+        let stdin_content = "hello world\nanother line\n".to_string();
+
+        let config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                interpret_escape_sequences: true,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Replace "world" with "foo\nbar" (interpreted as newline)
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert_snapshot_with_filters("stdin_preview_escape_on_multiline_on", snapshot);
+
+        shutdown(event_sender, run_handle).await
     }
 );
