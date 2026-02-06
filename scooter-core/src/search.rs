@@ -676,12 +676,18 @@ impl<'a> LineIndex<'a> {
         }
     }
 
-    /// Get the byte offset where a line ends (exclusive, i.e., points to newline or end of content)
+    /// Get the byte offset where a line ends (exclusive of line ending).
+    /// For CrLf lines this excludes the `\r`, matching `BufReadExt::lines_with_endings` behaviour.
     fn line_end_byte(&self, line_num: usize) -> usize {
         assert!(line_num >= 1, "Line numbers are 1-indexed");
         // The end of line N is at the N-1 index in newline_positions (0-indexed)
         if line_num <= self.newline_positions.len() {
-            self.newline_positions[line_num - 1]
+            let newline_pos = self.newline_positions[line_num - 1];
+            if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
+                newline_pos - 1
+            } else {
+                newline_pos
+            }
         } else {
             // Last line without trailing newline
             self.content.len()
@@ -1603,5 +1609,21 @@ mod tests {
             panic!("Expected ByteRange");
         };
         assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
+    }
+
+    #[test]
+    fn test_extract_lines_crlf_content_should_not_include_cr() {
+        let content = "hello\r\nworld\r\n";
+        let index = LineIndex::new(content);
+        let lines = index.extract_lines(1, 2);
+
+        assert_eq!(lines.len(), 2);
+
+        // Content must NOT include \r — line_ending encodes it separately
+        assert_eq!(lines[0].1.content, "hello");
+        assert_eq!(lines[0].1.line_ending, LineEnding::CrLf);
+
+        assert_eq!(lines[1].1.content, "world");
+        assert_eq!(lines[1].1.line_ending, LineEnding::CrLf);
     }
 }
