@@ -321,7 +321,7 @@ fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
         match_whole_word: args.match_whole_word,
         match_case: !args.case_insensitive,
         multiline: args.multiline,
-        interpret_escape_sequences: false, // TODO: Add CLI flag if needed for headless mode
+        interpret_escape_sequences: todo!(), // TODO: Add CLI flag to handle
     }
 }
 
