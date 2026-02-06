@@ -573,7 +573,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
 }
 
 fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
-    write_results_to_stderr_impl(state, false).map(|res| {
+    write_results_impl(state, false, &mut io::stderr()).map(|res| {
         assert!(res.is_none(), "Found Some stats, expected None");
     })
 }
@@ -581,17 +581,29 @@ fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()
 fn write_results_to_stderr_with_stats(
     state: &mut ExitAndReplaceState,
 ) -> anyhow::Result<ReplaceState> {
-    write_results_to_stderr_impl(state, true)
+    write_results_impl(state, true, &mut io::stderr())
         .map(|res| res.expect("Found None stats, expected Some"))
 }
 
-fn write_results_to_stderr_impl(
+// Used in integration tests
+#[allow(dead_code)]
+pub fn write_stdin_results(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<()> {
+    write_results_impl(state, false, writer).map(|res| {
+        assert!(res.is_none(), "Found Some stats, expected None");
+    })
+}
+
+fn write_results_impl(
     state: &mut ExitAndReplaceState,
     return_stats: bool,
+    writer: &mut impl Write,
 ) -> anyhow::Result<Option<ReplaceState>> {
     let (num_successes, num_ignored) = match search::match_mode_of_results(&state.replace_results) {
-        Some(MatchMode::ByteRange) => write_stdin_byte_mode(state)?,
-        Some(MatchMode::Line) | None => write_stdin_line_mode(state)?,
+        Some(MatchMode::ByteRange) => write_stdin_byte_mode(state, writer)?,
+        Some(MatchMode::Line) | None => write_stdin_line_mode(state, writer)?,
     };
 
     let res = if return_stats {
@@ -607,7 +619,10 @@ fn write_results_to_stderr_impl(
     Ok(res)
 }
 
-fn write_stdin_line_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usize, usize)> {
+fn write_stdin_line_mode(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<(usize, usize)> {
     let mut num_successes = 0;
     let mut num_ignored = 0;
 
@@ -644,20 +659,23 @@ fn write_stdin_line_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usi
             if res.search_result.included {
                 res.replace_result = Some(ReplaceResult::Success);
                 num_successes += 1;
-                write!(io::stderr(), "{}{ending}", res.replacement)?;
+                write!(writer, "{}{ending}", res.replacement)?;
             } else {
                 num_ignored += 1;
-                write!(io::stderr(), "{actual_content}")?;
+                write!(writer, "{actual_content}")?;
             }
         } else {
-            write!(io::stderr(), "{line_content}{ending}")?;
+            write!(writer, "{line_content}{ending}")?;
         }
     }
 
     Ok((num_successes, num_ignored))
 }
 
-fn write_stdin_byte_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usize, usize)> {
+fn write_stdin_byte_mode(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<(usize, usize)> {
     let mut num_successes = 0;
     let mut num_ignored = 0;
 
@@ -685,7 +703,7 @@ fn write_stdin_byte_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usi
         };
 
         if *byte_start > current_pos {
-            write!(io::stderr(), "{}", &stdin[current_pos..*byte_start])?;
+            write!(writer, "{}", &stdin[current_pos..*byte_start])?;
         }
 
         assert_eq!(
@@ -697,17 +715,17 @@ fn write_stdin_byte_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usi
         if res.search_result.included {
             res.replace_result = Some(ReplaceResult::Success);
             num_successes += 1;
-            write!(io::stderr(), "{}", res.replacement)?;
+            write!(writer, "{}", res.replacement)?;
         } else {
             num_ignored += 1;
-            write!(io::stderr(), "{}", &stdin[*byte_start..*byte_end])?;
+            write!(writer, "{}", &stdin[*byte_start..*byte_end])?;
         }
 
         current_pos = *byte_end;
     }
 
     if current_pos < stdin.len() {
-        write!(io::stderr(), "{}", &stdin[current_pos..])?;
+        write!(writer, "{}", &stdin[current_pos..])?;
     }
 
     Ok((num_successes, num_ignored))

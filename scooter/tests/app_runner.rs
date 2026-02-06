@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use scooter_core::{
-    app::AppRunConfig,
+    app::{AppRunConfig, ExitState},
     config::{Config, KeysConfig, KeysSearch, KeysSearchFocusFields, KeysSearchFocusResults},
     fields::{FieldValue, SearchFieldValues},
     keyboard::{
@@ -180,7 +180,7 @@ async fn get_snapshot_after_wait(
 }
 
 type TestRunner = (
-    JoinHandle<()>,
+    JoinHandle<Option<ExitState>>,
     UnboundedSender<CrosstermEvent>,
     UnboundedReceiver<String>,
 );
@@ -252,16 +252,14 @@ fn build_test_runner_impl(
     )?;
     runner.init()?;
 
-    let run_handle = tokio::spawn(async move {
-        runner.run_event_loop().await.unwrap();
-    });
+    let run_handle = tokio::spawn(async move { runner.run_event_loop().await.unwrap() });
 
     Ok((run_handle, event_sender, snapshot_rx))
 }
 
 async fn shutdown(
     event_sender: UnboundedSender<CrosstermEvent>,
-    run_handle: JoinHandle<()>,
+    run_handle: JoinHandle<Option<ExitState>>,
 ) -> anyhow::Result<()> {
     event_sender.send(CrosstermEvent::Key(KeyEvent::new(
         KeyCode::Char('c'),
@@ -4500,17 +4498,27 @@ test_with_both_regex_modes!(
         let snapshot =
             wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
         assert!(
-            !snapshot.contains("Error generating preview"),
-            "Preview should render without error for CRLF stdin content",
+            snapshot.contains("hello rust"),
+            "Preview should show replaced content 'hello rust', got:\n{snapshot}",
         );
-        assert!(snapshot.contains("hello rust"));
 
-        // Output results to stderr
+        // Confirm replacement — event loop exits with the ExitState
         send_key(KeyCode::Enter, &event_sender);
+        let exit_state = tokio::time::timeout(Duration::from_secs(1), run_handle)
+            .await
+            .expect("run_handle should complete after replacement")
+            .expect("run_handle should not panic")
+            .expect("should exit with ExitState after replacement");
 
-        // TODO: verify that "hello rust\r\nanother line\r\n" is written to stderr
+        let ExitState::StdinState(mut state) = exit_state else {
+            panic!("expected ExitState::StdinState");
+        };
 
-        shutdown(event_sender, run_handle).await
+        let mut output = Vec::new();
+        scooter::app_runner::write_stdin_results(&mut state, &mut output)?;
+        assert_eq!(String::from_utf8(output)?, "hello rust\r\nanother line\r\n",);
+
+        Ok(())
     }
 );
 
