@@ -54,7 +54,6 @@ pub fn find_and_replace_text(
         let (line_bytes, line_ending) = line_result?;
 
         let mut line = String::from_utf8(line_bytes)?;
-        // TODO(multiline): handle multiple lines correctly here
         line.push_str(line_ending.as_str());
 
         if let Some(replaced_line) = replace_all_if_match(

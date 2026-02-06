@@ -2269,3 +2269,145 @@ test_with_both_regex_modes_and_fixed_strings!(
         Ok(())
     }
 );
+
+test_with_multiline_modes!(
+    test_text_fixed_strings_multiline_basic,
+    |multiline| async move {
+        let input_text = "foo bar\nbaz qux\nfoo bar again";
+
+        let search_config = SearchConfig {
+            search_text: "foo bar",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline,
+            match_whole_word: false,
+            advanced_regex: false,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "REPLACED\nbaz qux\nREPLACED again");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_literal_newline,
+    |advanced_regex| async move {
+        let input_text = "line one\nline two\nline three";
+
+        let search_config = SearchConfig {
+            search_text: "one\nline two",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "line REPLACED\nline three");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_no_match_across_lines,
+    |advanced_regex| async move {
+        let input_text = "line one\nline two\nline three";
+
+        let search_config = SearchConfig {
+            search_text: "one\nline two",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "line one\nline two\nline three");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_regex_chars_literal,
+    |advanced_regex| async move {
+        let input_text = "foo.*bar\nbaz.*qux\nfoo.*bar again";
+
+        let search_config = SearchConfig {
+            search_text: "foo.*bar",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "REPLACED\nbaz.*qux\nREPLACED again");
+
+        Ok(())
+    }
+);
+
+// Multiline headless file replacement tests
+
+test_with_both_regex_modes!(
+    test_headless_multiline_file_replacement,
+    |advanced_regex| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "start of match",
+                "end of match",
+                "other content",
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: r"start.*\nend",
+            replacement_text: "REPLACED",
+            fixed_strings: false,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: false,
+            include_git_folders: false,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "REPLACED of match",
+                "other content",
+            ),
+        );
+
+        Ok(())
+    }
+);
