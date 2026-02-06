@@ -48,6 +48,7 @@ pub struct AppConfig<'a> {
     pub app_run_config: AppRunConfig,
     pub stdin_content: Option<String>,
     pub editor_command_override: Option<String>,
+    pub interpret_escape_sequences_override: bool,
 }
 
 impl Default for AppConfig<'_> {
@@ -59,6 +60,7 @@ impl Default for AppConfig<'_> {
             app_run_config: AppRunConfig::default(),
             stdin_content: None,
             editor_command_override: None,
+            interpret_escape_sequences_override: false,
         }
     }
 }
@@ -133,6 +135,11 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         // Apply CLI override for editor command if provided
         if let Some(ref editor_command) = app_config.editor_command_override {
             user_config.editor_open.command = Some(editor_command.clone());
+        }
+
+        // Apply CLI override for escape sequences
+        if app_config.interpret_escape_sequences_override {
+            user_config.search.interpret_escape_sequences = true;
         }
 
         // Initialize runtime config from user config file

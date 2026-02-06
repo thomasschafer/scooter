@@ -2366,6 +2366,123 @@ test_with_both_regex_modes!(
     }
 );
 
+// Interpret escape sequences tests
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_replacement,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "foo bar\nbaz qux";
+
+        let search_config = SearchConfig {
+            search_text: "bar",
+            replacement_text: r"bar\nbaz replaced",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "foo bar\nbaz replaced\nbaz qux");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_tab,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "key=value";
+
+        let search_config = SearchConfig {
+            search_text: "=",
+            replacement_text: r"\t",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "key\tvalue");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_disabled,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "foo bar";
+
+        let search_config = SearchConfig {
+            search_text: "bar",
+            replacement_text: r"bar\nbaz",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), r"foo bar\nbaz");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_interpret_escape_sequences_file_replacement,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "goodbye world",
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: "world",
+            replacement_text: r"world\t(planet)",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: false,
+            include_git_folders: false,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "hello world\t(planet)",
+                "goodbye world\t(planet)",
+            ),
+        );
+
+        Ok(())
+    }
+);
+
 // Multiline headless file replacement tests
 
 test_with_both_regex_modes!(
