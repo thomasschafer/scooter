@@ -677,7 +677,7 @@ impl<'a> LineIndex<'a> {
     }
 
     /// Get the byte offset where a line ends (exclusive of line ending).
-    /// For CrLf lines this excludes the `\r`, matching `BufReadExt::lines_with_endings` behaviour.
+    /// For `CrLf` lines this excludes the `\r`, matching `BufReadExt::lines_with_endings` behaviour.
     fn line_end_byte(&self, line_num: usize) -> usize {
         assert!(line_num >= 1, "Line numbers are 1-indexed");
         // The end of line N is at the N-1 index in newline_positions (0-indexed)
