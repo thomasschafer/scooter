@@ -4472,6 +4472,49 @@ test_with_both_regex_modes!(
 );
 
 test_with_both_regex_modes!(
+    test_stdin_crlf_multiline_preview_does_not_panic,
+    |advanced_regex: bool| async move {
+        let stdin_content = "hello world\r\nanother line\r\n".to_string();
+
+        let config = AppConfig {
+            directory: std::env::temp_dir(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            stdin_content: Some(stdin_content),
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        send_chars("world", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("rust", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert!(
+            !snapshot.contains("Error generating preview"),
+            "Preview should render without error for CRLF stdin content",
+        );
+        assert!(snapshot.contains("hello rust"));
+
+        // Output results to stderr
+        send_key(KeyCode::Enter, &event_sender);
+
+        // TODO: verify that "hello rust\r\nanother line\r\n" is written to stderr
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
     test_multiline_replacement_results_screen,
     |advanced_regex| async move {
         let temp_dir = create_test_files!(
