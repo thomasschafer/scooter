@@ -539,6 +539,83 @@ def test_stdin_validation_errors [scooter_binary: string] {
     0
 }
 
+def test_multiline_flag [scooter_binary: string] {
+    print "Testing --multiline / -U flag..."
+
+    # Test multiline stdin replacement with --no-tui
+    let result1 = run_scooter_stdin_no_tui_test "start one\nend one\nstart two\nend two" $scooter_binary 'start.*\nend' "REPLACED" ["--multiline"]
+    let test_failed = assert_test_result $result1 "REPLACED one\nREPLACED two" "multiline stdin replacement"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with -U shorthand
+    let result2 = run_scooter_stdin_no_tui_test "foo bar\nbaz qux" $scooter_binary 'bar\nbaz' "MERGED" ["-U"]
+    let test_failed = assert_test_result $result2 "foo MERGED qux" "multiline stdin with -U flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test that without multiline, cross-line patterns don't match
+    let result3 = run_scooter_stdin_no_tui_test "foo bar\nbaz qux" $scooter_binary 'bar\nbaz' "MERGED" []
+    let test_failed = assert_test_result $result3 "foo bar\nbaz qux" "no multiline means no cross-line match"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with fixed strings
+    let result4 = run_scooter_stdin_no_tui_test "line one\nline two\nline three" $scooter_binary "one\nline two" "REPLACED" ["--multiline", "--fixed-strings"]
+    let test_failed = assert_test_result $result4 "line REPLACED\nline three" "multiline with fixed strings"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with TUI immediate mode
+    let command = $"echo 'hello world\ngoodbye world' | ($scooter_binary) -U -s 'world\ngoodbye' -r 'MERGED' -X"
+    let result5 = run_expect_command $command
+    let test_failed = (
+        assert_tui_output_contains
+        $result5
+        "hello MERGED world"
+        "multiline TUI immediate mode"
+    )
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline file replacement with --no-tui
+    let test_dir = "test-multiline-temp"
+    mkdir $test_dir
+    "start match\nend match\nother line\n" | save -f ($test_dir | path join "test.txt")
+
+    let previous_dir = $env.PWD
+    cd $test_dir
+    let result6 = (do { ^$scooter_binary -N -U -s 'start.*\nend' -r 'REPLACED' } | complete)
+    cd $previous_dir
+
+    if $result6.exit_code != 0 {
+        print $"❌ FAILED: multiline file replacement - non-zero exit code"
+        print $"Stderr: ($result6.stderr)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    let actual_content = (open ($test_dir | path join "test.txt"))
+    let expected_content = "REPLACED match\nother line\n"
+    if $actual_content != $expected_content {
+        print $"❌ FAILED: multiline file replacement - content mismatch"
+        print $"Expected: ($expected_content)"
+        print $"Actual: ($actual_content)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    rm -rf $test_dir
+
+    print "✅ PASSED: multiline flag works correctly"
+    0
+}
+
 def main [mode: string, --update-readme, --repo-url: string = ""] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
@@ -580,6 +657,7 @@ def main [mode: string, --update-readme, --repo-url: string = ""] {
                 (test_stdin_tui_mode $scooter_binary)
                 (test_stdin_edge_cases $scooter_binary)
                 (test_stdin_validation_errors $scooter_binary)
+                (test_multiline_flag $scooter_binary)
             ]
             if ($results | math sum) == 0 { 0 } else { 1 }
         }

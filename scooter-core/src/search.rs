@@ -600,9 +600,10 @@ pub(crate) fn search_multiline(
 
     matches
         .map(|(start, end)| {
+            // `end` is exclusive so should always be greater than `start`
             assert!(
                 start < end,
-                "Found match with start < end: start = {start}, end = {end}",
+                "Found match with start >= end: start = {start}, end = {end}",
             );
             create_search_result_from_bytes(start, end, path, &line_index)
         })
