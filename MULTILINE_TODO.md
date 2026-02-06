@@ -18,7 +18,7 @@ Implemented with `Alt+M`:
 - Added to help menu
 - Added `test_toggle_multiline_keybinding` test in `app_runner.rs`
 
-### Help message when `\n` detected in search regex
+### ~~Help message when `\n` detected in search regex~~ DONE
 When user enters a pattern containing `\n` (or `\r\n`) but multiline mode is off:
 - Show a hint suggesting they enable multiline mode
 - Similar to ripgrep's behavior

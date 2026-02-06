@@ -21,7 +21,10 @@ use scooter_core::{
     keyboard::KeyEvent,
     replace::ReplaceState,
 };
-use scooter_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
+use scooter_core::{
+    replace::ReplaceResult,
+    search::{self, MatchContent, MatchMode, SearchResultWithReplacement},
+};
 use std::{
     collections::HashMap,
     env,
@@ -586,84 +589,10 @@ fn write_results_to_stderr_impl(
     state: &mut ExitAndReplaceState,
     return_stats: bool,
 ) -> anyhow::Result<Option<ReplaceState>> {
-    let mut num_successes = 0;
-    let mut num_ignored = 0;
-
-    // Map from start_line_number to the match result
-    let mut line_map = state
-        .replace_results
-        .iter_mut()
-        .map(|res| (res.search_result.start_line_number(), res))
-        .collect::<HashMap<_, _>>();
-
-    // Track line number to skip until (for multiline matches)
-    let mut skip_until_line: Option<usize> = None;
-
-    // Collect all lines upfront for multiline match handling
-    let all_lines: Vec<(String, &str)> = {
-        let cursor = Cursor::new(state.stdin.as_bytes());
-        cursor
-            .lines_with_endings()
-            .map(|line_result| {
-                let (content, ending) = line_result?;
-                let line = String::from_utf8(content)?;
-                Ok((line, ending.as_str()))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?
+    let (num_successes, num_ignored) = match search::match_mode_of_results(&state.replace_results) {
+        Some(MatchMode::ByteRange) => write_stdin_byte_mode(state)?,
+        Some(MatchMode::Line) | None => write_stdin_line_mode(state)?,
     };
-
-    // Helper to collect content for a range of lines
-    let collect_lines = |start: usize, end: usize| -> String {
-        let mut collected = String::new();
-        for line_idx in start..=end {
-            let (content, ending) = &all_lines[line_idx - 1];
-            collected.push_str(content);
-            collected.push_str(ending);
-        }
-        collected
-    };
-
-    for (idx, (line_content, ending)) in all_lines.iter().enumerate() {
-        let line_number = idx + 1; // 1-indexed
-
-        // Skip lines that are part of a multiline match we already processed
-        if let Some(skip_end) = skip_until_line {
-            if line_number <= skip_end {
-                continue;
-            }
-            skip_until_line = None;
-        }
-
-        if let Some(res) = line_map.get_mut(&line_number) {
-            let end_line = res.search_result.end_line_number();
-            let is_multiline = end_line > line_number;
-
-            // Collect the actual content from stdin for this match
-            let actual_content = if is_multiline {
-                skip_until_line = Some(end_line);
-                collect_lines(line_number, end_line)
-            } else {
-                format!("{line_content}{ending}")
-            };
-
-            assert_eq!(
-                actual_content,
-                res.search_result.content_string(),
-                "content has changed since search"
-            );
-
-            if res.search_result.included {
-                res.replace_result = Some(ReplaceResult::Success);
-                num_successes += 1;
-                write!(io::stderr(), "{}", res.replacement)?;
-            } else {
-                num_ignored += 1;
-                write!(io::stderr(), "{actual_content}")?;
-            }
-        } else {
-            write!(io::stderr(), "{line_content}{ending}")?;
-        }
-    }
 
     let res = if return_stats {
         Some(ReplaceState {
@@ -676,6 +605,112 @@ fn write_results_to_stderr_impl(
         None
     };
     Ok(res)
+}
+
+fn write_stdin_line_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usize, usize)> {
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
+    let mut line_map = state
+        .replace_results
+        .iter_mut()
+        .map(|res| (res.search_result.start_line_number(), res))
+        .collect::<HashMap<_, _>>();
+
+    let all_lines: Vec<(String, &str)> = {
+        let cursor = Cursor::new(state.stdin.as_bytes());
+        cursor
+            .lines_with_endings()
+            .map(|line_result| {
+                let (content, ending) = line_result?;
+                let line = String::from_utf8(content)?;
+                Ok((line, ending.as_str()))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
+    };
+
+    for (idx, (line_content, ending)) in all_lines.iter().enumerate() {
+        let line_number = idx + 1;
+
+        if let Some(res) = line_map.get_mut(&line_number) {
+            let actual_content = format!("{line_content}{ending}");
+
+            assert_eq!(
+                actual_content,
+                res.search_result.content_string(),
+                "content has changed since search"
+            );
+
+            if res.search_result.included {
+                res.replace_result = Some(ReplaceResult::Success);
+                num_successes += 1;
+                write!(io::stderr(), "{}{ending}", res.replacement)?;
+            } else {
+                num_ignored += 1;
+                write!(io::stderr(), "{actual_content}")?;
+            }
+        } else {
+            write!(io::stderr(), "{line_content}{ending}")?;
+        }
+    }
+
+    Ok((num_successes, num_ignored))
+}
+
+fn write_stdin_byte_mode(state: &mut ExitAndReplaceState) -> anyhow::Result<(usize, usize)> {
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
+    state
+        .replace_results
+        .sort_by_key(|r| match &r.search_result.content {
+            MatchContent::ByteRange { byte_start, .. } => *byte_start,
+            MatchContent::Line { .. } => {
+                unreachable!("write_stdin_byte_mode called with Line content")
+            }
+        });
+
+    let stdin: &str = &state.stdin;
+    let mut current_pos = 0;
+
+    for res in &mut state.replace_results {
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            content,
+            ..
+        } = &res.search_result.content
+        else {
+            unreachable!("write_stdin_byte_mode called with Line content")
+        };
+
+        if *byte_start > current_pos {
+            write!(io::stderr(), "{}", &stdin[current_pos..*byte_start])?;
+        }
+
+        assert_eq!(
+            &stdin[*byte_start..*byte_end],
+            content.as_str(),
+            "content has changed since search"
+        );
+
+        if res.search_result.included {
+            res.replace_result = Some(ReplaceResult::Success);
+            num_successes += 1;
+            write!(io::stderr(), "{}", res.replacement)?;
+        } else {
+            num_ignored += 1;
+            write!(io::stderr(), "{}", &stdin[*byte_start..*byte_end])?;
+        }
+
+        current_pos = *byte_end;
+    }
+
+    if current_pos < stdin.len() {
+        write!(io::stderr(), "{}", &stdin[current_pos..])?;
+    }
+
+    Ok((num_successes, num_ignored))
 }
 
 #[cfg(test)]
