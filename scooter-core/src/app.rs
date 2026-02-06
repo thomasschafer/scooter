@@ -502,12 +502,18 @@ impl Default for EventChannels {
     }
 }
 
+#[derive(Debug, Default)]
+struct HintState {
+    has_shown_multiline_hint: bool,
+}
+
 #[derive(Debug)]
 pub struct UIState {
     pub current_screen: Screen,
     pub popup: Option<Popup>,
     toast: Option<Toast>,
     errors: Vec<AppError>,
+    hints: HintState,
 }
 
 impl UIState {
@@ -517,6 +523,7 @@ impl UIState {
             popup: None,
             toast: None,
             errors: Vec::new(),
+            hints: HintState::default(),
         }
     }
 
@@ -742,6 +749,26 @@ impl<'a> App {
                 long: "Please enter some search text".to_string(),
             });
         } else {
+            if !self.run_config.multiline
+                && !self.search_fields.fixed_strings().checked
+                && self.search_fields.search().text().contains(r"\n")
+                && !self.ui_state.hints.has_shown_multiline_hint
+            {
+                let key_hint = self
+                    .config
+                    .keys
+                    .search
+                    .toggle_multiline
+                    .first()
+                    .map(|k| format!(" Press {k} to enable."))
+                    .unwrap_or_default();
+                self.show_toast(
+                    format!(r"Search contains \n but multiline is off.{key_hint}"),
+                    Duration::from_secs(5),
+                );
+                self.ui_state.hints.has_shown_multiline_hint = true;
+            }
+
             let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen
             else {
                 panic!(
@@ -1360,6 +1387,9 @@ impl<'a> App {
                     }
                     CommandSearchFields::ToggleMultiline => {
                         self.run_config.multiline = !self.run_config.multiline;
+                        if self.run_config.multiline {
+                            self.ui_state.hints.has_shown_multiline_hint = false;
+                        }
                         self.show_toggle_toast("Multiline", self.run_config.multiline);
                         self.perform_search_background();
                         EventHandlingResult::Rerender
@@ -1626,18 +1656,16 @@ impl<'a> App {
         self.ui_state.toast.as_ref().map(|t| t.message.as_str())
     }
 
-    fn show_toast(&mut self, message: String) {
+    fn show_toast(&mut self, message: String, duration: Duration) {
         let generation = self.ui_state.toast.as_ref().map_or(1, |t| t.generation + 1);
         self.ui_state.toast = Some(Toast {
             message,
             generation,
         });
 
-        let toast_timeout_ms = 1500;
-
         let event_sender = self.event_channels.sender.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(toast_timeout_ms)).await;
+            tokio::time::sleep(duration).await;
             let _ = event_sender.send(Event::Internal(InternalEvent::App(
                 AppEvent::DismissToast { generation },
             )));
@@ -1646,7 +1674,7 @@ impl<'a> App {
 
     fn show_toggle_toast(&mut self, name: &str, enabled: bool) {
         let status = if enabled { "ON" } else { "OFF" };
-        self.show_toast(format!("{name}: {status}"));
+        self.show_toast(format!("{name}: {status}"), Duration::from_millis(1500));
     }
 
     fn dismiss_toast_if_generation_matches(&mut self, generation: u64) {
