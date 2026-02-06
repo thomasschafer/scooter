@@ -24,9 +24,12 @@ When user enters a pattern containing `\n` (or `\r\n`) but multiline mode is off
 - Similar to ripgrep's behavior
 - Only show hint once per session or dismissable
 
-### `--interpret-escape-sequences` CLI flag for headless mode
-Currently `interpret_escape_sequences` is hardcoded to `false` in `search_config_from_args` (main.rs:324).
-Need to add a CLI flag so headless users can enable escape sequence interpretation.
+### ~~`--interpret-escape-sequences` CLI flag for headless mode~~ DONE
+Added `-e` / `--interpret-escape-sequences` CLI flag:
+- Flag in `Args` struct, passed through to both `search_config_from_args` (headless) and `AppRunConfig` (TUI)
+- CLI flag overrides config file setting (either source can enable it)
+- Integration tests in `headless.rs` covering newline, tab, disabled, and file replacement
+- E2E tests in `e2e-tests.nu` covering stdin and file replacement with the flag
 
 ## Test coverage
 

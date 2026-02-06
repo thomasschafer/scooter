@@ -57,6 +57,10 @@ struct Args {
     #[arg(short = 'U', long)]
     multiline: bool,
 
+    /// Interpret escape sequences in replacement text (\n becomes newline, \t becomes tab, \\ becomes backslash)
+    #[arg(short = 'e', long)]
+    interpret_escape_sequences: bool,
+
     /// Search immediately using values set by flags (e.g. `--search_text`), rather than showing search fields first
     #[arg(short = 'S', long)]
     immediate_search: bool,
@@ -236,10 +240,11 @@ impl<'a> TryFrom<&'a Args> for AppConfig<'a> {
                 immediate_replace: args.immediate_replace || immediate,
                 print_results: args.print_results || immediate,
                 print_on_exit: args.print_on_exit,
-                interpret_escape_sequences: false, // Initialized from config file in app_runner
+                ..AppRunConfig::default()
             },
             stdin_content,
             editor_command_override: args.editor_command.clone(),
+            interpret_escape_sequences_override: args.interpret_escape_sequences,
         })
     }
 }
@@ -286,9 +291,9 @@ async fn main() -> anyhow::Result<()> {
 
     let results = if args.no_tui {
         let results = if let Some(stdin_content) = config.stdin_content {
-            run_headless_with_stdin(&stdin_content, search_config_from_args(&args))?
+            run_headless_with_stdin(&stdin_content, search_config_from_args(&args)?)?
         } else {
-            run_headless(search_config_from_args(&args), dir_config_from_args(&args))?
+            run_headless(search_config_from_args(&args)?, dir_config_from_args(&args))?
         };
         Some(results)
     } else {
@@ -312,8 +317,9 @@ fn dir_config_from_args(args: &Args) -> DirConfig<'_> {
     }
 }
 
-fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
-    SearchConfig {
+fn search_config_from_args(args: &Args) -> anyhow::Result<SearchConfig<'_>> {
+    let user_config = config::load_config()?;
+    Ok(SearchConfig {
         search_text: args.search_text.as_deref().unwrap_or(""),
         replacement_text: args.replace_text.as_deref().unwrap_or(""),
         fixed_strings: args.fixed_strings,
@@ -321,8 +327,9 @@ fn search_config_from_args(args: &Args) -> SearchConfig<'_> {
         match_whole_word: args.match_whole_word,
         match_case: !args.case_insensitive,
         multiline: args.multiline,
-        interpret_escape_sequences: todo!(), // TODO: Add CLI flag to handle
-    }
+        interpret_escape_sequences: args.interpret_escape_sequences
+            || user_config.search.interpret_escape_sequences,
+    })
 }
 
 #[cfg(test)]
@@ -340,6 +347,7 @@ mod tests {
             log_level: LevelFilter::Info,
             advanced_regex: false,
             multiline: false,
+            interpret_escape_sequences: false,
             immediate_search: false,
             immediate_replace: false,
             print_results: false,
