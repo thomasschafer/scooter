@@ -783,7 +783,10 @@ mod tests {
 
         #[test]
         fn test_mixed() {
-            assert_eq!(interpret_escapes(r"line1\nline2\ttab\\slash"), "line1\nline2\ttab\\slash");
+            assert_eq!(
+                interpret_escapes(r"line1\nline2\ttab\\slash"),
+                "line1\nline2\ttab\\slash"
+            );
         }
     }
 
