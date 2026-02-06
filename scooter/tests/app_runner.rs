@@ -4530,3 +4530,87 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+test_with_both_regex_modes!(
+    test_multiline_hint_when_search_contains_newline,
+    |advanced_regex: bool| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "first line",
+                "second line",
+            )
+        );
+
+        let config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        // Search with \n in pattern and multiline off - should show hint
+        send_chars(r"foo\nbar", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::string(r"Search contains \n but multiline is off. Press A-m to enable."),
+            1000,
+        )
+        .await?;
+
+        // Toggle multiline on (resets hint), then off again
+        send_key_with_modifiers(KeyCode::Char('m'), KeyModifiers::ALT, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Multiline: ON"), 100).await?;
+        send_key_with_modifiers(KeyCode::Char('m'), KeyModifiers::ALT, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Multiline: OFF"), 100).await?;
+
+        // Go back to search fields and wait for search to complete before pressing Enter
+        send_key(KeyCode::Esc, &event_sender);
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 0.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Search again with \n - hint should appear again since we toggled on then off
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::string(r"Search contains \n but multiline is off. Press A-m to enable."),
+            1000,
+        )
+        .await?;
+
+        // Go back to search fields and wait for previous hint toast to be dismissed
+        send_key(KeyCode::Esc, &event_sender);
+        let snapshot = get_snapshot_after_wait(&mut snapshot_rx, 6000).await?;
+        assert!(
+            !snapshot.contains(r"Search contains \n but multiline is off"),
+            "Hint toast should have been dismissed.\nSnapshot:\n{snapshot}"
+        );
+
+        // Search a third time without toggling - hint should NOT appear again
+        send_key(KeyCode::Enter, &event_sender);
+
+        // Wait for search to complete and verify the hint is not in the snapshot
+        let snapshot = wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 0.*Search complete"),
+            1000,
+        )
+        .await?;
+        assert!(
+            !snapshot.contains(r"Search contains \n but multiline is off"),
+            "Hint should not appear a second time without toggling multiline.\nSnapshot:\n{snapshot}"
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
