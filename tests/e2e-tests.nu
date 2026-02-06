@@ -588,10 +588,8 @@ def test_multiline_flag [scooter_binary: string] {
     mkdir $test_dir
     "start match\nend match\nother line\n" | save -f ($test_dir | path join "test.txt")
 
-    let previous_dir = $env.PWD
-    cd $test_dir
-    let result6 = (do { ^$scooter_binary -N -U -s 'start.*\nend' -r 'REPLACED' } | complete)
-    cd $previous_dir
+    let command = $"cd ($test_dir) && ($scooter_binary) -N -U -s 'start.*\\nend' -r 'REPLACED'"
+    let result6 = run_expect_command $command
 
     if $result6.exit_code != 0 {
         print $"❌ FAILED: multiline file replacement - non-zero exit code"
@@ -613,6 +611,68 @@ def test_multiline_flag [scooter_binary: string] {
     rm -rf $test_dir
 
     print "✅ PASSED: multiline flag works correctly"
+    0
+}
+
+def test_interpret_escape_sequences_flag [scooter_binary: string] {
+    print "Testing --interpret-escape-sequences / -e flag..."
+
+    # Test escape sequences in replacement with --no-tui
+    let result1 = run_scooter_stdin_no_tui_test "hello world" $scooter_binary "world" 'world\nbye' ["--interpret-escape-sequences"]
+    let test_failed = assert_test_result $result1 "hello world\nbye" "interpret escape sequences stdin newline"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test with -e shorthand
+    let result2 = run_scooter_stdin_no_tui_test "key=value" $scooter_binary "=" '\t' ["-e"]
+    let test_failed = assert_test_result $result2 "key\tvalue" "interpret escape sequences stdin tab with -e flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test that without flag, escape sequences are literal
+    let result3 = run_scooter_stdin_no_tui_test "hello world" $scooter_binary "world" 'world\nbye' []
+    let test_failed = assert_test_result $result3 'hello world\nbye' "no escape sequences without flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test backslash escape
+    let result4 = run_scooter_stdin_no_tui_test "path/to/file" $scooter_binary "/" '\\' ["-e", "--fixed-strings"]
+    let test_failed = assert_test_result $result4 'path\to\file' "interpret escape sequences backslash"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test file replacement with --no-tui
+    let test_dir = "test-escape-seq-temp"
+    mkdir $test_dir
+    "hello world\ngoodbye world\n" | save -f ($test_dir | path join "test.txt")
+
+    let command = $"cd ($test_dir) && ($scooter_binary) -N -e -s 'world' -r 'world\\t\(planet\)'"
+    let result5 = run_expect_command $command
+
+    if $result5.exit_code != 0 {
+        print $"❌ FAILED: escape sequences file replacement - non-zero exit code"
+        print $"Stderr: ($result5.stderr)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    let actual_content = (open ($test_dir | path join "test.txt"))
+    let expected_content = "hello world\t(planet)\ngoodbye world\t(planet)\n"
+    if $actual_content != $expected_content {
+        print $"❌ FAILED: escape sequences file replacement - content mismatch"
+        print $"Expected: ($expected_content)"
+        print $"Actual: ($actual_content)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    rm -rf $test_dir
+
+    print "✅ PASSED: interpret escape sequences flag works correctly"
     0
 }
 
@@ -658,6 +718,7 @@ def main [mode: string, --update-readme, --repo-url: string = ""] {
                 (test_stdin_edge_cases $scooter_binary)
                 (test_stdin_validation_errors $scooter_binary)
                 (test_multiline_flag $scooter_binary)
+                (test_interpret_escape_sequences_flag $scooter_binary)
             ]
             if ($results | math sum) == 0 { 0 } else { 1 }
         }
