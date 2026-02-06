@@ -4304,7 +4304,12 @@ test_with_both_regex_modes!(
         // Perform the replacement - for stdin mode, the app exits after replacement
         // without showing "Success!" screen, so we just wait for the app to complete
         send_key(KeyCode::Enter, &event_sender);
-        wait_for_match(&mut snapshot_rx, Pattern::string("Performing replacement"), 1000).await?;
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::string("Performing replacement"),
+            1000,
+        )
+        .await?;
 
         // Wait for the app to finish (it exits after stdin replacement)
         let timeout_res = tokio::time::timeout(Duration::from_secs(2), async {
@@ -4461,6 +4466,66 @@ test_with_both_regex_modes!(
         let snapshot =
             wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
         assert_snapshot_with_filters("stdin_preview_escape_on_multiline_on", snapshot);
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
+    test_multiline_replacement_results_screen,
+    |advanced_regex| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "start one",
+                "end one",
+                "start two",
+                "end two",
+                "other content",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        send_chars(r"start.*\nend", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("REPLACED", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+        wait_for_match(
+            &mut snapshot_rx,
+            Pattern::regex_must_compile("Results: 2.*Search complete"),
+            1000,
+        )
+        .await?;
+
+        // Perform replacement
+        send_key(KeyCode::Enter, &event_sender);
+        let snapshot = wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+        assert_snapshot_with_filters("multiline_replacement_results_screen", snapshot);
+
+        // Verify file was replaced correctly
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "REPLACED one",
+                "REPLACED two",
+                "other content",
+            ),
+        );
 
         shutdown(event_sender, run_handle).await
     }

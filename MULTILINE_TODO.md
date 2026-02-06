@@ -24,32 +24,33 @@ When user enters a pattern containing `\n` (or `\r\n`) but multiline mode is off
 - Similar to ripgrep's behavior
 - Only show hint once per session or dismissable
 
+### `--interpret-escape-sequences` CLI flag for headless mode
+Currently `interpret_escape_sequences` is hardcoded to `false` in `search_config_from_args` (main.rs:324).
+Need to add a CLI flag so headless users can enable escape sequence interpretation.
+
 ## Test coverage
 
-### E2E tests for multiline CLI flag
-Add explicit tests in `tests/e2e-tests.nu` for:
-- `--multiline` / `-U` flag with file input
-- `--multiline` with `--no-tui` mode
-- Multiline replacement producing correct output
+### ~~E2E tests for multiline CLI flag~~ DONE
+Added `test_multiline_flag` in `tests/e2e-tests.nu` covering:
+- `--multiline` / `-U` flag with stdin input
+- `--multiline` with `--no-tui` mode and file input
+- Multiline with `--fixed-strings`
+- Multiline in TUI immediate mode
+- Verification that cross-line patterns don't match without `--multiline`
 
-### Stdin + multiline e2e tests
-Add tests for piped input with multiline flag:
-- `echo "foo\nbar" | scooter -U -s "o\nb" -r "x" -N`
+### ~~Stdin + multiline e2e tests~~ DONE
+Covered in `test_multiline_flag` above.
 
-### TUI test macro for multiline
-Current macros only cover:
-- `test_with_both_regex_modes!` - advanced_regex on/off
-- `test_with_both_regex_modes_and_fixed_strings!` - advanced_regex × fixed_strings (4 combos)
+### ~~TUI test macro for multiline~~ DONE
+Added `test_with_multiline_modes!` macro in `scooter/tests/utils.rs` - multiline on/off (2 variants).
+Can be expanded with additional combination macros (e.g. advanced_regex × multiline) as needed.
 
-Need a new macro or expand existing to include multiline dimension. Consider:
-- `test_with_multiline_modes!` - multiline on/off
-- Or expand to test all relevant combinations
-
-### Fixed strings + multiline tests
-Add tests for fixed_strings mode with multiline enabled:
-- Literal `\n` in search pattern (not interpreted as newline)
-- Multiline fixed string matching
-- Ensure fixed_strings + multiline interaction is correct
+### ~~Fixed strings + multiline tests~~ DONE
+Added tests in `scooter/tests/headless.rs`:
+- `test_text_fixed_strings_multiline_basic` - basic fixed string match with multiline on/off
+- `test_text_fixed_strings_multiline_literal_newline` - literal newline in fixed string search pattern
+- `test_text_fixed_strings_multiline_no_match_across_lines` - verifies no cross-line match without multiline
+- `test_text_fixed_strings_multiline_regex_chars_literal` - regex metacharacters treated literally
 
 ### Comprehensive mode combination coverage
 Ensure tests cover the key combinations:
@@ -57,9 +58,19 @@ Ensure tests cover the key combinations:
 - Advanced regex on/off
 - Fixed strings on/off
 
-Not all 8 combinations are meaningful (e.g., fixed_strings makes regex mode irrelevant), but the valid combinations should be tested.
+Not all 8 combinations are meaningful (e.g., fixed_strings makes regex mode irrelevant), but the valid combinations should be tested. The new macros make this straightforward to expand.
 
 ## Not doing (but could return to in future)
 
 ### Multiline status indicator
 Add visual indicator at bottom of TUI screen showing multiline mode is active (similar to other mode indicators).
+
+### Large file size guard for multiline mode
+Both `search_file` (search.rs) and `replace_all_in_file` (replace.rs) read the entire file into memory
+when multiline is enabled, with no file size limit. Should add a configurable `max_file_size` to the
+config system (defaulting to the existing 100MB `MAX_FILE_SIZE` constant). Power users can increase
+or disable this limit via config.
+
+---
+
+TODO: Remove this file before merging to main
