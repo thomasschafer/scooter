@@ -23,7 +23,8 @@ use crate::{
     commands::CommandResults,
     line_reader::BufReadExt,
     search::{
-        self, FileSearcher, MatchContent, SearchResult, SearchResultWithReplacement, SearchType,
+        self, FileSearcher, MatchContent, MatchMode, SearchResult, SearchResultWithReplacement,
+        SearchType,
     },
 };
 
@@ -309,20 +310,10 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
 
     let file_path = file_path.expect("File path must be present when searching in files");
 
-    let first_content = &results[0].search_result.content;
+    match search::match_mode_of_results(results).expect("replace_in_file called with empty results")
     {
-        let first_discriminant = std::mem::discriminant(first_content);
-        assert!(
-            results.iter().all(|r| {
-                std::mem::discriminant(&r.search_result.content) == first_discriminant
-            }),
-            "Inconsistent MatchContent variants detected in results"
-        );
-    }
-
-    match first_content {
-        MatchContent::Line { .. } => replace_line_mode(&file_path, results),
-        MatchContent::ByteRange { .. } => replace_byte_mode(&file_path, results),
+        MatchMode::Line => replace_line_mode(&file_path, results),
+        MatchMode::ByteRange => replace_byte_mode(&file_path, results),
     }
 }
 
