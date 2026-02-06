@@ -71,6 +71,12 @@ pub enum MatchContent {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchMode {
+    Line,
+    ByteRange,
+}
+
 impl MatchContent {
     /// Returns the matched text without line ending
     pub fn matched_text(&self) -> &str {
@@ -78,6 +84,27 @@ impl MatchContent {
             MatchContent::Line { content, .. } | MatchContent::ByteRange { content, .. } => content,
         }
     }
+
+    pub fn mode(&self) -> MatchMode {
+        match self {
+            MatchContent::Line { .. } => MatchMode::Line,
+            MatchContent::ByteRange { .. } => MatchMode::ByteRange,
+        }
+    }
+}
+
+/// Asserts all results use the same `MatchContent` variant and returns the mode.
+/// Returns `None` if results is empty.
+pub fn match_mode_of_results(results: &[SearchResultWithReplacement]) -> Option<MatchMode> {
+    let first = results.first()?;
+    let mode = first.search_result.content.mode();
+    assert!(
+        results
+            .iter()
+            .all(|r| r.search_result.content.mode() == mode),
+        "Inconsistent MatchContent variants detected in results"
+    );
+    Some(mode)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
