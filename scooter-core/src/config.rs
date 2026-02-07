@@ -297,6 +297,7 @@ true_color = false
 
 [search]
 disable_prepopulated_fields = false
+interpret_escape_sequences = true
 "#,
         )?;
 
@@ -325,7 +326,7 @@ disable_prepopulated_fields = false
                 style: StyleConfig { true_color: false },
                 search: SearchConfig {
                     disable_prepopulated_fields: false,
-                    interpret_escape_sequences: false,
+                    interpret_escape_sequences: true,
                 },
                 keys: KeysConfig::default(),
             }
