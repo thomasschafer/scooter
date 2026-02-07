@@ -207,17 +207,17 @@ pub fn strip_control_chars(text: &str) -> Cow<'_, str> {
         return Cow::Borrowed(text);
     }
 
-    Cow::Owned(
-        text.chars()
-            .filter_map(|c| match c {
-                '\t' => Some("  ".to_string()),
-                '\n' => Some(" ".to_string()),
-                '\r' => None, // Strip carriage returns entirely
-                c if c.is_control() => Some("�".to_string()),
-                c => Some(c.to_string()),
-            })
-            .collect(),
-    )
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => result.push_str("  "),
+            '\n' => result.push(' '),
+            '\r' => {} // Strip carriage returns entirely
+            c if c.is_control() => result.push('�'),
+            c => result.push(c),
+        }
+    }
+    Cow::Owned(result)
 }
 
 pub fn ceil_div<T>(a: T, b: T) -> T

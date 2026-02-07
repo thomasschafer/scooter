@@ -626,14 +626,8 @@ pub(crate) fn search_multiline(
     };
 
     matches
-        .map(|(start, end)| {
-            // `end` is exclusive so should always be greater than `start`
-            assert!(
-                start < end,
-                "Found match with start >= end: start = {start}, end = {end}",
-            );
-            create_search_result_from_bytes(start, end, path, &line_index)
-        })
+        .filter(|(start, end)| start < end) // Skip zero-length matches (e.g., ^, $, \b)
+        .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
         .collect()
 }
 
