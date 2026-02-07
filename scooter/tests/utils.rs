@@ -247,3 +247,25 @@ macro_rules! test_with_both_regex_modes_and_fixed_strings {
         }
     };
 }
+
+#[macro_export]
+macro_rules! test_with_multiline_modes {
+    ($name:ident, $test_fn:expr) => {
+        mod $name {
+            use super::*;
+            use serial_test::serial;
+
+            #[tokio::test]
+            #[serial]
+            async fn with_multiline() -> anyhow::Result<()> {
+                ($test_fn)(true).await
+            }
+
+            #[tokio::test]
+            #[serial]
+            async fn without_multiline() -> anyhow::Result<()> {
+                ($test_fn)(false).await
+            }
+        }
+    };
+}

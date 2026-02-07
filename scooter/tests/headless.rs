@@ -29,8 +29,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -90,8 +92,10 @@ test_with_both_regex_modes!(
             replacement_text: "XXX",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -145,8 +149,10 @@ test_with_both_regex_modes!(
             replacement_text: "user: $1 (contact: $2 at",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -165,8 +171,10 @@ test_with_both_regex_modes!(
             replacement_text: "[$3/$2/$1]",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -224,8 +232,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "const",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -244,8 +254,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "Section $1",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -264,8 +276,10 @@ async fn test_headless_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: ", ",
         fixed_strings: true,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
     let dir_config = DirConfig {
         directory: temp_dir.path().to_path_buf(),
@@ -334,8 +348,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED_CODE",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -379,8 +395,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "FINAL_VERSION",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -424,8 +442,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "DOCS_REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -487,8 +507,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -540,8 +562,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir1.path().to_path_buf(),
@@ -586,8 +610,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "variable",
             fixed_strings,
             match_case: false,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir2.path().to_path_buf(),
@@ -634,8 +660,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -685,8 +713,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -730,8 +760,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -780,8 +812,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -815,8 +849,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -875,8 +911,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -941,8 +979,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -994,8 +1034,10 @@ test_with_both_regex_modes!(
             replacement_text: "replacement",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1035,8 +1077,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "replacement",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1108,8 +1152,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1167,8 +1213,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1232,8 +1280,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1379,8 +1429,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1516,8 +1568,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
         let dir_config = DirConfig {
             directory: temp_dir.path().to_path_buf(),
@@ -1579,8 +1633,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1610,8 +1666,10 @@ test_with_both_regex_modes!(test_text_regex_replacement, |advanced_regex| async 
         replacement_text: "XXX",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex,
+        interpret_escape_sequences: false,
     };
 
     let result = run_headless_with_stdin(input_text, search_config);
@@ -1641,8 +1699,10 @@ test_with_both_regex_modes!(
             replacement_text: "user: $1 (contact: $2 at $3)",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1665,8 +1725,10 @@ test_with_both_regex_modes!(
             replacement_text: "[$3/$2/$1]",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result2 = run_headless_with_stdin(input_text2, search_config2);
@@ -1697,8 +1759,10 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "const",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
 
     let result = run_headless_with_stdin(input_text, search_config);
@@ -1724,8 +1788,10 @@ async fn test_text_advanced_regex_features() -> anyhow::Result<()> {
         replacement_text: "Section $1",
         fixed_strings: false,
         match_case: true,
+        multiline: false,
         match_whole_word: false,
         advanced_regex: true,
+        interpret_escape_sequences: false,
     };
 
     let result2 = run_headless_with_stdin(input_text2, search_config2);
@@ -1755,8 +1821,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: true,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1787,8 +1855,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_sensitive = run_headless_with_stdin(input_text, search_config_sensitive);
@@ -1807,8 +1877,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "variable",
             fixed_strings,
             match_case: false,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_insensitive = run_headless_with_stdin(input_text, search_config_insensitive);
@@ -1835,8 +1907,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(empty_text, search_config);
@@ -1850,8 +1924,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(single_line, search_config);
@@ -1865,8 +1941,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(single_line_no_match, search_config);
@@ -1890,8 +1968,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1918,8 +1998,10 @@ test_with_both_regex_modes!(
             replacement_text: "replacement",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1950,8 +2032,10 @@ test_with_both_regex_modes!(
             replacement_text: "REPLACED",
             fixed_strings: false,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -1973,6 +2057,44 @@ test_with_both_regex_modes!(
     }
 );
 
+test_with_both_regex_modes!(test_text_multiline_matches, |advanced_regex| async move {
+    let input_text = indoc! {"
+            This is a line with START
+            END of pattern here.
+
+            Another line START with
+            END in next line.
+
+            START pattern on this line only END."
+    };
+
+    let search_config = SearchConfig {
+        search_text: r"START.*\nEND",
+        replacement_text: "REPLACED",
+        fixed_strings: false,
+        match_case: true,
+        multiline: true,
+        match_whole_word: false,
+        advanced_regex,
+        interpret_escape_sequences: false,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        indoc! {"
+                This is a line with REPLACED of pattern here.
+
+                Another line REPLACED in next line.
+
+                START pattern on this line only END."
+        }
+    );
+
+    Ok(())
+});
+
 test_with_both_regex_modes_and_fixed_strings!(
     test_text_preserve_line_endings,
     |advanced_regex, fixed_strings| async move {
@@ -1983,8 +2105,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_lf = run_headless_with_stdin(input_lf, search_config);
@@ -2001,8 +2125,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_crlf = run_headless_with_stdin(input_crlf, search_config_crlf);
@@ -2019,8 +2145,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_mixed = run_headless_with_stdin(input_mixed, search_config_mixed);
@@ -2037,8 +2165,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_no_trailing =
@@ -2057,8 +2187,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACEMENT",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result_empty_lines = run_headless_with_stdin(input_empty_lines, search_config_empty);
@@ -2086,8 +2218,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(input_text, search_config);
@@ -2117,8 +2251,10 @@ test_with_both_regex_modes_and_fixed_strings!(
             replacement_text: "REPLACED",
             fixed_strings,
             match_case: true,
+            multiline: false,
             match_whole_word: false,
             advanced_regex,
+            interpret_escape_sequences: false,
         };
 
         let result = run_headless_with_stdin(&input_text, search_config);
@@ -2129,6 +2265,265 @@ test_with_both_regex_modes_and_fixed_strings!(
             "B".repeat(1000)
         );
         assert_eq!(result.unwrap(), expected);
+
+        Ok(())
+    }
+);
+
+test_with_multiline_modes!(
+    test_text_fixed_strings_multiline_basic,
+    |multiline| async move {
+        let input_text = "foo bar\nbaz qux\nfoo bar again";
+
+        let search_config = SearchConfig {
+            search_text: "foo bar",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline,
+            match_whole_word: false,
+            advanced_regex: false,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "REPLACED\nbaz qux\nREPLACED again");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_literal_newline,
+    |advanced_regex| async move {
+        let input_text = "line one\nline two\nline three";
+
+        let search_config = SearchConfig {
+            search_text: "one\nline two",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "line REPLACED\nline three");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_no_match_across_lines,
+    |advanced_regex| async move {
+        let input_text = "line one\nline two\nline three";
+
+        let search_config = SearchConfig {
+            search_text: "one\nline two",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "line one\nline two\nline three");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes!(
+    test_text_fixed_strings_multiline_regex_chars_literal,
+    |advanced_regex| async move {
+        let input_text = "foo.*bar\nbaz.*qux\nfoo.*bar again";
+
+        let search_config = SearchConfig {
+            search_text: "foo.*bar",
+            replacement_text: "REPLACED",
+            fixed_strings: true,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "REPLACED\nbaz.*qux\nREPLACED again");
+
+        Ok(())
+    }
+);
+
+// Interpret escape sequences tests
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_replacement,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "foo bar\nbaz qux";
+
+        let search_config = SearchConfig {
+            search_text: "bar",
+            replacement_text: r"bar\nbaz replaced",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "foo bar\nbaz replaced\nbaz qux");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_tab,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "key=value";
+
+        let search_config = SearchConfig {
+            search_text: "=",
+            replacement_text: r"\t",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "key\tvalue");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_text_interpret_escape_sequences_disabled,
+    |advanced_regex, fixed_strings| async move {
+        let input_text = "foo bar";
+
+        let search_config = SearchConfig {
+            search_text: "bar",
+            replacement_text: r"bar\nbaz",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+
+        let result = run_headless_with_stdin(input_text, search_config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), r"foo bar\nbaz");
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_interpret_escape_sequences_file_replacement,
+    |advanced_regex, fixed_strings| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "hello world",
+                "goodbye world",
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: "world",
+            replacement_text: r"world\t(planet)",
+            fixed_strings,
+            match_case: true,
+            multiline: false,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: false,
+            include_git_folders: false,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "hello world\t(planet)",
+                "goodbye world\t(planet)",
+            ),
+        );
+
+        Ok(())
+    }
+);
+
+// Multiline headless file replacement tests
+
+test_with_both_regex_modes!(
+    test_headless_multiline_file_replacement,
+    |advanced_regex| async move {
+        let temp_dir = create_test_files!(
+            "file1.txt" => text!(
+                "start of match",
+                "end of match",
+                "other content",
+            ),
+        );
+
+        let search_config = SearchConfig {
+            search_text: r"start.*\nend",
+            replacement_text: "REPLACED",
+            fixed_strings: false,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: false,
+        };
+        let dir_config = DirConfig {
+            directory: temp_dir.path().to_path_buf(),
+            include_globs: Some(""),
+            exclude_globs: Some(""),
+            include_hidden: false,
+            include_git_folders: false,
+        };
+
+        let result = run_headless(search_config, dir_config);
+        assert!(result.is_ok());
+
+        assert_test_files!(
+            temp_dir,
+            "file1.txt" => text!(
+                "REPLACED of match",
+                "other content",
+            ),
+        );
 
         Ok(())
     }
