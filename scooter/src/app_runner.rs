@@ -709,6 +709,11 @@ fn write_stdin_byte_mode(
             unreachable!("write_stdin_byte_mode called with Line content")
         };
 
+        debug_assert!(
+            *byte_start >= current_pos,
+            "Overlapping matches detected: byte_start={byte_start}, current_pos={current_pos}"
+        );
+
         if *byte_start > current_pos {
             write!(writer, "{}", &stdin[current_pos..*byte_start])?;
         }
