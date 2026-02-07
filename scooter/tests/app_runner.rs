@@ -4309,15 +4309,20 @@ test_with_both_regex_modes!(
         )
         .await?;
 
-        // Wait for the app to finish (it exits after stdin replacement)
-        let timeout_res = tokio::time::timeout(Duration::from_secs(2), async {
-            run_handle.await.unwrap();
-        })
-        .await;
-        assert!(
-            timeout_res.is_ok(),
-            "App didn't complete in a reasonable time"
-        );
+        // Wait for the app to finish and verify the replacement output
+        let exit_state = tokio::time::timeout(Duration::from_secs(2), run_handle)
+            .await
+            .expect("App didn't complete in a reasonable time")
+            .expect("run_handle should not panic")
+            .expect("should exit with ExitState after replacement");
+
+        let ExitState::StdinState(mut state) = exit_state else {
+            panic!("expected ExitState::StdinState");
+        };
+
+        let mut output = Vec::new();
+        scooter::app_runner::write_stdin_results(&mut state, &mut output)?;
+        assert_eq!(String::from_utf8(output)?, "REPLACED blah\nqux\n");
 
         Ok(())
     }
