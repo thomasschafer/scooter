@@ -31,6 +31,10 @@ Added `-e` / `--interpret-escape-sequences` CLI flag:
 - Integration tests in `headless.rs` covering newline, tab, disabled, and file replacement
 - E2E tests in `e2e-tests.nu` covering stdin and file replacement with the flag
 
+### Convert to line-by-line find and replace in headless mode
+Update `find_and_replace_text` to always search line-by-line when not in multiline, and to always
+operate across lines when mulitline is enabled.
+
 ## Test coverage
 
 ### ~~E2E tests for multiline CLI flag~~ DONE
