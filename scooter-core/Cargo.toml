@@ -23,7 +23,7 @@ steel = ["dep:steel-core", "dep:steel-derive"]
 term = ["crossterm"]
 
 [dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 bitflags = "2.10.0"
 content_inspector = "0.2.4"
 crossterm = { version = "0.28.1", optional = true }
