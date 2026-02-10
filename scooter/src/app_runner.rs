@@ -174,7 +174,10 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     }
 }
 
-impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S> {
+impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S>
+where
+    B::Error: Send + Sync,
+{
     pub fn new(
         app_config: AppConfig<'_>,
         config: Config,
