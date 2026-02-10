@@ -16,7 +16,10 @@ pub struct Tui<B: Backend> {
     pub terminal: Terminal<B>,
 }
 
-impl<B: Backend + 'static> Tui<B> {
+impl<B: Backend + 'static> Tui<B>
+where
+    B::Error: Send + Sync,
+{
     pub fn new(terminal: Terminal<B>) -> Self {
         Self { terminal }
     }
