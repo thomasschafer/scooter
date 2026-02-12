@@ -16,7 +16,7 @@ Notes: One‑time hint, ripgrep‑style.
 - [x] `--interpret-escape-sequences` CLI flag for headless mode.
 Notes: `-e`/`--interpret-escape-sequences`, plumbed to headless + TUI config. Tests in `headless.rs` and `e2e-tests.nu`.
 
-- [ ] Enforce line‑by‑line vs multiline across all modes.
+- [x] Enforce line‑by‑line vs multiline across all modes.
 Notes: Without multiline, always use line‑by‑line (stdin + files, headless + TUI, all regex modes). With multiline, always use whole‑text matching.
 
 - [x] Document CLI `-e/--interpret-escape-sequences`.
