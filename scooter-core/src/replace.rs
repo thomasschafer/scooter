@@ -455,25 +455,17 @@ fn replace_byte_mode(
     Ok(())
 }
 
-const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
-
-fn should_replace_in_memory(path: &Path) -> Result<bool, std::io::Error> {
-    let file_size = fs::metadata(path)?.len();
-    Ok(file_size <= MAX_FILE_SIZE)
-}
-
 /// Performs search and replace operations in a file
 ///
-/// This function implements a hybrid approach to file replacements:
-/// 1. For small files (under `MAX_FILE_SIZE`) or when multiline is enabled: reads into memory for performance and multiline support
-/// 2. Otherwise (or if in-memory replacement fails): uses line-by-line chunked replacement for memory efficiency
+/// When multiline is enabled: reads the entire file into memory and performs replacements spanning multiple lines.
+/// When multiline is disabled: reads line-by-line and performs replacements within lines.
 ///
 /// # Arguments
 ///
 /// * `file_path` - Path to the file to process
 /// * `search` - The search pattern (fixed string, regex, or advanced regex)
 /// * `replace` - The replacement string
-/// * `multiline` - Whether to force in-memory replacement (enables multiline patterns for large files)
+/// * `multiline` - Whether to enable multiline replacement (whole-text matching)
 ///
 /// # Returns
 ///
@@ -486,8 +478,7 @@ pub fn replace_all_in_file(
     replace: &str,
     multiline: bool,
 ) -> anyhow::Result<bool> {
-    // Try to read into memory if not too large OR if multiline mode is enabled
-    if multiline || matches!(should_replace_in_memory(file_path), Ok(true)) {
+    if multiline {
         match replace_in_memory(file_path, search, replace) {
             Ok(replaced) => return Ok(replaced),
             Err(e) => {
@@ -499,7 +490,6 @@ pub fn replace_all_in_file(
         }
     }
 
-    // Fall back to line-by-line chunked replacement
     replace_chunked(file_path, search, replace, multiline)
 }
 
