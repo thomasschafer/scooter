@@ -1,3 +1,4 @@
+use anyhow::Context;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
     collections::HashMap,
@@ -507,7 +508,14 @@ pub fn add_replacement(
     search: &SearchType,
     replace: &str,
 ) -> Option<SearchResultWithReplacement> {
-    let replacement = replace_all_if_match(search_result.content.matched_text(), search, replace)?;
+    let replacement = match search_result.content {
+        MatchContent::Line { .. } => {
+            replace_all_if_match(search_result.content.matched_text(), search, replace)?
+        }
+        MatchContent::ByteRange { .. } => {
+            replacement_for_match(search_result.content.matched_text(), search, replace)
+        }
+    };
     Some(SearchResultWithReplacement {
         search_result,
         replacement,
@@ -539,7 +547,12 @@ fn replace_chunked(
 }
 
 fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> anyhow::Result<bool> {
-    let content = fs::read_to_string(file_path)?;
+    let content = fs::read_to_string(file_path).with_context(|| {
+        format!(
+            "Failed to read file as UTF-8 for in-memory replacement: {}",
+            file_path.display()
+        )
+    })?;
     if let Some(new_content) = replace_all_if_match(&content, search, replace) {
         let parent_dir = file_path.parent().unwrap_or(Path::new("."));
         let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
@@ -4867,6 +4880,38 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
             assert_file_content(&file_path, "hi world");
+        }
+
+        #[test]
+        fn test_byte_mode_zero_length_insertion() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
+
+            let mut results = vec![SearchResultWithReplacement {
+                search_result: SearchResult::new_byte_range(
+                    Some(file_path.clone()),
+                    vec![(
+                        1,
+                        Line {
+                            content: "hello world".to_string(),
+                            line_ending: LineEnding::Lf,
+                        },
+                    )],
+                    5, // match_start_in_first_line
+                    5, // match_end_in_last_line
+                    5, // byte_start
+                    5, // byte_end (zero-length match)
+                    "".to_string(),
+                    true,
+                ),
+                replacement: "X".to_string(),
+                replace_result: None,
+            }];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert_file_content(&file_path, "helloX world");
         }
 
         #[test]

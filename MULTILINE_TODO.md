@@ -1,83 +1,72 @@
 # Multiline TODO
 
+This file tracks remaining work and decision points for the multiline feature set.
+
 ## UX enhancements
 
-### ~~Interpret escape sequences in replacement text~~ DONE
-Implemented with config option and toggleable command:
-- `\n` → newline, `\r` → carriage return, `\t` → tab, `\\` → literal backslash
-- Config key: `search.interpret_escape_sequences` (boolean, default: false)
-- Added `ToggleInterpretEscapeSequences` command (unbound by default, can be bound via config)
-- Handler in `app.rs` shows "Escape sequences: ON/OFF" toast and triggers re-search
-- `interpret_escapes()` function in `replace.rs` with comprehensive tests
+- [x] Interpret escape sequences in replacement text.
+Notes: `\n` → newline, `\r` → carriage return, `\t` → tab, `\\` → literal backslash. Config key `search.interpret_escape_sequences` default `false`. Added toggle command + toast. `interpret_escapes()` in `replace.rs` with tests.
 
-### ~~Keyboard shortcut to toggle multiline~~ DONE
-Implemented with `Alt+M`:
-- Added `toggle_multiline` to `KeysSearch` in `keys.rs`
-- Added `ToggleMultiline` command in `commands.rs`
-- Added handler in `app.rs` (toggles `run_config.multiline`, triggers re-search)
-- Added to help menu
-- Added `test_toggle_multiline_keybinding` test in `app_runner.rs`
+- [x] Keyboard shortcut to toggle multiline.
+Notes: `Alt+M` via `toggle_multiline` in `KeysSearch`, command in `commands.rs`, handler in `app.rs`, help menu entry, TUI test in `app_runner.rs`.
 
-### ~~Help message when `\n` detected in search regex~~ DONE
-When user enters a pattern containing `\n` (or `\r\n`) but multiline mode is off:
-- Show a hint suggesting they enable multiline mode
-- Similar to ripgrep's behavior
-- Only show hint once per session or dismissable
+- [x] Hint when `\n` detected in search regex and multiline is off.
+Notes: One‑time hint, ripgrep‑style.
 
-### ~~`--interpret-escape-sequences` CLI flag for headless mode~~ DONE
-Added `-e` / `--interpret-escape-sequences` CLI flag:
-- Flag in `Args` struct, passed through to both `search_config_from_args` (headless) and `AppRunConfig` (TUI)
-- CLI flag overrides config file setting (either source can enable it)
-- Integration tests in `headless.rs` covering newline, tab, disabled, and file replacement
-- E2E tests in `e2e-tests.nu` covering stdin and file replacement with the flag
+- [x] `--interpret-escape-sequences` CLI flag for headless mode.
+Notes: `-e`/`--interpret-escape-sequences`, plumbed to headless + TUI config. Tests in `headless.rs` and `e2e-tests.nu`.
 
-### Convert to line-by-line find and replace in headless mode
-Update `find_and_replace_text` to always search line-by-line when not in multiline, and to always
-operate across lines when mulitline is enabled.
+- [ ] Enforce line‑by‑line vs multiline across all modes.
+Notes: Without multiline, always use line‑by‑line (stdin + files, headless + TUI, all regex modes). With multiline, always use whole‑text matching.
+
+- [x] Document CLI `-e/--interpret-escape-sequences`.
+Notes: README mentions config + toggle, but not CLI usage.
+
+- [x] Improve multiline failure messaging.
+Notes: When multiline read fails (e.g., non‑UTF‑8), surface a clearer, actionable error.
 
 ## Test coverage
 
-### ~~E2E tests for multiline CLI flag~~ DONE
-Added `test_multiline_flag` in `tests/e2e-tests.nu` covering:
-- `--multiline` / `-U` flag with stdin input
-- `--multiline` with `--no-tui` mode and file input
-- Multiline with `--fixed-strings`
-- Multiline in TUI immediate mode
-- Verification that cross-line patterns don't match without `--multiline`
+- [x] E2E tests for multiline CLI flag (`tests/e2e-tests.nu`).
+Notes: `-U`/`--multiline` with stdin + file input, fixed strings, immediate TUI mode, and negative case when multiline is off.
 
-### ~~Stdin + multiline e2e tests~~ DONE
-Covered in `test_multiline_flag` above.
+- [x] Stdin + multiline e2e tests.
+Notes: Covered in `test_multiline_flag`.
 
-### ~~TUI test macro for multiline~~ DONE
-Added `test_with_multiline_modes!` macro in `scooter/tests/utils.rs` - multiline on/off (2 variants).
-Can be expanded with additional combination macros (e.g. advanced_regex × multiline) as needed.
+- [x] TUI macro for multiline on/off.
+Notes: `test_with_multiline_modes!` in `scooter/tests/utils.rs`.
 
-### ~~Fixed strings + multiline tests~~ DONE
-Added tests in `scooter/tests/headless.rs`:
-- `test_text_fixed_strings_multiline_basic` - basic fixed string match with multiline on/off
-- `test_text_fixed_strings_multiline_literal_newline` - literal newline in fixed string search pattern
-- `test_text_fixed_strings_multiline_no_match_across_lines` - verifies no cross-line match without multiline
-- `test_text_fixed_strings_multiline_regex_chars_literal` - regex metacharacters treated literally
+- [x] Fixed strings + multiline tests.
+Notes: `test_text_fixed_strings_multiline_*` in `scooter/tests/headless.rs`.
 
-### Comprehensive mode combination coverage
-Ensure tests cover the key combinations:
-- Multiline on/off
-- Advanced regex on/off
-- Fixed strings on/off
+- [x] Comprehensive mode combination coverage.
+Notes: Matrix should assert meaningful behavior in each case (e.g., multiline ON matches across lines, multiline OFF does not, escape sequences ON are interpreted, OFF are literal).
 
-Not all 8 combinations are meaningful (e.g., fixed_strings makes regex mode irrelevant), but the valid combinations should be tested. The new macros make this straightforward to expand.
+- [x] Matrix tests: make each cell assert both multiline + escape behavior.
+Notes: Four variants, try to keep things DRY.
+  - [x] TUI files matrix (3×2×2).
+  Notes: Update existing tests to assert both behaviors per cell.
+  - [x] TUI stdin matrix (3×2×2).
+  Notes: New tests; assert both behaviors per cell.
+  - [x] Headless stdin matrix (3×2×2).
+  Notes: Update existing tests to assert both behaviors per cell.
+  - [x] Headless files matrix (3×2×2).
+  Notes: New tests; assert both behaviors per cell.
+
+- [x] TUI CRLF multiline replacement coverage.
+Notes: Add a TUI test that replaces across `\r\n` boundaries to ensure line endings are preserved end‑to‑end.
 
 ## Not doing (but could return to in future)
 
-### Multiline status indicator
-Add visual indicator at bottom of TUI screen showing multiline mode is active (similar to other mode indicators).
+- [ ] Multiline status indicator in the TUI.
+Notes: Add a visual mode badge similar to other toggles.
 
-### Large file size guard for multiline mode
-Both `search_file` (search.rs) and `replace_all_in_file` (replace.rs) read the entire file into memory
-when multiline is enabled, with no file size limit. Should add a configurable `max_file_size` to the
-config system (defaulting to the existing 100MB `MAX_FILE_SIZE` constant). Power users can increase
-or disable this limit via config.
+- [ ] Large file size guard for multiline mode.
+Notes: `search_file` and `replace_all_in_file` read entire files when multiline is enabled. Consider a configurable max size (default to `MAX_FILE_SIZE`), with opt‑out for power users.
+
+- [ ] Document multiline UTF‑8 requirement.
+Notes: Multiline reads full files via `read_to_string` and fails on non‑UTF‑8; line‑by‑line mode unchanged. Add README note or improve error message.
 
 ---
 
-TODO: Remove this file before merging to main
+TODO: Remove this file before merging to main.

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self};
 
+use anyhow::Context;
 use content_inspector::{ContentType, inspect};
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::Override;
@@ -161,8 +162,8 @@ impl SearchResult {
             lines.last().unwrap().1.content.len()
         );
         assert!(
-            byte_start < byte_end,
-            "byte_start ({byte_start}) must be < byte_end ({byte_end})",
+            byte_start <= byte_end,
+            "byte_start ({byte_start}) must be <= byte_end ({byte_end})",
         );
 
         for i in 1..lines.len() {
@@ -551,7 +552,12 @@ pub fn search_file(
     file.seek(SeekFrom::Start(0))?;
 
     if multiline {
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "Failed to read file as UTF-8 for multiline search: {}",
+                path.display()
+            )
+        })?;
         return Ok(search_multiline(&content, search, Some(path)));
     }
 
@@ -626,7 +632,6 @@ pub(crate) fn search_multiline(
     };
 
     matches
-        .filter(|(start, end)| start < end) // Skip zero-length matches (e.g., ^, $, \b)
         .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
         .collect()
 }
@@ -745,13 +750,17 @@ fn create_search_result_from_bytes(
     line_index: &LineIndex<'_>,
 ) -> SearchResult {
     debug_assert!(
-        start_byte < end_byte,
-        "Zero-length matches are not supported: start_byte={start_byte}, end_byte={end_byte}"
+        start_byte <= end_byte,
+        "Invalid byte range: start_byte={start_byte}, end_byte={end_byte}"
     );
 
     let start_line_num = line_index.line_number_at(start_byte);
-    // end_byte is exclusive, so we use end_byte - 1 for the line number
-    let mut end_line_num = line_index.line_number_at(end_byte.saturating_sub(1));
+    // end_byte is exclusive; for zero-length matches, keep start_line_num
+    let mut end_line_num = if start_byte == end_byte {
+        start_line_num
+    } else {
+        line_index.line_number_at(end_byte.saturating_sub(1))
+    };
 
     // Compute byte offsets within each line (for preview highlighting)
     let match_start_in_first_line = start_byte - line_index.line_start_byte(start_line_num);
@@ -1504,6 +1513,26 @@ mod tests {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].start_line_number(), 2);
             assert_eq!(results[0].end_line_number(), 3);
+        }
+
+        #[test]
+        fn test_search_multiline_zero_length_match_start() {
+            let content = "foo\nbar";
+            let search = SearchType::Pattern(regex::Regex::new(r"^").unwrap());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            let MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                content: expected_content,
+                ..
+            } = &results[0].content
+            else {
+                panic!("Expected ByteRange");
+            };
+            assert_eq!((*byte_start, *byte_end), (0, 0));
+            assert_eq!(expected_content, "");
         }
 
         #[test]

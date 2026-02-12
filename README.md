@@ -6,6 +6,8 @@ Search with either a fixed string or a regular expression, enter a replacement, 
 
 By default scooter searches line-by-line, but you can enable multiline searching by either launching scooter with the `-U` flag, or by hitting `alt-m` when already running.
 
+By default, escape sequences such as `\n` will be entered literally. If you want them to be interpreted, i.e. for `\n` to enter a newline instead of the characters `\` and `n`, then use `-e` (or `--interpret-escape-sequences`). This applies to `\n`, `\t`, and `\\` in replacement text.
+
 ![scooter preview](media/preview.gif)
 
 You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
