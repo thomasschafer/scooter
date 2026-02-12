@@ -297,6 +297,126 @@ fn send_chars(word: &str, event_sender: &UnboundedSender<CrosstermEvent>) {
         .for_each(|key| send_key(KeyCode::Char(key), event_sender));
 }
 
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+async fn run_tui_file_replacement_case(
+    file_contents: &[u8],
+    expected_contents: &[u8],
+    search_text: &str,
+    replace_text: &str,
+    fixed_strings: bool,
+    advanced_regex: bool,
+    multiline: bool,
+    interpret_escape_sequences: bool,
+) -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => file_contents,
+    );
+
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new(search_text, false),
+        replace: FieldValue::new(replace_text, false),
+        fixed_strings: FieldValue::new(fixed_strings, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("", false),
+        exclude_files: FieldValue::new("", false),
+    };
+
+    let config = AppConfig {
+        directory: temp_dir.path().to_path_buf(),
+        search_field_values,
+        app_run_config: AppRunConfig {
+            advanced_regex,
+            multiline,
+            interpret_escape_sequences,
+            immediate_search: true,
+            ..AppRunConfig::default()
+        },
+        ..AppConfig::default()
+    };
+    let (run_handle, event_sender, mut snapshot_rx) = build_test_runner_with_config(config)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Enter, &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+    assert_test_files!(
+        temp_dir,
+        "file1.txt" => expected_contents,
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+async fn run_tui_stdin_replacement_case(
+    stdin_content: &str,
+    expected_output: &str,
+    search_text: &str,
+    replace_text: &str,
+    fixed_strings: bool,
+    advanced_regex: bool,
+    multiline: bool,
+    interpret_escape_sequences: bool,
+) -> anyhow::Result<()> {
+    let search_field_values = SearchFieldValues {
+        search: FieldValue::new(search_text, false),
+        replace: FieldValue::new(replace_text, false),
+        fixed_strings: FieldValue::new(fixed_strings, false),
+        match_whole_word: FieldValue::new(false, false),
+        match_case: FieldValue::new(true, false),
+        include_files: FieldValue::new("", false),
+        exclude_files: FieldValue::new("", false),
+    };
+
+    let config = AppConfig {
+        directory: std::env::temp_dir(),
+        search_field_values,
+        app_run_config: AppRunConfig {
+            advanced_regex,
+            multiline,
+            interpret_escape_sequences,
+            immediate_search: true,
+            print_results: true,
+            ..AppRunConfig::default()
+        },
+        stdin_content: Some(stdin_content.to_string()),
+        ..AppConfig::default()
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_config_and_width(config, 80)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Enter, &event_sender);
+    wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("Performing replacement"),
+        1000,
+    )
+    .await?;
+
+    let exit_state = tokio::time::timeout(Duration::from_secs(2), run_handle)
+        .await
+        .expect("App didn't complete in a reasonable time")
+        .expect("run_handle should not panic")
+        .expect("should exit with ExitState after replacement");
+
+    let ExitState::StdinState(mut state) = exit_state else {
+        panic!("expected ExitState::StdinState");
+    };
+
+    let mut output = Vec::new();
+    scooter::app_runner::write_stdin_results(&mut state, &mut output)?;
+    assert_eq!(String::from_utf8(output)?, expected_output);
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn test_search_current_dir() -> anyhow::Result<()> {
@@ -3023,6 +3143,145 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+#[tokio::test]
+#[serial]
+async fn test_tui_file_multiline_escape_matrix() -> anyhow::Result<()> {
+    let search_types = [
+        ("fixed", true, false),
+        ("regex", false, false),
+        ("advanced", false, true),
+    ];
+
+    for (label, fixed_strings, advanced_regex) in search_types {
+        for multiline in [false, true] {
+            for interpret_escape_sequences in [false, true] {
+                let multiline_search = if fixed_strings {
+                    "foo\nbar"
+                } else {
+                    r"foo\nbar"
+                };
+
+                let multiline_expected: &[u8] = if multiline {
+                    text!("REPL", "baz",)
+                } else {
+                    text!("foo", "bar", "baz",)
+                };
+
+                run_tui_file_replacement_case(
+                    text!("foo", "bar", "baz",),
+                    multiline_expected,
+                    multiline_search,
+                    "REPL",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await?;
+
+                let escape_expected: &[u8] = if interpret_escape_sequences {
+                    text!("foo X", "Y",)
+                } else {
+                    text!(r"foo X\nY",)
+                };
+
+                run_tui_file_replacement_case(
+                    text!("foo bar",),
+                    escape_expected,
+                    "bar",
+                    r"X\nY",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("tui file escape case failed for {label}: {e}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tui_stdin_multiline_escape_matrix() -> anyhow::Result<()> {
+    let search_types = [
+        ("fixed", true, false),
+        ("regex", false, false),
+        ("advanced", false, true),
+    ];
+
+    for (label, fixed_strings, advanced_regex) in search_types {
+        for multiline in [false, true] {
+            for interpret_escape_sequences in [false, true] {
+                let multiline_search = if fixed_strings {
+                    "foo\nbar"
+                } else {
+                    r"foo\nbar"
+                };
+
+                let multiline_expected = if multiline {
+                    "REPL\nbaz\n"
+                } else {
+                    "foo\nbar\nbaz\n"
+                };
+
+                run_tui_stdin_replacement_case(
+                    "foo\nbar\nbaz\n",
+                    multiline_expected,
+                    multiline_search,
+                    "REPL",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("tui stdin multiline case failed for {label}: {e}"))?;
+
+                let escape_expected = if interpret_escape_sequences {
+                    "foo X\nY\n"
+                } else {
+                    "foo X\\nY\n"
+                };
+
+                run_tui_stdin_replacement_case(
+                    "foo bar\n",
+                    escape_expected,
+                    "bar",
+                    r"X\nY",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("tui stdin escape case failed for {label}: {e}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tui_crlf_multiline_replacement() -> anyhow::Result<()> {
+    run_tui_file_replacement_case(
+        b"foo\r\nbar\r\nbaz\r\n",
+        b"REPL\r\nbaz\r\n",
+        r"foo\r\nbar",
+        "REPL",
+        false,
+        false,
+        true,
+        false,
+    )
+    .await
+}
 
 // Tests for escape sequence and multiline combinations - 4 variants
 // These tests verify the preview rendering for replacements containing \n

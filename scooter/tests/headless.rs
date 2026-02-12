@@ -1,8 +1,53 @@
 use indoc::indoc;
 use scooter::headless::{run_headless, run_headless_with_stdin};
 use scooter_core::validation::{DirConfig, SearchConfig};
+use serial_test::serial;
 
 mod utils;
+
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+async fn run_headless_file_case(
+    file_contents: &[u8],
+    expected_contents: &[u8],
+    search_text: &str,
+    replacement_text: &str,
+    fixed_strings: bool,
+    advanced_regex: bool,
+    multiline: bool,
+    interpret_escape_sequences: bool,
+) -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => file_contents,
+    );
+
+    let search_config = SearchConfig {
+        search_text,
+        replacement_text,
+        fixed_strings,
+        match_case: true,
+        multiline,
+        match_whole_word: false,
+        advanced_regex,
+        interpret_escape_sequences,
+    };
+    let dir_config = DirConfig {
+        directory: temp_dir.path().to_path_buf(),
+        include_globs: Some(""),
+        exclude_globs: Some(""),
+        include_hidden: false,
+        include_git_folders: false,
+    };
+
+    let result = run_headless(search_config, dir_config);
+    assert!(result.is_ok());
+
+    assert_test_files!(
+        temp_dir,
+        "file1.txt" => expected_contents,
+    );
+
+    Ok(())
+}
 
 test_with_both_regex_modes_and_fixed_strings!(
     test_headless_basic_replacement,
@@ -2095,6 +2140,88 @@ test_with_both_regex_modes!(test_text_multiline_matches, |advanced_regex| async 
     Ok(())
 });
 
+#[tokio::test]
+#[serial]
+async fn test_headless_multiline_crlf_file_replacement() -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => b"start\r\nmiddle\r\nend\r\n",
+    );
+
+    let search_config = SearchConfig {
+        search_text: "start\r\nmiddle",
+        replacement_text: "REPLACED",
+        fixed_strings: true,
+        match_case: true,
+        multiline: true,
+        match_whole_word: false,
+        advanced_regex: false,
+        interpret_escape_sequences: false,
+    };
+    let dir_config = DirConfig {
+        directory: temp_dir.path().to_path_buf(),
+        include_globs: Some(""),
+        exclude_globs: Some(""),
+        include_hidden: false,
+        include_git_folders: false,
+    };
+
+    let result = run_headless(search_config, dir_config);
+    assert!(result.is_ok());
+
+    assert_test_files!(
+        temp_dir,
+        "file1.txt" => b"REPLACED\r\nend\r\n",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_headless_multiline_advanced_regex_lookaround() -> anyhow::Result<()> {
+    let input_text = "start\nmiddle\nend\n";
+
+    let search_config = SearchConfig {
+        search_text: r"(?<=start\n)middle(?=\nend)",
+        replacement_text: "REPLACED",
+        fixed_strings: false,
+        match_case: true,
+        multiline: true,
+        match_whole_word: false,
+        advanced_regex: true,
+        interpret_escape_sequences: false,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), "start\nREPLACED\nend\n");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_headless_multiline_unicode_boundary() -> anyhow::Result<()> {
+    let input_text = "αβγ\nδεζ\n";
+
+    let search_config = SearchConfig {
+        search_text: "γ\nδ",
+        replacement_text: "X",
+        fixed_strings: true,
+        match_case: true,
+        multiline: true,
+        match_whole_word: false,
+        advanced_regex: false,
+        interpret_escape_sequences: false,
+    };
+
+    let result = run_headless_with_stdin(input_text, search_config);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), "αβXεζ\n");
+
+    Ok(())
+}
+
 test_with_both_regex_modes_and_fixed_strings!(
     test_text_preserve_line_endings,
     |advanced_regex, fixed_strings| async move {
@@ -2482,6 +2609,144 @@ test_with_both_regex_modes_and_fixed_strings!(
         Ok(())
     }
 );
+
+#[tokio::test]
+#[serial]
+async fn test_headless_multiline_escape_matrix() -> anyhow::Result<()> {
+    let search_types = [
+        ("fixed", true, false),
+        ("regex", false, false),
+        ("advanced", false, true),
+    ];
+
+    for (label, fixed_strings, advanced_regex) in search_types {
+        for multiline in [false, true] {
+            for interpret_escape_sequences in [false, true] {
+                // Case 1: Multiline-specific match
+                let search_config = SearchConfig {
+                    search_text: "foo\nbar",
+                    replacement_text: r"REPL\nX",
+                    fixed_strings,
+                    match_case: true,
+                    multiline,
+                    match_whole_word: false,
+                    advanced_regex,
+                    interpret_escape_sequences,
+                };
+
+                let result = run_headless_with_stdin("foo\nbar\nbaz", search_config);
+                assert!(result.is_ok());
+                let expected = if multiline {
+                    if interpret_escape_sequences {
+                        "REPL\nX\nbaz"
+                    } else {
+                        "REPL\\nX\nbaz"
+                    }
+                } else {
+                    "foo\nbar\nbaz"
+                };
+                assert_eq!(
+                    result.unwrap(),
+                    expected,
+                    "multiline case failed for {label} (multiline={multiline}, interpret={interpret_escape_sequences})"
+                );
+
+                // Case 2: Escape-sequence replacement on single line
+                let search_config = SearchConfig {
+                    search_text: "bar",
+                    replacement_text: r"X\nY",
+                    fixed_strings,
+                    match_case: true,
+                    multiline,
+                    match_whole_word: false,
+                    advanced_regex,
+                    interpret_escape_sequences,
+                };
+
+                let result = run_headless_with_stdin("foo bar", search_config);
+                assert!(result.is_ok());
+                let expected = if interpret_escape_sequences {
+                    "foo X\nY"
+                } else {
+                    "foo X\\nY"
+                };
+                assert_eq!(
+                    result.unwrap(),
+                    expected,
+                    "escape case failed for {label} (multiline={multiline}, interpret={interpret_escape_sequences})"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_headless_file_multiline_escape_matrix() -> anyhow::Result<()> {
+    let search_types = [
+        ("fixed", true, false),
+        ("regex", false, false),
+        ("advanced", false, true),
+    ];
+
+    for (label, fixed_strings, advanced_regex) in search_types {
+        for multiline in [false, true] {
+            for interpret_escape_sequences in [false, true] {
+                let multiline_search = if fixed_strings {
+                    "foo\nbar"
+                } else {
+                    r"foo\nbar"
+                };
+
+                let multiline_expected: &[u8] = if multiline {
+                    text!("REPL", "baz",)
+                } else {
+                    text!("foo", "bar", "baz",)
+                };
+
+                run_headless_file_case(
+                    text!("foo", "bar", "baz",),
+                    multiline_expected,
+                    multiline_search,
+                    "REPL",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("headless file multiline case failed for {label}: {e}")
+                })?;
+
+                let escape_expected: &[u8] = if interpret_escape_sequences {
+                    text!("foo X", "Y",)
+                } else {
+                    text!(r"foo X\nY",)
+                };
+
+                run_headless_file_case(
+                    text!("foo bar",),
+                    escape_expected,
+                    "bar",
+                    r"X\nY",
+                    fixed_strings,
+                    advanced_regex,
+                    multiline,
+                    interpret_escape_sequences,
+                )
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("headless file escape case failed for {label}: {e}")
+                })?;
+            }
+        }
+    }
+
+    Ok(())
+}
 
 // Multiline headless file replacement tests
 
