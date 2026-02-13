@@ -22,7 +22,9 @@ use tokio::{
 use crate::{
     app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
+    file_content::FileContentProvider,
     line_reader::BufReadExt,
+    replace,
     search::{
         self, FileSearcher, MatchContent, MatchMode, SearchResult, SearchResultWithReplacement,
         SearchType,
@@ -76,6 +78,7 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     cancelled: Arc<AtomicBool>,
     replacements_completed: Arc<AtomicUsize>,
     validation_search_config: Option<FileSearcher>,
+    file_content_provider: Arc<dyn FileContentProvider>,
     on_completion: T,
 ) -> usize {
     let (included, num_ignored) = split_results(search_results);
@@ -93,27 +96,32 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
             .unwrap();
 
         pool.install(|| {
-            path_groups
-                .into_par_iter()
-                .for_each(|(_path, mut results)| {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return;
-                    }
+            path_groups.into_par_iter().for_each(|(path, mut results)| {
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
 
-                    if let Some(config) = &validation_search_config {
-                        validate_search_result_correctness(config, &results);
+                if let Some(config) = &validation_search_config {
+                    validate_search_result_correctness(
+                        config,
+                        &results,
+                        file_content_provider.as_ref(),
+                    );
+                }
+                if let Err(file_err) = replace_in_file(&mut results) {
+                    for res in &mut results {
+                        res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
                     }
-                    if let Err(file_err) = replace_in_file(&mut results) {
-                        for res in &mut results {
-                            res.replace_result = Some(ReplaceResult::Error(file_err.to_string()));
-                        }
-                    }
-                    replacements_completed.fetch_add(results.len(), Ordering::Relaxed);
+                }
+                if let Some(path) = path.as_ref() {
+                    file_content_provider.invalidate(path);
+                }
+                replacements_completed.fetch_add(results.len(), Ordering::Relaxed);
 
-                    for result in results {
-                        on_completion(result);
-                    }
-                });
+                for result in results {
+                    on_completion(result);
+                }
+            });
         });
     });
 
@@ -137,6 +145,15 @@ fn validate_search_result_correctness(
             "Expected replacement does not match actual"
         );
     }
+}
+
+fn read_validation_haystack(
+    path: &Path,
+    file_content_provider: &dyn FileContentProvider,
+) -> Arc<String> {
+    file_content_provider
+        .read_to_string(path)
+        .expect("Failed to read file for replacement validation")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -213,14 +230,16 @@ pub fn perform_replacement(
     replacements_completed: Arc<AtomicUsize>,
     event_sender: UnboundedSender<Event>,
     validation_search_config: Option<FileSearcher>,
+    file_content_provider: Arc<dyn FileContentProvider>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let num_ignored = crate::replace::spawn_replace_included(
+        let num_ignored = replace::spawn_replace_included(
             search_results,
             cancelled,
             replacements_completed,
             validation_search_config,
+            file_content_provider,
             move |result| {
                 let _ = tx.send(result); // Ignore error if receiver is dropped
             },
@@ -479,18 +498,10 @@ pub fn replace_all_in_file(
     multiline: bool,
 ) -> anyhow::Result<bool> {
     if multiline {
-        match replace_in_memory(file_path, search, replace) {
-            Ok(replaced) => return Ok(replaced),
-            Err(e) => {
-                log::error!(
-                    "Found error when attempting to replace in memory for file {path_display}: {e}",
-                    path_display = file_path.display(),
-                );
-            }
-        }
+        return replace_in_memory(file_path, search, replace);
     }
 
-    replace_chunked(file_path, search, replace, multiline)
+    replace_line_by_line(file_path, search, replace)
 }
 
 pub fn add_replacement(
@@ -513,13 +524,12 @@ pub fn add_replacement(
     })
 }
 
-fn replace_chunked(
+fn replace_line_by_line(
     file_path: &Path,
     search: &SearchType,
     replace: &str,
-    multiline: bool,
 ) -> anyhow::Result<bool> {
-    let search_results = search::search_file(file_path, search, multiline)?;
+    let search_results = search::search_file(file_path, search, false)?;
     if !search_results.is_empty() {
         let mut replacement_results = search_results
             .into_iter()
@@ -713,7 +723,7 @@ mod tests {
         line_reader::LineEnding,
         replace::{
             ReplaceResult, add_replacement, replace_all_if_match, replace_all_in_file,
-            replace_chunked, replace_in_file, replace_in_memory,
+            replace_in_file, replace_in_memory, replace_line_by_line,
         },
         search::{
             MatchContent, SearchResult, SearchResultWithReplacement, SearchType, search_file,
@@ -726,7 +736,36 @@ mod tests {
         replace::{self, ReplaceState},
     };
 
-    use super::interpret_escapes;
+    use super::{interpret_escapes, replacement_for_match_in_haystack};
+
+    fn line_content(result: &SearchResult) -> (&str, LineEnding) {
+        match &result.content {
+            MatchContent::Line {
+                content,
+                line_ending,
+                ..
+            } => (content, *line_ending),
+            MatchContent::ByteRange { .. } => panic!("Expected Lines content"),
+        }
+    }
+
+    fn byte_range_content(result: &SearchResult) -> &str {
+        match &result.content {
+            MatchContent::ByteRange { content, .. } => content,
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
+
+    fn byte_range_bytes(result: &SearchResult) -> (usize, usize) {
+        match &result.content {
+            MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                ..
+            } => (*byte_start, *byte_end),
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
 
     mod interpret_escapes_tests {
         use super::*;
@@ -781,6 +820,72 @@ mod tests {
                 interpret_escapes(r"line1\nline2\ttab\\slash"),
                 "line1\nline2\ttab\\slash"
             );
+        }
+    }
+
+    mod replacement_for_match_in_haystack_tests {
+        use super::*;
+        use fancy_regex::Regex as FancyRegex;
+        use regex::Regex;
+
+        #[test]
+        fn test_fixed_string_match() {
+            let haystack = "foo";
+            let search = SearchType::Fixed("foo".to_string());
+            let replacement =
+                replacement_for_match_in_haystack(&search, "bar", haystack, 0, 3).unwrap();
+            assert_eq!(replacement, "bar");
+        }
+
+        #[test]
+        fn test_fixed_string_mismatch() {
+            let haystack = "foo";
+            let search = SearchType::Fixed("foo".to_string());
+            assert!(replacement_for_match_in_haystack(&search, "bar", haystack, 0, 2).is_none());
+        }
+
+        #[test]
+        fn test_regex_match() {
+            let haystack = "abc123";
+            let search = SearchType::Pattern(Regex::new(r"\d+").unwrap());
+            let replacement =
+                replacement_for_match_in_haystack(&search, "NUM", haystack, 3, 6).unwrap();
+            assert_eq!(replacement, "NUM");
+        }
+
+        #[test]
+        fn test_regex_match_with_capture_groups() {
+            let haystack = "abc123def";
+            let search = SearchType::Pattern(Regex::new(r"(\d+)").unwrap());
+            let replacement =
+                replacement_for_match_in_haystack(&search, "NUM-$1", haystack, 3, 6).unwrap();
+            assert_eq!(replacement, "NUM-123");
+        }
+
+        #[test]
+        fn test_advanced_regex_lookaround_match() {
+            let haystack = "start\nmiddle\nend\n";
+            let search = SearchType::PatternAdvanced(
+                FancyRegex::new(r"(?<=start\n)middle(?=\nend)").unwrap(),
+            );
+            let start = haystack.find("middle").unwrap();
+            let end = start + "middle".len();
+            let replacement =
+                replacement_for_match_in_haystack(&search, "REPLACED", haystack, start, end)
+                    .unwrap();
+            assert_eq!(replacement, "REPLACED");
+        }
+
+        #[test]
+        fn test_advanced_regex_lookaround_with_capture_groups() {
+            let haystack = "foo-123-bar";
+            let search =
+                SearchType::PatternAdvanced(FancyRegex::new(r"(?<=foo-)(\d+)(?=-bar)").unwrap());
+            let start = haystack.find("123").unwrap();
+            let end = start + "123".len();
+            let replacement =
+                replacement_for_match_in_haystack(&search, "ID:$1", haystack, start, end).unwrap();
+            assert_eq!(replacement, "ID:123");
         }
     }
 
@@ -1516,12 +1621,8 @@ mod tests {
             "This is line one.\nThis contains search_pattern to replace.\nAnother line with search_pattern here.\nFinal line.",
         );
 
-        let result = replace_chunked(
-            &file_path,
-            &fixed_search("search_pattern"),
-            "replacement",
-            false,
-        );
+        let result =
+            replace_line_by_line(&file_path, &fixed_search("search_pattern"), "replacement");
         assert!(result.is_ok());
         assert!(result.unwrap()); // Check that replacement happened
 
@@ -1537,7 +1638,7 @@ mod tests {
             "Line with numbers: 123 and 456.\nAnother line with 789.",
         );
 
-        let result = replace_chunked(&regex_path, &regex_search(r"\d{3}"), "XXX", false);
+        let result = replace_line_by_line(&regex_path, &regex_search(r"\d{3}"), "XXX");
         assert!(result.is_ok());
         assert!(result.unwrap());
 
@@ -1556,12 +1657,7 @@ mod tests {
             "This is a test file with no matching patterns.",
         );
 
-        let result = replace_chunked(
-            &file_path,
-            &fixed_search("nonexistent"),
-            "replacement",
-            false,
-        );
+        let result = replace_line_by_line(&file_path, &fixed_search("nonexistent"), "replacement");
         assert!(result.is_ok());
         assert!(!result.unwrap());
 
@@ -1574,7 +1670,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = create_test_file(&temp_dir, "empty.txt", "");
 
-        let result = replace_chunked(&file_path, &fixed_search("anything"), "replacement", false);
+        let result = replace_line_by_line(&file_path, &fixed_search("anything"), "replacement");
         assert!(result.is_ok());
         assert!(!result.unwrap());
 
@@ -1584,11 +1680,10 @@ mod tests {
 
     #[test]
     fn test_replace_chunked_nonexistent_file() {
-        let result = replace_chunked(
+        let result = replace_line_by_line(
             Path::new("/nonexistent/path/file.txt"),
             &fixed_search("test"),
             "replacement",
-            false,
         );
         assert!(result.is_err());
     }
@@ -1642,10 +1737,8 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].replacement, "Line with Emoji: 😀 ROCKET 🌍");
-        let MatchContent::Line { line_ending, .. } = &results[0].search_result.content else {
-            panic!("Expected Lines content");
-        };
-        assert_eq!(*line_ending, LineEnding::CrLf);
+        let (_, line_ending) = line_content(&results[0].search_result);
+        assert_eq!(line_ending, LineEnding::CrLf);
     }
 
     mod search_file_tests {
@@ -1673,9 +1766,7 @@ mod tests {
 
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].search_result.start_line_number(), 2);
-            let MatchContent::Line { content, .. } = &results[0].search_result.content else {
-                panic!("Expected Lines content");
-            };
+            let (content, _) = line_content(&results[0].search_result);
             assert_eq!(content, "search target");
             assert_eq!(results[0].replacement, "replace target");
             assert!(results[0].search_result.included);
@@ -1803,27 +1894,12 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 3);
-            let MatchContent::Line {
-                line_ending: le0, ..
-            } = &results[0].search_result.content
-            else {
-                panic!("Expected Lines content");
-            };
-            assert_eq!(*le0, LineEnding::Lf);
-            let MatchContent::Line {
-                line_ending: le1, ..
-            } = &results[1].search_result.content
-            else {
-                panic!("Expected Lines content");
-            };
-            assert_eq!(*le1, LineEnding::CrLf);
-            let MatchContent::Line {
-                line_ending: le2, ..
-            } = &results[2].search_result.content
-            else {
-                panic!("Expected Lines content");
-            };
-            assert_eq!(*le2, LineEnding::None);
+            let (_, le0) = line_content(&results[0].search_result);
+            assert_eq!(le0, LineEnding::Lf);
+            let (_, le1) = line_content(&results[1].search_result);
+            assert_eq!(le1, LineEnding::CrLf);
+            let (_, le2) = line_content(&results[2].search_result);
+            assert_eq!(le2, LineEnding::None);
         }
 
         #[test]
@@ -4346,47 +4422,20 @@ mod tests {
             // First match: "bar" at bytes 4-7 on line 2 (exclusive end)
             assert_eq!(search_results[0].start_line_number(), 2);
             assert_eq!(search_results[0].end_line_number(), 2);
-            let MatchContent::ByteRange {
-                byte_start: byte_start_0,
-                byte_end: byte_end_0,
-                content: ec0,
-                ..
-            } = &search_results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
-            assert_eq!(ec0, "bar");
+            assert_eq!(byte_range_bytes(&search_results[0]), (4, 7));
+            assert_eq!(byte_range_content(&search_results[0]), "bar");
 
             // Second match: "bar" at bytes 12-15 on line 2 (same line!)
             assert_eq!(search_results[1].start_line_number(), 2);
             assert_eq!(search_results[1].end_line_number(), 2);
-            let MatchContent::ByteRange {
-                byte_start: byte_start_1,
-                byte_end: byte_end_1,
-                content: ec1,
-                ..
-            } = &search_results[1].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
-            assert_eq!(ec1, "bar");
+            assert_eq!(byte_range_bytes(&search_results[1]), (12, 15));
+            assert_eq!(byte_range_content(&search_results[1]), "bar");
 
             // Third match: "bar" at bytes 20-23 on line 3
             assert_eq!(search_results[2].start_line_number(), 3);
             assert_eq!(search_results[2].end_line_number(), 3);
-            let MatchContent::ByteRange {
-                byte_start: byte_start_2,
-                byte_end: byte_end_2,
-                content: ec2,
-                ..
-            } = &search_results[2].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
-            assert_eq!(ec2, "bar");
+            assert_eq!(byte_range_bytes(&search_results[2]), (20, 23));
+            assert_eq!(byte_range_content(&search_results[2]), "bar");
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4431,33 +4480,9 @@ mod tests {
             assert_eq!(search_results.len(), 3);
 
             // Verify byte offsets are correct
-            let MatchContent::ByteRange {
-                byte_start: byte_start_0,
-                byte_end: byte_end_0,
-                ..
-            } = &search_results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            let MatchContent::ByteRange {
-                byte_start: byte_start_1,
-                byte_end: byte_end_1,
-                ..
-            } = &search_results[1].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            let MatchContent::ByteRange {
-                byte_start: byte_start_2,
-                byte_end: byte_end_2,
-                ..
-            } = &search_results[2].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
-            assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
-            assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
+            assert_eq!(byte_range_bytes(&search_results[0]), (4, 7));
+            assert_eq!(byte_range_bytes(&search_results[1]), (12, 15));
+            assert_eq!(byte_range_bytes(&search_results[2]), (20, 23));
 
             // Convert to replacements
             let mut results: Vec<SearchResultWithReplacement> = search_results
@@ -4681,37 +4706,13 @@ mod tests {
 
             // After sorting by byte_start: 0-3, 5-8, 10-15
             assert_eq!(results.len(), 3);
-            let MatchContent::ByteRange {
-                byte_start: byte_start_0,
-                byte_end: byte_end_0,
-                ..
-            } = results[0].search_result.content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((byte_start_0, byte_end_0), (0, 3));
+            assert_eq!(byte_range_bytes(&results[0].search_result), (0, 3));
             assert_eq!(results[0].replace_result, None);
 
-            let MatchContent::ByteRange {
-                byte_start: byte_start_1,
-                byte_end: byte_end_1,
-                ..
-            } = results[1].search_result.content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((byte_start_1, byte_end_1), (5, 8));
+            assert_eq!(byte_range_bytes(&results[1].search_result), (5, 8));
             assert_eq!(results[1].replace_result, None);
 
-            let MatchContent::ByteRange {
-                byte_start: byte_start_2,
-                byte_end: byte_end_2,
-                ..
-            } = results[2].search_result.content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((byte_start_2, byte_end_2), (10, 15));
+            assert_eq!(byte_range_bytes(&results[2].search_result), (10, 15));
             assert_eq!(results[2].replace_result, None);
         }
 
