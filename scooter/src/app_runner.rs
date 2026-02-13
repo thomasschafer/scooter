@@ -314,7 +314,6 @@ where
             app_config.app_run_config,
             config,
         )?;
-
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
 
@@ -639,29 +638,31 @@ fn write_stdin_line_mode(
         .map(|res| (res.search_result.start_line_number(), res))
         .collect::<HashMap<_, _>>();
 
-    let all_lines: Vec<(String, &str)> = {
-        let cursor = Cursor::new(state.stdin.as_bytes());
-        cursor
-            .lines_with_endings()
-            .map(|line_result| {
-                let (content, ending) = line_result?;
-                let line = String::from_utf8(content)?;
-                Ok((line, ending.as_str()))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?
-    };
-
-    for (idx, (line_content, ending)) in all_lines.iter().enumerate() {
+    let cursor = Cursor::new(state.stdin.as_bytes());
+    for (idx, line_result) in cursor.lines_with_endings().enumerate() {
         let line_number = idx + 1;
+        let (line_bytes, line_ending) = line_result?;
+        let line_content = String::from_utf8(line_bytes)?;
+        let ending = line_ending.as_str();
 
         if let Some(res) = line_map.get_mut(&line_number) {
-            let actual_content = format!("{line_content}{ending}");
-
-            assert_eq!(
-                actual_content,
-                res.search_result.content_string(),
-                "content has changed since search"
-            );
+            match &res.search_result.content {
+                MatchContent::Line {
+                    content,
+                    line_ending,
+                    ..
+                } => {
+                    assert_eq!(content, &line_content, "content has changed since search");
+                    assert_eq!(
+                        line_ending.as_str(),
+                        ending,
+                        "line ending has changed since search"
+                    );
+                }
+                MatchContent::ByteRange { .. } => {
+                    unreachable!("write_stdin_line_mode called with ByteRange content")
+                }
+            }
 
             if res.search_result.included {
                 res.replace_result = Some(ReplaceResult::Success);
@@ -669,7 +670,7 @@ fn write_stdin_line_mode(
                 write!(writer, "{}{ending}", res.replacement)?;
             } else {
                 num_ignored += 1;
-                write!(writer, "{actual_content}")?;
+                write!(writer, "{line_content}{ending}")?;
             }
         } else {
             write!(writer, "{line_content}{ending}")?;
@@ -709,7 +710,7 @@ fn write_stdin_byte_mode(
             unreachable!("write_stdin_byte_mode called with Line content")
         };
 
-        debug_assert!(
+        assert!(
             *byte_start >= current_pos,
             "Overlapping matches detected: byte_start={byte_start}, current_pos={current_pos}"
         );

@@ -4,6 +4,7 @@ pub mod config;
 pub mod diff;
 pub mod errors;
 pub mod fields;
+pub mod file_content;
 pub mod keyboard;
 pub mod line_reader;
 pub mod replace;

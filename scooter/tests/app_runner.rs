@@ -142,7 +142,7 @@ async fn wait_for_match_impl(
                     None => return err_with_snapshot("Channel closed while waiting for pattern", last_snapshot),
                 }
             }
-            () = sleep(timeout - start.elapsed()) => {
+            () = sleep(timeout.saturating_sub(start.elapsed())) => {
                 break;
             }
         }
@@ -167,7 +167,7 @@ async fn get_snapshot_after_wait(
                     None => break, // Channel closed, return latest snapshot
                 }
             }
-            () = sleep(timeout - start.elapsed()) => {
+            () = sleep(timeout.saturating_sub(start.elapsed())) => {
                 // Wait for more snapshots
             }
         }
@@ -4206,6 +4206,94 @@ test_with_both_regex_modes!(
         shutdown(event_sender, run_handle).await
     }
 );
+
+#[tokio::test]
+#[serial]
+async fn test_tui_multiline_advanced_regex_lookaround_replacement() -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => text!(
+            "start",
+            "middle",
+            "end",
+        ),
+    );
+
+    let app_config = AppConfig {
+        directory: temp_dir.path().to_path_buf(),
+        app_run_config: AppRunConfig {
+            advanced_regex: true,
+            multiline: true,
+            ..AppRunConfig::default()
+        },
+        ..AppConfig::default()
+    };
+
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_config_and_width(app_config, 50)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    send_chars(r"(?<=start\n)middle(?=\nend)", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("REPLACED", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Still searching"), 1000).await?;
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+    send_key(KeyCode::Esc, &event_sender); // Back to fields to edit replacement
+    for _ in 0..8 {
+        send_key(KeyCode::Backspace, &event_sender);
+    }
+    send_chars("UPDATED", &event_sender);
+
+    send_key(KeyCode::Enter, &event_sender); // Jump to search results
+    send_key(KeyCode::Enter, &event_sender);
+    let timeout = Duration::from_millis(3000);
+    let result = tokio::time::timeout(timeout, async {
+        #[derive(PartialEq, Eq)]
+        enum WaitingFor {
+            PopupToClose,
+            PopupToOpenOrReplacementToStart,
+        }
+        let mut current_state = WaitingFor::PopupToOpenOrReplacementToStart;
+        loop {
+            match snapshot_rx.recv().await {
+                Some(snapshot) => {
+                    if snapshot.contains("Performing replacement...") {
+                        return;
+                    } else if snapshot.contains("Updating replacement preview") {
+                        if current_state == WaitingFor::PopupToOpenOrReplacementToStart {
+                            send_key(KeyCode::Esc, &event_sender); // Close popup
+                        }
+                        current_state = WaitingFor::PopupToClose;
+                    } else {
+                        if current_state == WaitingFor::PopupToClose {
+                            send_key(KeyCode::Enter, &event_sender); // Try to begin replacement
+                        }
+                        current_state = WaitingFor::PopupToOpenOrReplacementToStart;
+                    }
+                }
+                None => panic!("Snapshot channel closed"),
+            }
+        }
+    })
+    .await;
+    assert!(result.is_ok(), "Timed out before preview was updated");
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+    assert_test_files!(
+        temp_dir,
+        "file1.txt" => text!(
+            "start",
+            "UPDATED",
+            "end",
+        ),
+    );
+
+    shutdown(event_sender, run_handle).await
+}
 
 test_with_both_regex_modes!(
     test_multiline_search_three_line_match,

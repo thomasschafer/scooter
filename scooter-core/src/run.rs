@@ -53,8 +53,7 @@ pub fn find_and_replace_text(
     for line_result in cursor.lines_with_endings() {
         let (line_bytes, line_ending) = line_result?;
 
-        let mut line = String::from_utf8(line_bytes)?;
-        line.push_str(line_ending.as_str());
+        let line = String::from_utf8(line_bytes)?;
 
         if let Some(replaced_line) = replace_all_if_match(
             &line,
@@ -65,6 +64,8 @@ pub fn find_and_replace_text(
         } else {
             result.push_str(&line);
         }
+
+        result.push_str(line_ending.as_str());
     }
 
     Ok(result)
@@ -84,5 +85,58 @@ fn parse_config(
                 .errors_str()
                 .unwrap_or_else(|| "Unknown validation error".to_string())
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validation::SearchConfig;
+
+    fn build_config<'a>(
+        search_text: &'a str,
+        replacement_text: &'a str,
+        multiline: bool,
+    ) -> SearchConfig<'a> {
+        SearchConfig {
+            search_text,
+            replacement_text,
+            fixed_strings: true,
+            advanced_regex: false,
+            match_whole_word: false,
+            match_case: true,
+            multiline,
+            interpret_escape_sequences: false,
+        }
+    }
+
+    #[test]
+    fn find_and_replace_text_line_mode_does_not_replace_newlines() {
+        let content = "foo\nbar\n";
+        let config = build_config("\n", "X", false);
+
+        let result = find_and_replace_text(content, config).unwrap();
+
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn find_and_replace_text_line_mode_preserves_crlf() {
+        let content = "foo\r\nbar\r\n";
+        let config = build_config("bar", "baz", false);
+
+        let result = find_and_replace_text(content, config).unwrap();
+
+        assert_eq!(result, "foo\r\nbaz\r\n");
+    }
+
+    #[test]
+    fn find_and_replace_text_multiline_replaces_across_lines() {
+        let content = "foo\nbar\nbaz";
+        let config = build_config("foo\nbar", "qux", true);
+
+        let result = find_and_replace_text(content, config).unwrap();
+
+        assert_eq!(result, "qux\nbaz");
     }
 }
