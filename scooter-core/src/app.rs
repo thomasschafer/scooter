@@ -1,9 +1,10 @@
 use std::{
     cmp::{max, min},
+    collections::HashMap,
     io::Cursor,
     iter::{self, Iterator},
     mem,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -11,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use fancy_regex::Regex as FancyRegex;
 use ignore::WalkState;
 use log::{debug, warn};
 use tokio::{
@@ -26,14 +28,15 @@ use crate::{
     config::Config,
     errors::AppError,
     fields::{FieldName, SearchFieldValues, SearchFields},
+    file_content::{FileContentProvider, default_file_content_provider},
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     line_reader::{BufReadExt, LineEnding},
     replace::{self, PerformingReplacementState, ReplaceState},
-    replace::{add_replacement, replace_all_if_match, replacement_for_match},
+    replace::{replace_all_if_match, replacement_for_match, replacement_for_match_in_haystack},
     search::Searcher,
     search::{
         FileSearcher, MatchContent, ParsedSearchConfig, SearchResult, SearchResultWithReplacement,
-        contains_search, search_multiline,
+        SearchType, contains_search, search_multiline,
     },
     utils::{Either, Either::Left, Either::Right, ceil_div},
     validation::{
@@ -540,7 +543,6 @@ impl UIState {
     }
 }
 
-#[derive(Debug)]
 pub struct App {
     pub config: Config,
     key_map: KeyMap,
@@ -550,6 +552,22 @@ pub struct App {
     pub run_config: AppRunConfig,
     pub event_channels: EventChannels,
     pub ui_state: UIState,
+    file_content_provider: Arc<dyn FileContentProvider>,
+}
+
+impl std::fmt::Debug for App {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("App")
+            .field("config", &self.config)
+            .field("key_map", &self.key_map)
+            .field("search_fields", &self.search_fields)
+            .field("searcher", &self.searcher)
+            .field("input_source", &self.input_source)
+            .field("run_config", &self.run_config)
+            .field("event_channels", &self.event_channels)
+            .field("ui_state", &self.ui_state)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug)]
@@ -1577,9 +1595,7 @@ impl<'a> App {
                                         continue;
                                     }
                                 };
-                                if replace_all_if_match(&line, &config.search, &config.replace)
-                                    .is_some()
-                                {
+                                if contains_search(&line, &config.search) {
                                     let line_number = idx + 1;
                                     let result = SearchResult::new_line(
                                         None,

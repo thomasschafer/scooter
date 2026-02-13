@@ -275,6 +275,12 @@ impl SearchType {
         };
         str.is_empty()
     }
+
+    /// Returns true when full-haystack context is required to validate matches/replacements
+    /// (e.g. advanced regex lookarounds that depend on surrounding text).
+    pub fn needs_haystack_context(&self) -> bool {
+        matches!(self, SearchType::PatternAdvanced(_))
+    }
 }
 
 /// A function that processes search results for a file and determines whether to continue searching.
@@ -658,7 +664,8 @@ impl<'a> LineIndex<'a> {
     /// Get line number (1-indexed) for a byte offset
     pub(crate) fn line_number_at(&self, byte_offset: usize) -> usize {
         // Binary search to find how many newlines come before this offset
-        // Both Ok and Err return the same value: the number of newlines before/at this position + 1
+        // Both Ok and Err return the same value: the number of newlines before/at this position + 1.
+        // If `byte_offset` lands on a '\n', we treat it as part of the line it terminates.
         match self.newline_positions.binary_search(&byte_offset) {
             Ok(idx) | Err(idx) => idx + 1,
         }
@@ -717,10 +724,7 @@ impl<'a> LineIndex<'a> {
                 // Determine line ending
                 let line_ending = if line_num <= self.newline_positions.len() {
                     let newline_pos = self.newline_positions[line_num - 1];
-                    if newline_pos > 0
-                        && self.content.as_bytes().get(newline_pos.saturating_sub(1))
-                            == Some(&b'\r')
-                    {
+                    if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
                         LineEnding::CrLf
                     } else {
                         LineEnding::Lf
@@ -806,6 +810,24 @@ fn create_search_result_from_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn byte_range_content(result: &SearchResult) -> &str {
+        match &result.content {
+            MatchContent::ByteRange { content, .. } => content,
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
+
+    fn byte_range_bytes(result: &SearchResult) -> (usize, usize) {
+        match &result.content {
+            MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                ..
+            } => (*byte_start, *byte_end),
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
 
     mod test_helpers {
         use super::*;
@@ -1369,14 +1391,7 @@ mod tests {
             assert_eq!(results[0].start_line_number(), 1);
             assert_eq!(results[0].end_line_number(), 2);
             assert_eq!(results[0].path, None);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange content");
-            };
-            assert_eq!(expected_content, "foo\nb");
+            assert_eq!(byte_range_content(&results[0]), "foo\nb");
         }
 
         #[test]
@@ -1388,14 +1403,7 @@ mod tests {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].start_line_number(), 1);
             assert_eq!(results[0].end_line_number(), 2);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange content");
-            };
-            assert_eq!(expected_content, "start\nmiddle");
+            assert_eq!(byte_range_content(&results[0]), "start\nmiddle");
         }
 
         #[test]
@@ -1438,14 +1446,7 @@ mod tests {
             let results = search_multiline(content, &search, None);
 
             assert_eq!(results.len(), 1);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!(expected_content, "foo\r\n");
+            assert_eq!(byte_range_content(&results[0]), "foo\r\n");
         }
 
         #[test]
@@ -1455,14 +1456,7 @@ mod tests {
             let results = search_multiline(content, &search, None);
 
             assert_eq!(results.len(), 1);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!(expected_content, "foo\n");
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
         }
 
         #[test]
@@ -1472,15 +1466,8 @@ mod tests {
             let results = search_multiline(content, &search, None);
 
             assert_eq!(results.len(), 1);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
             // Only "foo" is matched, not the full line
-            assert_eq!(expected_content, "foo");
+            assert_eq!(byte_range_content(&results[0]), "foo");
         }
 
         #[test]
@@ -1494,14 +1481,7 @@ mod tests {
             assert_eq!(results[0].end_line_number(), 3);
             assert_eq!(results[0].path, None);
             assert_eq!(results[0].included, true);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!(expected_content, "ne1\nline2\nli");
+            assert_eq!(byte_range_content(&results[0]), "ne1\nline2\nli");
         }
 
         #[test]
@@ -1522,17 +1502,8 @@ mod tests {
             let results = search_multiline(content, &search, None);
 
             assert_eq!(results.len(), 1);
-            let MatchContent::ByteRange {
-                byte_start,
-                byte_end,
-                content: expected_content,
-                ..
-            } = &results[0].content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!((*byte_start, *byte_end), (0, 0));
-            assert_eq!(expected_content, "");
+            assert_eq!(byte_range_bytes(&results[0]), (0, 0));
+            assert_eq!(byte_range_content(&results[0]), "");
         }
 
         #[test]
@@ -1544,17 +1515,8 @@ mod tests {
 
             assert_eq!(result.start_line_number(), 2);
             assert_eq!(result.end_line_number(), 2);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                byte_start,
-                byte_end,
-                ..
-            } = &result.content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!(expected_content, "line2");
-            assert_eq!((*byte_start, *byte_end), (6, 11));
+            assert_eq!(byte_range_content(&result), "line2");
+            assert_eq!(byte_range_bytes(&result), (6, 11));
         }
 
         #[test]
@@ -1566,17 +1528,8 @@ mod tests {
 
             assert_eq!(result.start_line_number(), 1);
             assert_eq!(result.end_line_number(), 2);
-            let MatchContent::ByteRange {
-                content: expected_content,
-                byte_start,
-                byte_end,
-                ..
-            } = &result.content
-            else {
-                panic!("Expected ByteRange");
-            };
-            assert_eq!(expected_content, "line1\nline2");
-            assert_eq!((*byte_start, *byte_end), (0, 11));
+            assert_eq!(byte_range_content(&result), "line1\nline2");
+            assert_eq!(byte_range_bytes(&result), (0, 11));
         }
     }
 
@@ -1597,41 +1550,17 @@ mod tests {
         // First match: "bar" at bytes 4-7 on line 2
         assert_eq!(results[0].start_line_number(), 2);
         assert_eq!(results[0].end_line_number(), 2);
-        let MatchContent::ByteRange {
-            byte_start: byte_start_0,
-            byte_end: byte_end_0,
-            ..
-        } = &results[0].content
-        else {
-            panic!("Expected ByteRange");
-        };
-        assert_eq!((*byte_start_0, *byte_end_0), (4, 7));
+        assert_eq!(byte_range_bytes(&results[0]), (4, 7));
 
         // Second match: "bar" at bytes 12-15 on line 2 (same line!)
         assert_eq!(results[1].start_line_number(), 2);
         assert_eq!(results[1].end_line_number(), 2);
-        let MatchContent::ByteRange {
-            byte_start: byte_start_1,
-            byte_end: byte_end_1,
-            ..
-        } = &results[1].content
-        else {
-            panic!("Expected ByteRange");
-        };
-        assert_eq!((*byte_start_1, *byte_end_1), (12, 15));
+        assert_eq!(byte_range_bytes(&results[1]), (12, 15));
 
         // Third match: "bar" at bytes 20-23 on line 3
         assert_eq!(results[2].start_line_number(), 3);
         assert_eq!(results[2].end_line_number(), 3);
-        let MatchContent::ByteRange {
-            byte_start: byte_start_2,
-            byte_end: byte_end_2,
-            ..
-        } = &results[2].content
-        else {
-            panic!("Expected ByteRange");
-        };
-        assert_eq!((*byte_start_2, *byte_end_2), (20, 23));
+        assert_eq!(byte_range_bytes(&results[2]), (20, 23));
     }
 
     #[test]
