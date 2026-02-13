@@ -131,13 +131,60 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
 fn validate_search_result_correctness(
     validation_search_config: &FileSearcher,
     results: &[SearchResultWithReplacement],
+    file_content_provider: &dyn FileContentProvider,
 ) {
+    // For advanced regex lookarounds, the replacement must be computed with full-file context.
+    // Without the surrounding text, lookbehind/lookahead checks fail.
+    let needs_context = validation_search_config.search().needs_haystack_context()
+        && results
+            .iter()
+            .any(|r| matches!(r.search_result.content, MatchContent::ByteRange { .. }));
+
+    // Read the full file once when context is required; all results are for the same file.
+    // Route through the FileContentProvider so the TUI can reuse its file cache.
+    let haystack = if needs_context {
+        let path = results
+            .first()
+            .and_then(|r| r.search_result.path.as_ref())
+            .expect("Expected file path for validation");
+        Some(read_validation_haystack(path, file_content_provider))
+    } else {
+        None
+    };
+
     for res in results {
-        let expected = replace_all_if_match(
-            res.search_result.content.matched_text(),
-            validation_search_config.search(),
-            validation_search_config.replace(),
-        );
+        let expected = match &res.search_result.content {
+            MatchContent::Line { .. } => replace_all_if_match(
+                res.search_result.content.matched_text(),
+                validation_search_config.search(),
+                validation_search_config.replace(),
+            ),
+            MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                ..
+            } => {
+                let replacement = haystack
+                    .as_deref()
+                    .and_then(|haystack| {
+                        replacement_for_match_in_haystack(
+                            validation_search_config.search(),
+                            validation_search_config.replace(),
+                            haystack,
+                            *byte_start,
+                            *byte_end,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        replacement_for_match(
+                            res.search_result.content.matched_text(),
+                            validation_search_config.search(),
+                            validation_search_config.replace(),
+                        )
+                    });
+                Some(replacement)
+            }
+        };
         let actual = &res.replacement;
         assert_eq!(
             expected.as_ref(),
@@ -145,6 +192,15 @@ fn validate_search_result_correctness(
             "Expected replacement does not match actual"
         );
     }
+}
+
+fn read_validation_haystack(
+    path: &Path,
+    file_content_provider: &dyn FileContentProvider,
+) -> Arc<String> {
+    file_content_provider
+        .read_to_string(path)
+        .expect("Failed to read file for replacement validation")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,14 +277,16 @@ pub fn perform_replacement(
     replacements_completed: Arc<AtomicUsize>,
     event_sender: UnboundedSender<Event>,
     validation_search_config: Option<FileSearcher>,
+    file_content_provider: Arc<dyn FileContentProvider>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let num_ignored = crate::replace::spawn_replace_included(
+        let num_ignored = replace::spawn_replace_included(
             search_results,
             cancelled,
             replacements_completed,
             validation_search_config,
+            file_content_provider,
             move |result| {
                 let _ = tx.send(result); // Ignore error if receiver is dropped
             },
@@ -487,18 +545,10 @@ pub fn replace_all_in_file(
     multiline: bool,
 ) -> anyhow::Result<bool> {
     if multiline {
-        match replace_in_memory(file_path, search, replace) {
-            Ok(replaced) => return Ok(replaced),
-            Err(e) => {
-                log::error!(
-                    "Found error when attempting to replace in memory for file {path_display}: {e}",
-                    path_display = file_path.display(),
-                );
-            }
-        }
+        return replace_in_memory(file_path, search, replace);
     }
 
-    replace_chunked(file_path, search, replace, multiline)
+    replace_line_by_line(file_path, search, replace)
 }
 
 pub fn add_replacement(
@@ -506,12 +556,32 @@ pub fn add_replacement(
     search: &SearchType,
     replace: &str,
 ) -> Option<SearchResultWithReplacement> {
-    let replacement = match search_result.content {
+    add_replacement_with_haystack(search_result, search, replace, None)
+}
+
+pub fn add_replacement_with_haystack(
+    search_result: SearchResult,
+    search: &SearchType,
+    replace: &str,
+    haystack: Option<&str>,
+) -> Option<SearchResultWithReplacement> {
+    let replacement = match &search_result.content {
         MatchContent::Line { .. } => {
             replace_all_if_match(search_result.content.matched_text(), search, replace)?
         }
-        MatchContent::ByteRange { .. } => {
-            replacement_for_match(search_result.content.matched_text(), search, replace)
+        MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            ..
+        } => {
+            if let Some(haystack) = haystack {
+                replacement_for_match_in_haystack(search, replace, haystack, *byte_start, *byte_end)
+                    .unwrap_or_else(|| {
+                        replacement_for_match(search_result.content.matched_text(), search, replace)
+                    })
+            } else {
+                replacement_for_match(search_result.content.matched_text(), search, replace)
+            }
         }
     };
     Some(SearchResultWithReplacement {
@@ -521,13 +591,12 @@ pub fn add_replacement(
     })
 }
 
-fn replace_chunked(
+fn replace_line_by_line(
     file_path: &Path,
     search: &SearchType,
     replace: &str,
-    multiline: bool,
 ) -> anyhow::Result<bool> {
-    let search_results = search::search_file(file_path, search, multiline)?;
+    let search_results = search::search_file(file_path, search, false)?;
     if !search_results.is_empty() {
         let mut replacement_results = search_results
             .into_iter()
@@ -619,6 +688,53 @@ pub fn replacement_for_match(matched_text: &str, search: &SearchType, replace: &
         SearchType::Fixed(_) => replace.to_string(),
         SearchType::Pattern(pattern) => pattern.replace(matched_text, replace).to_string(),
         SearchType::PatternAdvanced(pattern) => pattern.replace(matched_text, replace).to_string(),
+    }
+}
+
+/// Calculate replacement text for a specific match within a larger haystack.
+///
+/// This is used for byte-range matches where advanced regex lookarounds require
+/// the surrounding context to compute the replacement correctly.
+///
+/// Returns `None` if the match cannot be found at the given byte range.
+pub fn replacement_for_match_in_haystack(
+    search: &SearchType,
+    replace: &str,
+    haystack: &str,
+    byte_start: usize,
+    byte_end: usize,
+) -> Option<String> {
+    let slice = haystack.get(byte_start..byte_end)?;
+
+    match search {
+        SearchType::Fixed(fixed_str) => {
+            if slice != fixed_str {
+                return None;
+            }
+            Some(replace.to_string())
+        }
+        SearchType::Pattern(pattern) => pattern.captures_iter(haystack).find_map(|caps| {
+            let mat = caps.get(0)?;
+            if mat.start() == byte_start && mat.end() == byte_end {
+                let mut out = String::new();
+                caps.expand(replace, &mut out);
+                Some(out)
+            } else {
+                None
+            }
+        }),
+        SearchType::PatternAdvanced(pattern) => {
+            pattern.captures_iter(haystack).flatten().find_map(|caps| {
+                let mat = caps.get(0)?;
+                if mat.start() == byte_start && mat.end() == byte_end {
+                    let mut out = String::new();
+                    caps.expand(replace, &mut out);
+                    Some(out)
+                } else {
+                    None
+                }
+            })
+        }
     }
 }
 

@@ -579,6 +579,216 @@ enum SearchStrategy {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum ReplacementCacheKey {
+    File(PathBuf),
+    Stdin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplacementFallback {
+    Strict,
+    Lenient,
+}
+
+struct ReplacementContext<'a> {
+    input_source: &'a InputSource,
+    searcher: &'a Searcher,
+    needs_context: bool,
+    file_content_provider: Arc<dyn FileContentProvider>,
+    file_cache: HashMap<PathBuf, Arc<String>>,
+    replacement_cache: HashMap<ReplacementCacheKey, HashMap<(usize, usize), String>>,
+}
+
+impl<'a> ReplacementContext<'a> {
+    fn new(
+        input_source: &'a InputSource,
+        searcher: &'a Searcher,
+        needs_context: bool,
+        file_content_provider: Arc<dyn FileContentProvider>,
+    ) -> Self {
+        Self {
+            input_source,
+            searcher,
+            needs_context,
+            file_content_provider,
+            file_cache: HashMap::new(),
+            replacement_cache: HashMap::new(),
+        }
+    }
+
+    fn replacement_for_search_result(
+        &mut self,
+        res: &SearchResult,
+        fallback: ReplacementFallback,
+    ) -> Option<String> {
+        match &res.content {
+            MatchContent::Line { content, .. } => {
+                replace_all_if_match(content, self.searcher.search(), self.searcher.replace())
+            }
+            MatchContent::ByteRange {
+                content,
+                byte_start,
+                byte_end,
+                ..
+            } => {
+                if self.needs_context {
+                    return self.replacement_for_byte_range_with_context(
+                        res,
+                        content,
+                        *byte_start,
+                        *byte_end,
+                        fallback,
+                    );
+                }
+
+                if contains_search(content, self.searcher.search()) {
+                    return Some(replacement_for_match(
+                        content,
+                        self.searcher.search(),
+                        self.searcher.replace(),
+                    ));
+                }
+
+                if fallback == ReplacementFallback::Lenient {
+                    return Some(replacement_for_match(
+                        content,
+                        self.searcher.search(),
+                        self.searcher.replace(),
+                    ));
+                }
+
+                None
+            }
+        }
+    }
+
+    fn replacement_for_byte_range_with_context(
+        &mut self,
+        res: &SearchResult,
+        content: &str,
+        byte_start: usize,
+        byte_end: usize,
+        fallback: ReplacementFallback,
+    ) -> Option<String> {
+        let haystack = self.haystack_for_result(res);
+        let Some(haystack) = haystack else {
+            return if fallback == ReplacementFallback::Lenient {
+                Some(replacement_for_match(
+                    content,
+                    self.searcher.search(),
+                    self.searcher.replace(),
+                ))
+            } else {
+                None
+            };
+        };
+
+        if let Some(map) = self.replacement_map_for_result(res, haystack.as_str())
+            && let Some(replacement) = map.get(&(byte_start, byte_end))
+        {
+            return Some(replacement.clone());
+        }
+
+        // NOTE: advanced regex lookarounds require the full haystack. If we run the
+        // regex against the matched substring only, lookbehind/lookahead checks fail
+        // and we silently "replace" with the original text. Using the full haystack
+        // keeps the TUI preview/replacement consistent with headless mode.
+        if let Some(replacement) = replacement_for_match_in_haystack(
+            self.searcher.search(),
+            self.searcher.replace(),
+            haystack.as_str(),
+            byte_start,
+            byte_end,
+        ) {
+            return Some(replacement);
+        }
+
+        if fallback == ReplacementFallback::Lenient {
+            return Some(replacement_for_match(
+                content,
+                self.searcher.search(),
+                self.searcher.replace(),
+            ));
+        }
+
+        None
+    }
+
+    fn replacement_map_for_result(
+        &mut self,
+        res: &SearchResult,
+        haystack: &str,
+    ) -> Option<&HashMap<(usize, usize), String>> {
+        let SearchType::PatternAdvanced(pattern) = self.searcher.search() else {
+            return None;
+        };
+        let key = self.replacement_cache_key(res)?;
+        let replace = self.searcher.replace();
+        Some(
+            self.replacement_cache
+                .entry(key)
+                .or_insert_with(|| build_replacement_map(pattern, replace, haystack)),
+        )
+    }
+
+    fn replacement_cache_key(&self, res: &SearchResult) -> Option<ReplacementCacheKey> {
+        if let Some(path) = res.path.as_ref() {
+            Some(ReplacementCacheKey::File(path.clone()))
+        } else if matches!(self.input_source, InputSource::Stdin(_)) {
+            Some(ReplacementCacheKey::Stdin)
+        } else {
+            None
+        }
+    }
+
+    fn haystack_for_result(&mut self, res: &SearchResult) -> Option<Arc<String>> {
+        if let Some(path) = res.path.as_ref() {
+            if let Some(cached) = self.file_cache.get(path) {
+                return Some(Arc::clone(cached));
+            }
+
+            match self.read_file_content(path) {
+                Ok(contents) => {
+                    self.file_cache.insert(path.clone(), Arc::clone(&contents));
+                    Some(contents)
+                }
+                Err(err) => {
+                    warn!(
+                        "Failed to read file for multiline replacement preview {path}: {err}",
+                        path = path.display()
+                    );
+                    None
+                }
+            }
+        } else if let InputSource::Stdin(stdin) = self.input_source {
+            Some(Arc::clone(stdin))
+        } else {
+            None
+        }
+    }
+
+    fn read_file_content(&self, path: &Path) -> anyhow::Result<Arc<String>> {
+        self.file_content_provider.read_to_string(path)
+    }
+}
+
+fn build_replacement_map(
+    pattern: &FancyRegex,
+    replace: &str,
+    haystack: &str,
+) -> HashMap<(usize, usize), String> {
+    let mut map = HashMap::new();
+    for caps in pattern.captures_iter(haystack).flatten() {
+        if let Some(mat) = caps.get(0) {
+            let mut out = String::new();
+            caps.expand(replace, &mut out);
+            map.insert((mat.start(), mat.end()), out);
+        }
+    }
+    map
+}
+
 fn generate_escape_deprecation_message(quit_keymap: Option<KeyEvent>) -> String {
     let quit_keymap_str = quit_keymap.map_or("".to_string(), |keymap| {
         let optional_help = if let KeyEvent {
@@ -658,6 +868,7 @@ impl<'a> App {
             run_config: app_run_config,
             event_channels: EventChannels::new(),
             ui_state: UIState::new(Screen::SearchFields(search_fields_state)),
+            file_content_provider: default_file_content_provider(),
         };
 
         if search_immediately {
@@ -665,6 +876,19 @@ impl<'a> App {
         }
 
         Ok(app)
+    }
+
+    pub fn set_file_content_provider(&mut self, provider: Arc<dyn FileContentProvider>) {
+        self.file_content_provider = provider;
+    }
+
+    fn replacement_context<'b>(
+        input_source: &'b InputSource,
+        searcher: &'b Searcher,
+        file_content_provider: Arc<dyn FileContentProvider>,
+    ) -> ReplacementContext<'b> {
+        let needs_context = searcher.search().needs_haystack_context();
+        ReplacementContext::new(input_source, searcher, needs_context, file_content_provider)
     }
 
     pub fn handle_internal_event(&mut self, event: InternalEvent) -> EventHandlingResult {
@@ -721,6 +945,8 @@ impl<'a> App {
         self.cancel_in_progress_tasks();
         let mut run_config = self.run_config.clone();
         run_config.immediate_search = false;
+        self.file_content_provider.clear();
+        let provider = Arc::clone(&self.file_content_provider);
 
         *self = Self::new(
             self.input_source.clone(), // TODO: avoid cloning
@@ -729,6 +955,7 @@ impl<'a> App {
             std::mem::take(&mut self.config),
         )
         .expect("App initialisation errors should have been detected on initial construction");
+        self.file_content_provider = provider;
     }
 
     pub async fn event_recv(&mut self) -> Event {
@@ -925,6 +1152,15 @@ impl<'a> App {
         if cancelled.load(Ordering::Relaxed) {
             return EventHandlingResult::None;
         }
+        let searcher = self
+            .searcher
+            .as_ref()
+            .expect("Fields should have been parsed");
+        let mut context = Self::replacement_context(
+            &self.input_source,
+            searcher,
+            Arc::clone(&self.file_content_provider),
+        );
         let Screen::SearchFields(SearchFieldsState {
             search_state: Some(search_state),
             preview_update_state: Some(preview_update_state),
@@ -933,32 +1169,13 @@ impl<'a> App {
         else {
             return EventHandlingResult::None;
         };
-        let file_searcher = self
-            .searcher
-            .as_ref()
-            .expect("Fields should have been parsed");
         for res in &mut search_state.results[start..=end] {
-            let replacement = match &res.search_result.content {
-                MatchContent::ByteRange { content, .. } => {
-                    if !contains_search(content, file_searcher.search()) {
-                        // Handle race condition where search results are being updated
-                        // The new search results will already have the correct replacement so no need to update
-                        return EventHandlingResult::Rerender;
-                    }
-                    replacement_for_match(content, file_searcher.search(), file_searcher.replace())
-                }
-                MatchContent::Line { content, .. } => {
-                    let Some(replacement) = replace_all_if_match(
-                        content,
-                        file_searcher.search(),
-                        file_searcher.replace(),
-                    ) else {
-                        // Handle race condition where search results are being updated
-                        // The new search results will already have the correct replacement so no need to update
-                        return EventHandlingResult::Rerender;
-                    };
-                    replacement
-                }
+            let Some(replacement) = context
+                .replacement_for_search_result(&res.search_result, ReplacementFallback::Strict)
+            else {
+                // Handle race condition where search results are being updated
+                // The new search results will already have the correct replacement so no need to update
+                return EventHandlingResult::Rerender;
             };
             res.replacement = replacement;
         }
@@ -1003,6 +1220,7 @@ impl<'a> App {
                             replacements_completed.clone(),
                             self.event_channels.sender.clone(),
                             Some(file_searcher),
+                            self.file_content_provider.clone(),
                         );
                     }
                     Searcher::TextSearcher { search_config } => {
@@ -1109,20 +1327,30 @@ impl<'a> App {
         I: IntoIterator<Item = SearchResult>,
     {
         let mut rerender = false;
+        let searcher = self
+            .searcher
+            .as_ref()
+            .expect("searcher should not be None when adding search results");
+        let mut context = Self::replacement_context(
+            &self.input_source,
+            searcher,
+            Arc::clone(&self.file_content_provider),
+        );
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(search_in_progress_state),
             ..
         }) = &mut self.ui_state.current_screen
         {
             let mut results_with_replacements = Vec::new();
-            let searcher = self
-                .searcher
-                .as_ref()
-                .expect("searcher should not be None when adding search results");
             for res in results {
-                let updated = add_replacement(res, searcher.search(), searcher.replace());
-                if let Some(updated) = updated {
-                    results_with_replacements.push(updated);
+                if let Some(replacement) =
+                    context.replacement_for_search_result(&res, ReplacementFallback::Lenient)
+                {
+                    results_with_replacements.push(SearchResultWithReplacement {
+                        search_result: res,
+                        replacement,
+                        replace_result: None,
+                    });
                 }
             }
             search_in_progress_state
@@ -1208,12 +1436,16 @@ impl<'a> App {
 
         if let FieldName::Replace = self.search_fields.highlighted_field().name {
             if let Some(ref mut state) = search_fields_state.search_state {
-                // Immediately update replacement on selected fields - the remainder will be updated async
+                // Immediately update replacement on the selected result; remaining results update async.
+                let mut context = Self::replacement_context(
+                    &self.input_source,
+                    file_searcher,
+                    Arc::clone(&self.file_content_provider),
+                );
                 if let Some(highlighted) = state.primary_selected_field_mut()
-                    && let Some(updated) = replace_all_if_match(
-                        highlighted.search_result.content.matched_text(),
-                        file_searcher.search(),
-                        file_searcher.replace(),
+                    && let Some(updated) = context.replacement_for_search_result(
+                        &highlighted.search_result,
+                        ReplacementFallback::Strict,
                     )
                 {
                     highlighted.replacement = updated;
