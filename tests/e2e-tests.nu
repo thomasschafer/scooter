@@ -245,6 +245,13 @@ def run_scooter_stdin_no_tui_test [input: string, scooter_binary: string, search
     do { echo $input | ^$scooter_binary ...$flags } | complete
 }
 
+def strip_ansi_codes [text: string] {
+    # Strip ALL ANSI escape sequences (but preserve line endings)
+    $text
+    | str replace --all --regex '\x1b\[[0-9;?]*[@-~]' ''  # CSI sequences (end with letter/symbol)
+    | str replace --all --regex '\x1b[@-_]' ''             # Other 2-byte escape sequences
+}
+
 def run_expect_command [command: string] {
     let expect_script = 'log_user 0; spawn bash -c "' + $command + '"; log_user 1; expect -timeout -1 eof; puts $expect_out(buffer)'
     ^expect -c $expect_script | complete
@@ -259,7 +266,7 @@ def assert_test_result [result: record, expected_output: string, test_name: stri
     }
 
     # Strip ANSI escape codes from stdout for comparison
-    let cleaned_stdout = ($result.stdout | ansi strip)
+    let cleaned_stdout = (strip_ansi_codes $result.stdout)
 
     if $cleaned_stdout != $expected_output {
         print $"❌ FAILED: ($test_name) - output mismatch"
@@ -296,8 +303,8 @@ def assert_output_contains [result: record, expected_text: string, test_name: st
         return 1
     }
 
-    # Strip ANSI escape codes from stdout for comparison
-    let cleaned_stdout = ($result.stdout | ansi strip)
+    # Strip ANSI escape codes from stdout for comparison (preserves line endings)
+    let cleaned_stdout = (strip_ansi_codes $result.stdout)
 
     if not ($cleaned_stdout | str contains $expected_text) {
         print $"❌ FAILED: ($test_name) - missing expected text\n"
@@ -392,6 +399,12 @@ def test_stdin_processing [scooter_binary: string] {
     0
 }
 
+def assert_tui_output_contains [result: record, expected_text: string, test_name: string] {
+    # TUI outputs CRLF, so convert LF in expected text to CRLF for easier test writing
+    let expected_with_crlf = ($expected_text | str replace --all "\n" "\r\n")
+    assert_output_contains $result $expected_with_crlf $test_name
+}
+
 def test_stdin_tui_mode [scooter_binary: string] {
     print "Testing stdin processing in TUI mode..."
 
@@ -399,9 +412,9 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let command1 = $"echo 'test foo content' | ($scooter_binary) -s 'foo' -r 'bar' -X"
     let result1 = run_expect_command $command1
     let test_failed = (
-        assert_output_contains
+        assert_tui_output_contains
         $result1
-        "test bar content\nSuccessful replacements (lines): 1\nIgnored (lines): 0\nErrors: 0"
+        "test bar content\n\nSuccessful replacements (lines): 1\nIgnored (lines): 0\nErrors: 0"
         "TUI immediate mode with stdin: single line"
     )
     if $test_failed != 0 {
@@ -413,9 +426,9 @@ def test_stdin_tui_mode [scooter_binary: string] {
     let command2 = $"echo '($test_input)' | ($scooter_binary) -s 'foo' -r 'baz' -X"
     let result2 = run_expect_command $command2
     let test_failed = (
-        assert_output_contains
+        assert_tui_output_contains
         $result2
-        "hello world baz bar\nline two with baz\nline three\nSuccessful replacements (lines): 2\nIgnored (lines): 0\nErrors: 0"
+        "hello world baz bar\nline two with baz\nline three\n\nSuccessful replacements (lines): 2\nIgnored (lines): 0\nErrors: 0"
         "TUI immediate mode with stdin: multiline with printed results"
     )
     if $test_failed != 0 {
@@ -438,14 +451,11 @@ def test_stdin_edge_cases [scooter_binary: string] {
         print $"Stderr: ($result1.stderr)"
         return 1
     }
-
     # Verify that both "and" occurrences were replaced
-    let checks1 = ["tabs plus", "CRLF plus"]
-    for text in $checks1 {
-        let test_failed = assert_output_contains $result1 $text "special characters replacement"
-        if $test_failed != 0 {
-            return 1
-        }
+    let expected_special = "line with\ttabs plus\r\nCRLF plus\nnormal LF"
+    let test_failed = assert_output_contains $result1 $expected_special "special characters replacement"
+    if $test_failed != 0 {
+        return 1
     }
 
     # Test with Unicode characters
@@ -529,6 +539,143 @@ def test_stdin_validation_errors [scooter_binary: string] {
     0
 }
 
+def test_multiline_flag [scooter_binary: string] {
+    print "Testing --multiline / -U flag..."
+
+    # Test multiline stdin replacement with --no-tui
+    let result1 = run_scooter_stdin_no_tui_test "start one\nend one\nstart two\nend two" $scooter_binary 'start.*\nend' "REPLACED" ["--multiline"]
+    let test_failed = assert_test_result $result1 "REPLACED one\nREPLACED two" "multiline stdin replacement"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with -U shorthand
+    let result2 = run_scooter_stdin_no_tui_test "foo bar\nbaz qux" $scooter_binary 'bar\nbaz' "MERGED" ["-U"]
+    let test_failed = assert_test_result $result2 "foo MERGED qux" "multiline stdin with -U flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test that without multiline, cross-line patterns don't match
+    let result3 = run_scooter_stdin_no_tui_test "foo bar\nbaz qux" $scooter_binary 'bar\nbaz' "MERGED" []
+    let test_failed = assert_test_result $result3 "foo bar\nbaz qux" "no multiline means no cross-line match"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with fixed strings
+    let result4 = run_scooter_stdin_no_tui_test "line one\nline two\nline three" $scooter_binary "one\nline two" "REPLACED" ["--multiline", "--fixed-strings"]
+    let test_failed = assert_test_result $result4 "line REPLACED\nline three" "multiline with fixed strings"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline with TUI immediate mode
+    let command = $"echo 'hello world\ngoodbye world' | ($scooter_binary) -U -s 'world\ngoodbye' -r 'MERGED' -X"
+    let result5 = run_expect_command $command
+    let test_failed = (
+        assert_tui_output_contains
+        $result5
+        "hello MERGED world"
+        "multiline TUI immediate mode"
+    )
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test multiline file replacement with --no-tui
+    let test_dir = "test-multiline-temp"
+    mkdir $test_dir
+    "start match\nend match\nother line\n" | save -f ($test_dir | path join "test.txt")
+
+    let command = $"cd ($test_dir) && ($scooter_binary) -N -U -s 'start.*\\nend' -r 'REPLACED'"
+    let result6 = run_expect_command $command
+
+    if $result6.exit_code != 0 {
+        print $"❌ FAILED: multiline file replacement - non-zero exit code"
+        print $"Stderr: ($result6.stderr)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    let actual_content = (open ($test_dir | path join "test.txt"))
+    let expected_content = "REPLACED match\nother line\n"
+    if $actual_content != $expected_content {
+        print $"❌ FAILED: multiline file replacement - content mismatch"
+        print $"Expected: ($expected_content)"
+        print $"Actual: ($actual_content)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    rm -rf $test_dir
+
+    print "✅ PASSED: multiline flag works correctly"
+    0
+}
+
+def test_interpret_escape_sequences_flag [scooter_binary: string] {
+    print "Testing --interpret-escape-sequences / -e flag..."
+
+    # Test escape sequences in replacement with --no-tui
+    let result1 = run_scooter_stdin_no_tui_test "hello world" $scooter_binary "world" 'world\nbye' ["--interpret-escape-sequences"]
+    let test_failed = assert_test_result $result1 "hello world\nbye" "interpret escape sequences stdin newline"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test with -e shorthand
+    let result2 = run_scooter_stdin_no_tui_test "key=value" $scooter_binary "=" '\t' ["-e"]
+    let test_failed = assert_test_result $result2 "key\tvalue" "interpret escape sequences stdin tab with -e flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test that without flag, escape sequences are literal
+    let result3 = run_scooter_stdin_no_tui_test "hello world" $scooter_binary "world" 'world\nbye' []
+    let test_failed = assert_test_result $result3 'hello world\nbye' "no escape sequences without flag"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test backslash escape
+    let result4 = run_scooter_stdin_no_tui_test "path/to/file" $scooter_binary "/" '\\' ["-e", "--fixed-strings"]
+    let test_failed = assert_test_result $result4 'path\to\file' "interpret escape sequences backslash"
+    if $test_failed != 0 {
+        return 1
+    }
+
+    # Test file replacement with --no-tui
+    let test_dir = "test-escape-seq-temp"
+    mkdir $test_dir
+    "hello world\ngoodbye world\n" | save -f ($test_dir | path join "test.txt")
+
+    let command = $"cd ($test_dir) && ($scooter_binary) -N -e -s 'world' -r 'world\\t\(planet\)'"
+    let result5 = run_expect_command $command
+
+    if $result5.exit_code != 0 {
+        print $"❌ FAILED: escape sequences file replacement - non-zero exit code"
+        print $"Stderr: ($result5.stderr)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    let actual_content = (open ($test_dir | path join "test.txt"))
+    let expected_content = "hello world\t(planet)\ngoodbye world\t(planet)\n"
+    if $actual_content != $expected_content {
+        print $"❌ FAILED: escape sequences file replacement - content mismatch"
+        print $"Expected: ($expected_content)"
+        print $"Actual: ($actual_content)"
+        rm -rf $test_dir
+        return 1
+    }
+
+    rm -rf $test_dir
+
+    print "✅ PASSED: interpret escape sequences flag works correctly"
+    0
+}
+
 def main [mode: string, --update-readme, --repo-url: string = ""] {
     let valid_modes = ["test", "benchmark"]
     if $mode not-in $valid_modes {
@@ -570,6 +717,8 @@ def main [mode: string, --update-readme, --repo-url: string = ""] {
                 (test_stdin_tui_mode $scooter_binary)
                 (test_stdin_edge_cases $scooter_binary)
                 (test_stdin_validation_errors $scooter_binary)
+                (test_multiline_flag $scooter_binary)
+                (test_interpret_escape_sequences_flag $scooter_binary)
             ]
             if ($results | math sum) == 0 { 0 } else { 1 }
         }
