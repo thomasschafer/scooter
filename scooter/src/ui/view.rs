@@ -12,7 +12,7 @@ use scooter_core::{
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
-    replace::{PerformingReplacementState, ReplaceState},
+    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
     search,
     utils::{
         self, HighlightedLine, last_n_chars, read_lines_range_highlighted, relative_path,
@@ -360,33 +360,40 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
-        let preview = build_search_result_preview(selected.result, event_sender.clone());
+        if let Some(ReplaceResult::Error(error)) = &selected.result.replace_result {
+            frame.render_widget(
+                Paragraph::new(format!("Error generating preview: {error}")).fg(Color::Red),
+                preview_area,
+            );
+        } else {
+            let preview = build_search_result_preview(selected.result, event_sender.clone());
 
-        match build_preview_list(
-            input_source,
-            lines_to_show,
-            selected.result,
-            &preview,
-            theme,
-            true_colour,
-            event_sender,
-            if wrap {
-                WrapText::Width {
-                    width: preview_area.width,
-                    num_lines: lines_to_show,
+            match build_preview_list(
+                input_source,
+                lines_to_show,
+                selected.result,
+                &preview,
+                theme,
+                true_colour,
+                event_sender,
+                if wrap {
+                    WrapText::Width {
+                        width: preview_area.width,
+                        num_lines: lines_to_show,
+                    }
+                } else {
+                    WrapText::None
+                },
+            ) {
+                Ok(preview) => {
+                    frame.render_widget(preview, preview_area);
                 }
-            } else {
-                WrapText::None
-            },
-        ) {
-            Ok(preview) => {
-                frame.render_widget(preview, preview_area);
-            }
-            Err(e) => {
-                frame.render_widget(
-                    Paragraph::new(format!("Error generating preview: {e}")).fg(Color::Red),
-                    preview_area,
-                );
+                Err(e) => {
+                    frame.render_widget(
+                        Paragraph::new(format!("Error generating preview: {e}")).fg(Color::Red),
+                        preview_area,
+                    );
+                }
             }
         }
     }
