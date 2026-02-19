@@ -43,6 +43,7 @@
 
         shellDeps = with pkgs; [
           rustToolchain
+          cargo-hack
           cargo-insta
         ];
       in
