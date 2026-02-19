@@ -418,7 +418,7 @@ You can also add the following to your [scooter config file](#configuration-opti
 
 ```toml
 [editor_open]
-command = 'tmux send-keys -t "$TMUX_PANE" ":open %file:%line" Enter'
+command = 'tmux send-keys -t "$TMUX_PANE" ":open \"%file\":%line" Enter'
 exit = true
 ```
 
