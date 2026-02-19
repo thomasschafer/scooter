@@ -2,7 +2,7 @@ use anyhow::bail;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use futures::Stream;
 use insta::assert_snapshot;
-use rand::Rng;
+use rand::RngExt;
 use ratatui::backend::TestBackend;
 use regex::Regex;
 use scooter::app_runner::{AppConfig, AppRunner};
