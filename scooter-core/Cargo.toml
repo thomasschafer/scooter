@@ -51,5 +51,5 @@ unicode-width = "0.2.0"
 [dev-dependencies]
 indoc = "2.0.7"
 insta = "1.46.3"
-rand = "0.9.2"
+rand = "0.10.0"
 serial_test = "3.3.1"

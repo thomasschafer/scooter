@@ -1932,7 +1932,7 @@ mod tests {
         replace::{ReplaceResult, ReplaceStats},
         search::{SearchResult, SearchResultWithReplacement},
     };
-    use rand::Rng;
+    use rand::RngExt;
 
     use super::*;
 
