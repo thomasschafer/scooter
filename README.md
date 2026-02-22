@@ -24,6 +24,7 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
   - [Nix](#nix)
   - [AUR](#aur)
   - [Winget](#winget)
+  - [Scoop](#scoop)
   - [NetBSD](#netbsd)
   - [Prebuilt binaries](#prebuilt-binaries)
   - [Cargo](#cargo)
@@ -182,6 +183,14 @@ Install from Winget with
 
 ```sh
 winget install thomasschafer.scooter
+```
+
+### Scoop
+
+On Windows, you can install scooter using [Scoop](https://scoop.sh/#/apps?q=scooter&p=1&id=e0378d34e35574873c593119f965372f17d74c9f):
+
+```sh
+scoop install scooter
 ```
 
 ### NetBSD
