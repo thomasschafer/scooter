@@ -2403,7 +2403,7 @@ dependencies = [
  "similar",
  "simple-log",
  "steel-core",
- "steel-derive 0.6.0",
+ "steel-derive",
  "tempfile",
  "termini",
  "tokio",
@@ -2708,7 +2708,7 @@ dependencies = [
  "serde_json",
  "shared_vector",
  "smallvec",
- "steel-derive 0.8.2",
+ "steel-derive",
  "steel-gen",
  "steel-parser",
  "steel-quickscope",
@@ -2717,17 +2717,6 @@ dependencies = [
  "weak-table",
  "which",
  "xdg",
-]
-
-[[package]]
-name = "steel-derive"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bab7d1c6e3ee7b3ba6a4187b545d7dc1fa6e4929f0721a8798cfc3b8c7ed2b23"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
