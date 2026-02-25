@@ -45,7 +45,7 @@ two-face = { version = "0.5.1", default-features = false, features = ["syntect-d
 tempfile = "3.24.0"
 termini = "1.0.0"
 tokio = { version = "1.49.0", features = ["full"] }
-toml = "0.9.11"
+toml = "1.0.3"
 unicode-width = "0.2.0"
 
 [dev-dependencies]
