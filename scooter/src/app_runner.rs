@@ -232,11 +232,13 @@ fn build_editor_command(editor_command: &str, file_path: &Path, line: usize) -> 
                 QuoteContext::Double => escape_for_double_quotes(file_str.as_ref()),
             };
             output.push_str(&replacement);
+            escape_next = false;
             idx += "%file".len();
             continue;
         }
         if rest.starts_with("%line") {
             output.push_str(&line_str);
+            escape_next = false;
             idx += "%line".len();
             continue;
         }
@@ -724,7 +726,7 @@ mod tests {
         let result = build_editor_command(command, Path::new("/path/with spaces/file.txt"), 7);
         assert_eq!(
             result,
-            r#"tmux send-keys -t "$TMUX_PANE" ":open \"/path/with spaces/file.txt\":7" Enter"#
+            r#"tmux send-keys -t "$TMUX_PANE" ":open \"/path/with spaces/file.txt:7\"" Enter"#
         );
     }
 
@@ -813,11 +815,16 @@ mod tests {
     fn test_build_editor_command_backslash_before_file_token_resets_escape() {
         // A backslash before %file should not cause the character after the substitution
         // to be treated as escaped (skipping quote-context tracking).
-        // Here the " after %file should open a double-quote context, causing $VAR to be
-        // escaped. If escape_next leaks, the " is skipped and $VAR is left unescaped.
+        // Here the " after the first %file should open a double-quote context, so the
+        // second %file gets double-quote escaping ($HOME → \$HOME). If escape_next leaks
+        // from the backslash, the " is skipped, context stays None, and the second %file
+        // is incorrectly single-quoted instead.
         let result =
-            build_editor_command(r#"cmd \%file"%line $VAR""#, Path::new("/some/file.txt"), 1);
-        assert_eq!(result, r#"cmd \'/some/file.txt'"1 \$VAR""#);
+            build_editor_command(r#"cmd \%file"%file""#, Path::new("/path/$HOME/file.txt"), 1);
+        assert_eq!(
+            result,
+            r#"cmd \'/path/$HOME/file.txt'"/path/\$HOME/file.txt""#
+        );
     }
 
     #[test]
