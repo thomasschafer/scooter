@@ -174,6 +174,107 @@ impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuoteContext {
+    None,
+    Single,
+    Double,
+}
+
+fn escape_for_single_quotes(path: &str) -> String {
+    if cfg!(windows) {
+        path.to_string()
+    } else {
+        path.replace('\'', "'\\''")
+    }
+}
+
+fn escape_for_double_quotes(path: &str) -> String {
+    if cfg!(windows) {
+        path.to_string()
+    } else {
+        let mut escaped = String::with_capacity(path.len());
+        for ch in path.chars() {
+            match ch {
+                '\\' | '"' | '$' | '`' => {
+                    escaped.push('\\');
+                    escaped.push(ch);
+                }
+                _ => escaped.push(ch),
+            }
+        }
+        escaped
+    }
+}
+
+fn quote_path_unquoted(path: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{path}\"")
+    } else {
+        format!("'{}'", escape_for_single_quotes(path))
+    }
+}
+
+fn build_editor_command(editor_command: &str, file_path: &Path, line: usize) -> String {
+    let file_str = file_path.to_string_lossy();
+    let line_str = line.to_string();
+    let mut output = String::with_capacity(editor_command.len() + file_str.len());
+    let mut context = QuoteContext::None;
+    let mut escape_next = false;
+    let mut idx = 0;
+
+    while idx < editor_command.len() {
+        let rest = &editor_command[idx..];
+        if rest.starts_with("%file") {
+            let replacement = match context {
+                QuoteContext::None => quote_path_unquoted(file_str.as_ref()),
+                QuoteContext::Single => escape_for_single_quotes(file_str.as_ref()),
+                QuoteContext::Double => escape_for_double_quotes(file_str.as_ref()),
+            };
+            output.push_str(&replacement);
+            escape_next = false;
+            idx += "%file".len();
+            continue;
+        }
+        if rest.starts_with("%line") {
+            output.push_str(&line_str);
+            escape_next = false;
+            idx += "%line".len();
+            continue;
+        }
+
+        let ch = rest.chars().next().expect("non-empty slice");
+        output.push(ch);
+
+        if escape_next {
+            escape_next = false;
+        } else {
+            match context {
+                QuoteContext::None => match ch {
+                    '\'' => context = QuoteContext::Single,
+                    '"' => context = QuoteContext::Double,
+                    '\\' if !cfg!(windows) => escape_next = true,
+                    _ => {}
+                },
+                QuoteContext::Single => {
+                    if ch == '\'' {
+                        context = QuoteContext::None;
+                    }
+                }
+                QuoteContext::Double => match ch {
+                    '"' => context = QuoteContext::None,
+                    '\\' if !cfg!(windows) => escape_next = true,
+                    _ => {}
+                },
+            }
+        }
+
+        idx += ch.len_utf8();
+    }
+
+    output
+}
+
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S>
 where
     B::Error: Send + Sync,
@@ -306,18 +407,21 @@ where
         file_path: &Path,
         line: usize,
     ) -> anyhow::Result<()> {
-        let editor_command = editor_command
-            .replace("%file", &file_path.to_string_lossy())
-            .replace("%line", &line.to_string());
+        let editor_command = build_editor_command(editor_command, file_path, line);
 
-        let output = if cfg!(windows) {
-            let mut cmd = Command::new("cmd");
-            cmd.arg("/C").arg(&editor_command);
-            cmd.output()?
-        } else {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg(&editor_command);
-            cmd.output()?
+        let output = {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                Command::new("cmd")
+                    .arg("/C")
+                    .raw_arg(&editor_command)
+                    .output()?
+            }
+            #[cfg(not(windows))]
+            {
+                Command::new("sh").arg("-c").arg(&editor_command).output()?
+            }
         };
 
         if output.status.success() {
@@ -565,5 +669,174 @@ mod tests {
         let result = format_replacement_results(7, None, Some(&[]));
         assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
+    }
+
+    #[test]
+    fn test_build_editor_command_unquoted_file() {
+        let result = build_editor_command(
+            "vim %file +%line",
+            Path::new("/path/with spaces/file.txt"),
+            42,
+        );
+        if cfg!(windows) {
+            assert_eq!(result, "vim \"/path/with spaces/file.txt\" +42");
+        } else {
+            assert_eq!(result, "vim '/path/with spaces/file.txt' +42");
+        }
+    }
+
+    #[test]
+    fn test_build_editor_command_double_quoted_file() {
+        let result = build_editor_command(
+            "notepad++ \"%file\" -n%line",
+            Path::new("/path/with spaces/file.txt"),
+            10,
+        );
+        assert_eq!(result, "notepad++ \"/path/with spaces/file.txt\" -n10");
+    }
+
+    #[test]
+    fn test_build_editor_command_single_quoted_file() {
+        let result = build_editor_command(
+            "vim '%file' +%line",
+            Path::new("/path/with spaces/file.txt"),
+            5,
+        );
+        assert_eq!(result, "vim '/path/with spaces/file.txt' +5");
+    }
+
+    #[test]
+    fn test_build_editor_command_colon_suffix() {
+        let result = build_editor_command(
+            "subl %file:%line",
+            Path::new("/path/with spaces/file.txt"),
+            2,
+        );
+        if cfg!(windows) {
+            assert_eq!(result, "subl \"/path/with spaces/file.txt\":2");
+        } else {
+            assert_eq!(result, "subl '/path/with spaces/file.txt':2");
+        }
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_helix_tmux_send_keys() {
+        let command = r#"tmux send-keys -t "$TMUX_PANE" ":open \"%file:%line\"" Enter"#;
+        let result = build_editor_command(command, Path::new("/path/with spaces/file.txt"), 7);
+        assert_eq!(
+            result,
+            r#"tmux send-keys -t "$TMUX_PANE" ":open \"/path/with spaces/file.txt:7\"" Enter"#
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_neovim_remote_send() {
+        let command = r#"nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter("%file", %line)<CR>'"#;
+        let result = build_editor_command(command, Path::new("/path/with spaces/file.txt"), 9);
+        assert_eq!(
+            result,
+            r#"nvim --server $NVIM --remote-send '<cmd>lua EditLineFromScooter("/path/with spaces/file.txt", 9)<CR>'"#
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_single_quote_in_path() {
+        let result = build_editor_command(
+            "vim %file +%line",
+            Path::new("/path/it's a file/foo.txt"),
+            1,
+        );
+        assert_eq!(result, "vim '/path/it'\\''s a file/foo.txt' +1");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_double_quotes_escape_dollar() {
+        let result = build_editor_command("echo \"%file\"", Path::new("/path/$HOME/file.txt"), 1);
+        assert_eq!(result, "echo \"/path/\\$HOME/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_double_quotes_escape_backslash() {
+        let result = build_editor_command(
+            "vim \"%file\"",
+            Path::new("/path/with\\backslash/file.txt"),
+            1,
+        );
+        assert_eq!(result, "vim \"/path/with\\\\backslash/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_double_quotes_escape_backtick() {
+        let result = build_editor_command(
+            "vim \"%file\"",
+            Path::new("/path/with`backtick/file.txt"),
+            1,
+        );
+        assert_eq!(result, "vim \"/path/with\\`backtick/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_empty_path() {
+        let result = build_editor_command("vim %file", Path::new(""), 1);
+        assert_eq!(result, "vim ''");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_multiple_file_tokens() {
+        let result = build_editor_command("diff %file %file", Path::new("/path/my file.txt"), 1);
+        assert_eq!(result, "diff '/path/my file.txt' '/path/my file.txt'");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_no_tokens() {
+        let result = build_editor_command("vim", Path::new("/some/file.txt"), 1);
+        assert_eq!(result, "vim");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_unterminated_double_quote() {
+        // Unterminated quote — the %file token should still be escaped for double-quote context
+        let result = build_editor_command("vim \"%file", Path::new("/path/$HOME/file.txt"), 1);
+        assert_eq!(result, "vim \"/path/\\$HOME/file.txt");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_backslash_before_file_token_resets_escape() {
+        // A backslash before %file should not cause the character after the substitution
+        // to be treated as escaped (skipping quote-context tracking).
+        // Here the " after the first %file should open a double-quote context, so the
+        // second %file gets double-quote escaping ($HOME → \$HOME). If escape_next leaks
+        // from the backslash, the " is skipped, context stays None, and the second %file
+        // is incorrectly single-quoted instead.
+        let result =
+            build_editor_command(r#"cmd \%file"%file""#, Path::new("/path/$HOME/file.txt"), 1);
+        assert_eq!(
+            result,
+            r#"cmd \'/path/$HOME/file.txt'"/path/\$HOME/file.txt""#
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_backslash_before_line_token_resets_escape() {
+        // Same as above but with %line: the backslash before %line should not leak
+        // escape_next, so the " immediately after %line opens a double-quote context.
+        let result = build_editor_command(
+            r#"cmd \%line"%file""#,
+            Path::new("/path/$HOME/file.txt"),
+            42,
+        );
+        assert_eq!(result, r#"cmd \42"/path/\$HOME/file.txt""#);
     }
 }
