@@ -118,6 +118,62 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
     }
 }
 
+impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
+    pub fn new_runner(app_config: AppConfig<'_>) -> anyhow::Result<Self> {
+        let backend = CrosstermBackend::new(io::stdout());
+        let event_stream = CrosstermEventStream::new();
+        let snapshot_provider = NoOpSnapshotProvider;
+        let mut user_config = config::load_config().context("Failed to read config file")?;
+
+        // Apply CLI override for editor command if provided
+        if let Some(ref editor_command) = app_config.editor_command_override {
+            user_config.editor_open.command = Some(editor_command.clone());
+        }
+
+        Self::new(
+            app_config,
+            user_config,
+            backend,
+            event_stream,
+            snapshot_provider,
+        )
+    }
+}
+
+impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
+    // Used in integration tests
+    #[allow(dead_code)]
+    pub fn new_snapshot_test(
+        app_config: AppConfig<'_>,
+        backend: TestBackend,
+        event_stream: E,
+        snapshot_sender: UnboundedSender<String>,
+    ) -> anyhow::Result<Self> {
+        // Tests should use default config, not load from user's config directory
+        let test_config = Config::default();
+        Self::new_snapshot_test_override_config(
+            app_config,
+            backend,
+            event_stream,
+            snapshot_sender,
+            test_config,
+        )
+    }
+
+    // Used in integration tests
+    #[allow(dead_code)]
+    pub fn new_snapshot_test_override_config(
+        app_config: AppConfig<'_>,
+        backend: TestBackend,
+        event_stream: E,
+        snapshot_sender: UnboundedSender<String>,
+        config: Config,
+    ) -> anyhow::Result<Self> {
+        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
+        Self::new(app_config, config, backend, event_stream, snapshot_provider)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QuoteContext {
     None,
@@ -215,62 +271,6 @@ fn build_editor_command(editor_command: &str, file_path: &Path, line: usize) -> 
     }
 
     output
-}
-
-impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(app_config: AppConfig<'_>) -> anyhow::Result<Self> {
-        let backend = CrosstermBackend::new(io::stdout());
-        let event_stream = CrosstermEventStream::new();
-        let snapshot_provider = NoOpSnapshotProvider;
-        let mut user_config = config::load_config().context("Failed to read config file")?;
-
-        // Apply CLI override for editor command if provided
-        if let Some(ref editor_command) = app_config.editor_command_override {
-            user_config.editor_open.command = Some(editor_command.clone());
-        }
-
-        Self::new(
-            app_config,
-            user_config,
-            backend,
-            event_stream,
-            snapshot_provider,
-        )
-    }
-}
-
-impl<E: EventStream> AppRunner<TestBackend, E, TestSnapshotProvider> {
-    // Used in integration tests
-    #[allow(dead_code)]
-    pub fn new_snapshot_test(
-        app_config: AppConfig<'_>,
-        backend: TestBackend,
-        event_stream: E,
-        snapshot_sender: UnboundedSender<String>,
-    ) -> anyhow::Result<Self> {
-        // Tests should use default config, not load from user's config directory
-        let test_config = Config::default();
-        Self::new_snapshot_test_override_config(
-            app_config,
-            backend,
-            event_stream,
-            snapshot_sender,
-            test_config,
-        )
-    }
-
-    // Used in integration tests
-    #[allow(dead_code)]
-    pub fn new_snapshot_test_override_config(
-        app_config: AppConfig<'_>,
-        backend: TestBackend,
-        event_stream: E,
-        snapshot_sender: UnboundedSender<String>,
-        config: Config,
-    ) -> anyhow::Result<Self> {
-        let snapshot_provider = TestSnapshotProvider::new(snapshot_sender);
-        Self::new(app_config, config, backend, event_stream, snapshot_provider)
-    }
 }
 
 impl<B: Backend + 'static, E: EventStream, S: SnapshotProvider<B>> AppRunner<B, E, S>
@@ -755,5 +755,56 @@ mod tests {
     fn test_build_editor_command_double_quotes_escape_dollar() {
         let result = build_editor_command("echo \"%file\"", Path::new("/path/$HOME/file.txt"), 1);
         assert_eq!(result, "echo \"/path/\\$HOME/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_double_quotes_escape_backslash() {
+        let result = build_editor_command(
+            "vim \"%file\"",
+            Path::new("/path/with\\backslash/file.txt"),
+            1,
+        );
+        assert_eq!(result, "vim \"/path/with\\\\backslash/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_double_quotes_escape_backtick() {
+        let result = build_editor_command(
+            "vim \"%file\"",
+            Path::new("/path/with`backtick/file.txt"),
+            1,
+        );
+        assert_eq!(result, "vim \"/path/with\\`backtick/file.txt\"");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_empty_path() {
+        let result = build_editor_command("vim %file", Path::new(""), 1);
+        assert_eq!(result, "vim ''");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_multiple_file_tokens() {
+        let result = build_editor_command("diff %file %file", Path::new("/path/my file.txt"), 1);
+        assert_eq!(result, "diff '/path/my file.txt' '/path/my file.txt'");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_no_tokens() {
+        let result = build_editor_command("vim", Path::new("/some/file.txt"), 1);
+        assert_eq!(result, "vim");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_unterminated_double_quote() {
+        // Unterminated quote — the %file token should still be escaped for double-quote context
+        let result = build_editor_command("vim \"%file", Path::new("/path/$HOME/file.txt"), 1);
+        assert_eq!(result, "vim \"/path/\\$HOME/file.txt");
     }
 }
