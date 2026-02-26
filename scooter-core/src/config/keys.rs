@@ -168,7 +168,10 @@ impl Default for KeysSearch {
             )],
             toggle_hidden_files: keys![KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)],
             toggle_multiline: keys![KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT)],
-            toggle_interpret_escape_sequences: keys![], // Unbound by default
+            toggle_interpret_escape_sequences: keys![KeyEvent::new(
+                KeyCode::Char('e'),
+                KeyModifiers::ALT
+            )],
             fields: KeysSearchFocusFields::default(),
             results: KeysSearchFocusResults::default(),
         }

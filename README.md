@@ -328,10 +328,10 @@ show_help_menu = "C-h"  # Show the help menu containing keymaps
 
 # Commands available on the search screen
 [keys.search]
-toggle_preview_wrapping = "C-l"         # Toggle wrapping of lines that don't fit within the width of the preview
-toggle_hidden_files = "C-t"             # Toggle inclusion of hidden files and directories, such as those whose name starts with a dot (.)
-toggle_multiline = "A-m"                # Toggle multiline search mode, which allows patterns to match across line boundaries
-toggle_interpret_escape_sequences = []  # Toggle interpretation of escape sequences in replacement text (\n becomes newline, \t becomes tab, \\ becomes backslash)
+toggle_preview_wrapping = "C-l"            # Toggle wrapping of lines that don't fit within the width of the preview
+toggle_hidden_files = "C-t"                # Toggle inclusion of hidden files and directories, such as those whose name starts with a dot (.)
+toggle_multiline = "A-m"                   # Toggle multiline search mode, which allows patterns to match across line boundaries
+toggle_interpret_escape_sequences = "A-e"  # Toggle interpretation of escape sequences in replacement text (\n becomes newline, \t becomes tab, \\ becomes backslash)
 
 # Commands available on the search screen, when the search fields are focussed
 [keys.search.fields]

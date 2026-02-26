@@ -1123,6 +1123,7 @@ mod tests {
                 search_result,
                 replacement: replacement.to_string(),
                 replace_result: None,
+                preview_error: None,
             }
         }
 
@@ -3974,6 +3975,7 @@ mod tests {
                 }),
                 replacement: replacement.to_string(),
                 replace_result: None,
+                preview_error: None,
             }
         }
 
@@ -4060,6 +4062,7 @@ mod tests {
                 }),
                 replacement: replacement.to_string(),
                 replace_result: None,
+                preview_error: None,
             }
         }
 
@@ -4396,6 +4399,7 @@ mod tests {
                     ),
                     replacement: "XXX\n".to_string(),
                     replace_result: None,
+                    preview_error: None,
                 },
                 SearchResultWithReplacement {
                     search_result: SearchResult::new_line(
@@ -4407,6 +4411,7 @@ mod tests {
                     ),
                     replacement: "YYY\n".to_string(),
                     replace_result: None,
+                    preview_error: None,
                 },
             ];
 
@@ -4837,6 +4842,7 @@ mod tests {
                     search_result: sr,
                     replacement: "REPLACED".to_string(),
                     replace_result: None,
+                    preview_error: None,
                 })
                 .collect();
 
@@ -4884,6 +4890,7 @@ mod tests {
                     search_result: sr,
                     replacement: "REPLACED".to_string(),
                     replace_result: None,
+                    preview_error: None,
                 })
                 .collect();
 
@@ -4942,6 +4949,7 @@ mod tests {
                 }),
                 replacement: "REPLACED".to_string(),
                 replace_result: None,
+                preview_error: None,
             }
         }
 
@@ -5199,6 +5207,7 @@ mod tests {
                 }),
                 replacement: replacement.to_string(),
                 replace_result: None,
+                preview_error: None,
             }
         }
 
@@ -5290,6 +5299,7 @@ mod tests {
                 }),
                 replacement: "X".to_string(),
                 replace_result: None,
+                preview_error: None,
             }];
 
             let result = replace_in_file(&mut results);

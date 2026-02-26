@@ -1546,6 +1546,97 @@ mod tests {
             assert_eq!(byte_range_content(&result), "line1\nline2");
             assert_eq!(byte_range_bytes(&result), (0, 11));
         }
+
+        #[test]
+        fn test_crlf_match_ending_at_cr() {
+            // Match "foo\r" in "foo\r\nbar" — match includes the \r which is past line content
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends into line ending → next line included
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\r");
+        }
+
+        #[test]
+        fn test_crlf_match_spanning_crlf_boundary() {
+            // Match "foo\r\nbar" spanning both lines
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\nbar".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 8));
+            assert_eq!(byte_range_content(&results[0]), "foo\r\nbar");
+        }
+
+        #[test]
+        fn test_crlf_match_ending_at_lf() {
+            // Match "foo\r\n" in CRLF content — ends at byte 5, past line content
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends past line content → include next line with match_end=0
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 5));
+            assert_eq!(byte_range_content(&results[0]), "foo\r\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf() {
+            // Match "foo\n" in LF content — ends at byte 4, past line content
+            let content = "foo\nbar";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends past line content → include next line with match_end=0
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf_no_next_line() {
+            // Match "foo\n" — trailing newline means there's technically an empty line 2,
+            // so the "extends into line ending" logic includes it with match_end=0.
+            // To truly test "no next line", use content without trailing newline.
+            let content = "foo\n";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Line 2 exists (empty, after trailing \n), so it gets included
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf_truly_no_next_line() {
+            // "foo" with no trailing newline — match the whole thing
+            // This tests the fallback to last_line_content_len when there's no next line
+            let content = "foo";
+            let search = SearchType::Fixed("foo".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 1);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 3));
+            assert_eq!(byte_range_content(&results[0]), "foo");
+        }
     }
 
     #[test]

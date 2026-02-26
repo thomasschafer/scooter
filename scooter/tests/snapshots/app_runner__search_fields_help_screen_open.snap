@@ -19,7 +19,7 @@ expression: snapshot
     │ X│    <C-l>  toggle text wrapping in preview                                         │       
     └──│    <C-t>  toggle hidden files                                                     │       
     ┌Fi│    <A-m>  toggle multiline                                                        │─┐     
-    │  │    <n/a>  toggle escape sequences                                                 │ │     
+    │  │    <A-e>  toggle escape sequences                                                 │ │     
     └──│    <C-r>  reset                                                                   │─┘     
     ┌Fi│    <C-h>  help                                                                    │─┐     
     │  │    <esc>  close popup                                                             │ │     

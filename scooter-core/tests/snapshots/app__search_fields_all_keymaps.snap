@@ -1,5 +1,6 @@
 ---
 source: scooter-core/tests/app.rs
+assertion_line: 308
 expression: app.keymaps_all()
 ---
 [
@@ -36,7 +37,7 @@ expression: app.keymaps_all()
         "toggle multiline",
     ),
     (
-        "<n/a>",
+        "<A-e>",
         "toggle escape sequences",
     ),
     (
