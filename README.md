@@ -411,14 +411,14 @@ If you are using Helix in Tmux, you can add a keymap like the following to your 
 
 ```toml
 [keys.select.ret]
-s = ":sh tmux popup -xC -yC -w90% -h90% -E scooter"
+s = ":sh tmux popup -xC -yC -w90%% -h90%% -E scooter"
 ```
 
 You can also add the following to your [scooter config file](#configuration-options) to open files back in Helix from the search results page with `e`:
 
 ```toml
 [editor_open]
-command = 'tmux send-keys -t "$TMUX_PANE" ":open \"%file\":%line" Enter'
+command = 'tmux send-keys -t "$TMUX_PANE" ":open \"%file:%line\"" Enter'
 exit = true
 ```
 

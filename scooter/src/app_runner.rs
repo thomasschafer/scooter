@@ -720,7 +720,7 @@ mod tests {
     #[test]
     #[cfg(not(windows))]
     fn test_build_editor_command_helix_tmux_send_keys() {
-        let command = r#"tmux send-keys -t "$TMUX_PANE" ":open \"%file\":%line" Enter"#;
+        let command = r#"tmux send-keys -t "$TMUX_PANE" ":open \"%file:%line\"" Enter"#;
         let result = build_editor_command(command, Path::new("/path/with spaces/file.txt"), 7);
         assert_eq!(
             result,
@@ -806,5 +806,30 @@ mod tests {
         // Unterminated quote — the %file token should still be escaped for double-quote context
         let result = build_editor_command("vim \"%file", Path::new("/path/$HOME/file.txt"), 1);
         assert_eq!(result, "vim \"/path/\\$HOME/file.txt");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_backslash_before_file_token_resets_escape() {
+        // A backslash before %file should not cause the character after the substitution
+        // to be treated as escaped (skipping quote-context tracking).
+        // Here the " after %file should open a double-quote context, causing $VAR to be
+        // escaped. If escape_next leaks, the " is skipped and $VAR is left unescaped.
+        let result =
+            build_editor_command(r#"cmd \%file"%line $VAR""#, Path::new("/some/file.txt"), 1);
+        assert_eq!(result, r#"cmd \'/some/file.txt'"1 \$VAR""#);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_build_editor_command_backslash_before_line_token_resets_escape() {
+        // Same as above but with %line: the backslash before %line should not leak
+        // escape_next, so the " immediately after %line opens a double-quote context.
+        let result = build_editor_command(
+            r#"cmd \%line"%file""#,
+            Path::new("/path/$HOME/file.txt"),
+            42,
+        );
+        assert_eq!(result, r#"cmd \42"/path/\$HOME/file.txt""#);
     }
 }
