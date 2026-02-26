@@ -10,6 +10,7 @@ use ratatui::{
     backend::{Backend, CrosstermBackend, TestBackend},
     crossterm::event::KeyEventKind,
 };
+use scooter_core::line_reader::BufReadExt;
 use scooter_core::{
     app::{
         App, AppRunConfig, Event, EventHandlingResult, ExitAndReplaceState, ExitState, InputSource,
@@ -20,11 +21,15 @@ use scooter_core::{
     keyboard::KeyEvent,
     replace::ReplaceState,
 };
-use scooter_core::{replace::ReplaceResult, search::SearchResultWithReplacement};
+use scooter_core::{
+    replace::ReplaceResult,
+    search::{self, MatchContent, MatchMode, SearchResultWithReplacement},
+};
 use std::{
     collections::HashMap,
     env,
-    io::{self, Write},
+    fmt::Write as _,
+    io::{self, Cursor, Write},
     path::{Path, PathBuf},
     process::Command,
     str::FromStr,
@@ -43,6 +48,7 @@ pub struct AppConfig<'a> {
     pub app_run_config: AppRunConfig,
     pub stdin_content: Option<String>,
     pub editor_command_override: Option<String>,
+    pub interpret_escape_sequences_override: bool,
 }
 
 impl Default for AppConfig<'_> {
@@ -54,6 +60,7 @@ impl Default for AppConfig<'_> {
             app_run_config: AppRunConfig::default(),
             stdin_content: None,
             editor_command_override: None,
+            interpret_escape_sequences_override: false,
         }
     }
 }
@@ -119,7 +126,7 @@ impl SnapshotProvider<TestBackend> for TestSnapshotProvider {
 }
 
 impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotProvider> {
-    pub fn new_runner(app_config: AppConfig<'_>) -> anyhow::Result<Self> {
+    pub fn new_runner(mut app_config: AppConfig<'_>) -> anyhow::Result<Self> {
         let backend = CrosstermBackend::new(io::stdout());
         let event_stream = CrosstermEventStream::new();
         let snapshot_provider = NoOpSnapshotProvider;
@@ -129,6 +136,15 @@ impl AppRunner<CrosstermBackend<io::Stdout>, CrosstermEventStream, NoOpSnapshotP
         if let Some(ref editor_command) = app_config.editor_command_override {
             user_config.editor_open.command = Some(editor_command.clone());
         }
+
+        // Apply CLI override for escape sequences
+        if app_config.interpret_escape_sequences_override {
+            user_config.search.interpret_escape_sequences = true;
+        }
+
+        // Initialize runtime config from user config file
+        app_config.app_run_config.interpret_escape_sequences =
+            user_config.search.interpret_escape_sequences;
 
         Self::new(
             app_config,
@@ -298,7 +314,6 @@ where
             app_config.app_run_config,
             config,
         )?;
-
         let terminal = Terminal::new(backend)?;
         let tui = Tui::new(terminal);
 
@@ -500,14 +515,11 @@ pub fn format_replacement_results(
     errors: Option<&[SearchResultWithReplacement]>,
 ) -> String {
     let errors_display = if let Some(errors) = errors {
-        #[allow(clippy::format_collect)]
-        errors
-            .iter()
-            .map(|error| {
-                let (path, error) = error.display_error();
-                format!("\n{path}:\n  {}", error.red())
-            })
-            .collect::<String>()
+        errors.iter().fold(String::new(), |mut acc, error| {
+            let (path, error) = error.display_error();
+            write!(acc, "\n{path}:\n  {}", error.red()).expect("failed to write error");
+            acc
+        })
     } else {
         String::new()
     };
@@ -525,7 +537,7 @@ pub fn format_replacement_results(
     };
 
     format!(
-        "Successful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
+        "\nSuccessful replacements (lines): {num_successes}{maybe_ignored_str}{maybe_errors_str}\n"
     )
 }
 
@@ -567,7 +579,7 @@ pub async fn run_app_tui(app_config: AppConfig<'_>) -> anyhow::Result<Option<Str
 }
 
 fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()> {
-    write_results_to_stderr_impl(state, false).map(|res| {
+    write_results_impl(state, false, &mut io::stderr()).map(|res| {
         assert!(res.is_none(), "Found Some stats, expected None");
     })
 }
@@ -575,44 +587,30 @@ fn write_results_to_stderr(state: &mut ExitAndReplaceState) -> anyhow::Result<()
 fn write_results_to_stderr_with_stats(
     state: &mut ExitAndReplaceState,
 ) -> anyhow::Result<ReplaceState> {
-    write_results_to_stderr_impl(state, true)
+    write_results_impl(state, true, &mut io::stderr())
         .map(|res| res.expect("Found None stats, expected Some"))
 }
 
-fn write_results_to_stderr_impl(
+// Used in integration tests
+#[allow(dead_code)]
+pub fn write_stdin_results(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<()> {
+    write_results_impl(state, false, writer).map(|res| {
+        assert!(res.is_none(), "Found Some stats, expected None");
+    })
+}
+
+fn write_results_impl(
     state: &mut ExitAndReplaceState,
     return_stats: bool,
+    writer: &mut impl Write,
 ) -> anyhow::Result<Option<ReplaceState>> {
-    let mut num_successes = 0;
-    let mut num_ignored = 0;
-
-    let mut line_map = state
-        .replace_results
-        .iter_mut()
-        .map(|res| (res.search_result.line_number, res))
-        .collect::<HashMap<_, _>>();
-
-    for (idx, line) in state.stdin.lines().enumerate() {
-        let line_number = idx + 1; // Ensure line-number is 1-indexed
-        let line_new = line_map
-            .get_mut(&line_number)
-            .and_then(|res| {
-                assert_eq!(
-                    line, res.search_result.line,
-                    "line has changed since search"
-                );
-                if res.search_result.included {
-                    res.replace_result = Some(ReplaceResult::Success);
-                    num_successes += 1;
-                    Some(res.replacement.as_str())
-                } else {
-                    num_ignored += 1;
-                    None
-                }
-            })
-            .unwrap_or(line);
-        writeln!(io::stderr(), "{line_new}")?;
-    }
+    let (num_successes, num_ignored) = match search::match_mode_of_results(&state.replace_results) {
+        Some(MatchMode::ByteRange) => write_stdin_byte_mode(state, writer)?,
+        Some(MatchMode::Line) | None => write_stdin_line_mode(state, writer)?,
+    };
 
     let res = if return_stats {
         Some(ReplaceState {
@@ -627,6 +625,141 @@ fn write_results_to_stderr_impl(
     Ok(res)
 }
 
+fn write_stdin_line_mode(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<(usize, usize)> {
+    debug_assert!(
+        state
+            .replace_results
+            .iter()
+            .all(|r| r.preview_error.is_none()),
+        "stdin mode should never have preview errors"
+    );
+
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
+    let mut line_map = state
+        .replace_results
+        .iter_mut()
+        .map(|res| (res.search_result.start_line_number(), res))
+        .collect::<HashMap<_, _>>();
+
+    let cursor = Cursor::new(state.stdin.as_bytes());
+    for (idx, line_result) in cursor.lines_with_endings().enumerate() {
+        let line_number = idx + 1;
+        let (line_bytes, line_ending) = line_result?;
+        let line_content = String::from_utf8(line_bytes)?;
+        let ending = line_ending.as_str();
+
+        if let Some(res) = line_map.get_mut(&line_number) {
+            match &res.search_result.content {
+                MatchContent::Line {
+                    content,
+                    line_ending,
+                    ..
+                } => {
+                    assert_eq!(content, &line_content, "content has changed since search");
+                    assert_eq!(
+                        line_ending.as_str(),
+                        ending,
+                        "line ending has changed since search"
+                    );
+                }
+                MatchContent::ByteRange { .. } => {
+                    unreachable!("write_stdin_line_mode called with ByteRange content")
+                }
+            }
+
+            if res.search_result.included {
+                res.replace_result = Some(ReplaceResult::Success);
+                num_successes += 1;
+                write!(writer, "{}{ending}", res.replacement)?;
+            } else {
+                num_ignored += 1;
+                write!(writer, "{line_content}{ending}")?;
+            }
+        } else {
+            write!(writer, "{line_content}{ending}")?;
+        }
+    }
+
+    Ok((num_successes, num_ignored))
+}
+
+fn write_stdin_byte_mode(
+    state: &mut ExitAndReplaceState,
+    writer: &mut impl Write,
+) -> anyhow::Result<(usize, usize)> {
+    debug_assert!(
+        state
+            .replace_results
+            .iter()
+            .all(|r| r.preview_error.is_none()),
+        "stdin mode should never have preview errors"
+    );
+
+    let mut num_successes = 0;
+    let mut num_ignored = 0;
+
+    state
+        .replace_results
+        .sort_by_key(|r| match &r.search_result.content {
+            MatchContent::ByteRange { byte_start, .. } => *byte_start,
+            MatchContent::Line { .. } => {
+                unreachable!("write_stdin_byte_mode called with Line content")
+            }
+        });
+
+    let stdin: &str = &state.stdin;
+    let mut current_pos = 0;
+
+    for res in &mut state.replace_results {
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            content,
+            ..
+        } = &res.search_result.content
+        else {
+            unreachable!("write_stdin_byte_mode called with Line content")
+        };
+
+        assert!(
+            *byte_start >= current_pos,
+            "Overlapping matches detected: byte_start={byte_start}, current_pos={current_pos}"
+        );
+
+        if *byte_start > current_pos {
+            write!(writer, "{}", &stdin[current_pos..*byte_start])?;
+        }
+
+        assert_eq!(
+            &stdin[*byte_start..*byte_end],
+            content.as_str(),
+            "content has changed since search"
+        );
+
+        if res.search_result.included {
+            res.replace_result = Some(ReplaceResult::Success);
+            num_successes += 1;
+            write!(writer, "{}", res.replacement)?;
+        } else {
+            num_ignored += 1;
+            write!(writer, "{}", &stdin[*byte_start..*byte_end])?;
+        }
+
+        current_pos = *byte_end;
+    }
+
+    if current_pos < stdin.len() {
+        write!(writer, "{}", &stdin[current_pos..])?;
+    }
+
+    Ok((num_successes, num_ignored))
+}
+
 #[cfg(test)]
 mod tests {
     use scooter_core::{line_reader::LineEnding, replace::ReplaceResult, search::SearchResult};
@@ -638,26 +771,27 @@ mod tests {
         let result = format_replacement_results(5, Some(2), Some(&[]));
         assert_eq!(
             result,
-            "Successful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
+            "\nSuccessful replacements (lines): 5\nIgnored (lines): 2\nErrors: 0\n"
         );
     }
 
     #[test]
     fn test_format_replacement_results_with_errors() {
         let error_result = SearchResultWithReplacement {
-            search_result: SearchResult {
-                path: Some(PathBuf::from("file.txt")),
-                line_number: 10,
-                line: "line".to_string(),
-                line_ending: LineEnding::Lf,
-                included: true,
-            },
+            search_result: SearchResult::new_line(
+                Some(PathBuf::from("file.txt")),
+                10,
+                "line".to_string(),
+                LineEnding::Lf,
+                true,
+            ),
             replacement: "replacement".to_string(),
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+            preview_error: None,
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));
-        assert!(result.contains("Successful replacements (lines): 3\n"));
+        assert!(result.contains("\nSuccessful replacements (lines): 3\n"));
         assert!(result.contains("Ignored (lines): 1"));
         assert!(result.contains("Errors: 1"));
         assert!(result.contains("file.txt:10"));
@@ -667,7 +801,7 @@ mod tests {
     #[test]
     fn test_format_replacement_results_no_ignored_count() {
         let result = format_replacement_results(7, None, Some(&[]));
-        assert_eq!(result, "Successful replacements (lines): 7\nErrors: 0\n");
+        assert_eq!(result, "\nSuccessful replacements (lines): 7\nErrors: 0\n");
         assert!(!result.contains("Ignored (lines):"));
     }
 

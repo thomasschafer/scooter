@@ -13,6 +13,7 @@ use scooter_core::{
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
     replace::{PerformingReplacementState, ReplaceState},
+    search,
     utils::{
         self, HighlightedLine, last_n_chars, read_lines_range_highlighted, relative_path,
         strip_control_chars,
@@ -37,7 +38,7 @@ use two_face::re_exports::syntect::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use scooter_core::search::SearchResultWithReplacement;
+use scooter_core::search::{MatchContent, SearchResultWithReplacement};
 use scooter_core::{config::Config, utils::read_lines_range};
 
 use crate::ui::cache::{self, FileWindow};
@@ -186,15 +187,69 @@ fn diff_col_to_ratatui(colour: &DiffColour) -> Color {
     }
 }
 
-fn diff_to_line<'a>(diff: impl Iterator<Item = &'a Diff>) -> StyledLine {
-    diff.map(|d| {
-        let mut style = Style::new().fg(diff_col_to_ratatui(&d.fg_colour));
-        if let Some(bg) = &d.bg_colour {
-            style = style.bg(diff_col_to_ratatui(bg));
+fn diff_to_style(d: &Diff) -> Style {
+    let mut style = Style::new().fg(diff_col_to_ratatui(&d.fg_colour));
+    if let Some(bg) = &d.bg_colour {
+        style = style.bg(diff_col_to_ratatui(bg));
+    }
+    style
+}
+
+/// Represents the kind of diff line (added/new or removed/old).
+#[derive(Clone, Copy)]
+enum DiffLineKind {
+    Added,
+    Removed,
+}
+
+impl DiffLineKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Added => "+ ",
+            Self::Removed => "- ",
         }
-        (Cow::Owned(strip_control_chars(&d.text)), Some(style))
-    })
-    .collect()
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Added => Color::Green,
+            Self::Removed => Color::Red,
+        }
+    }
+
+    fn style(self) -> Style {
+        Style::new().fg(self.color())
+    }
+
+    fn prefix_segment(self) -> StyledSegment {
+        styled_segment(self.prefix(), self.style())
+    }
+}
+
+/// Converts diffs to multiple styled lines, splitting on newlines.
+/// Each output line starts with the appropriate prefix.
+/// Strips trailing \r from lines to handle CRLF line endings cleanly.
+fn diffs_to_lines(diffs: &[Diff], kind: DiffLineKind) -> Vec<StyledLine> {
+    let mut lines = Vec::new();
+    let mut current_line = vec![kind.prefix_segment()];
+
+    for d in diffs {
+        let style = diff_to_style(d);
+
+        for (i, part) in d.text.split('\n').enumerate() {
+            if i > 0 {
+                lines.push(current_line);
+                current_line = vec![kind.prefix_segment()];
+            }
+            let part = part.strip_suffix('\r').unwrap_or(part);
+            if !part.is_empty() {
+                current_line.push(styled_segment(part, style));
+            }
+        }
+    }
+
+    lines.push(current_line);
+    lines
 }
 
 fn display_duration(duration: Duration) -> String {
@@ -305,33 +360,40 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
-        let preview = build_search_result_preview(selected.result, event_sender.clone());
+        if let Some(error) = &selected.result.preview_error {
+            frame.render_widget(
+                Paragraph::new(format!("Error generating preview: {error}")).fg(Color::Red),
+                preview_area,
+            );
+        } else {
+            let preview = build_search_result_preview(selected.result, event_sender.clone());
 
-        match build_preview_list(
-            input_source,
-            lines_to_show,
-            selected.result,
-            &preview,
-            theme,
-            true_colour,
-            event_sender,
-            if wrap {
-                WrapText::Width {
-                    width: preview_area.width,
-                    num_lines: lines_to_show,
+            match build_preview_list(
+                input_source,
+                lines_to_show,
+                selected.result,
+                &preview,
+                theme,
+                true_colour,
+                event_sender,
+                if wrap {
+                    WrapText::Width {
+                        width: preview_area.width,
+                        num_lines: lines_to_show,
+                    }
+                } else {
+                    WrapText::None
+                },
+            ) {
+                Ok(preview) => {
+                    frame.render_widget(preview, preview_area);
                 }
-            } else {
-                WrapText::None
-            },
-        ) {
-            Ok(preview) => {
-                frame.render_widget(preview, preview_area);
-            }
-            Err(e) => {
-                frame.render_widget(
-                    Paragraph::new(format!("Error generating preview: {e}")).fg(Color::Red),
-                    preview_area,
-                );
+                Err(e) => {
+                    frame.render_widget(
+                        Paragraph::new(format!("Error generating preview: {e}")).fg(Color::Red),
+                        preview_area,
+                    );
+                }
             }
         }
     }
@@ -438,7 +500,8 @@ fn convert_syntect_to_ratatui_style(syntect_style: &SyntectStyle, true_colour: b
     ratatui_style
 }
 
-type StyledLine = Vec<(Cow<'static, str>, Option<Style>)>;
+type StyledSegment = (Cow<'static, str>, Option<Style>);
+type StyledLine = Vec<StyledSegment>;
 
 static PREVIEW_LINE_PREFIX: &str = "  ";
 static WRAPPED_LINE_PREFIX: &str = "  ↪ ";
@@ -447,7 +510,7 @@ fn regions_to_line(line: &[(Option<SyntectStyle>, String)], true_colour: bool) -
     iter::once((Cow::Borrowed(PREVIEW_LINE_PREFIX), None))
         .chain(line.iter().map(|(style, s)| {
             (
-                Cow::Owned(strip_control_chars(s)),
+                Cow::Owned(strip_control_chars(s).into_owned()),
                 style
                     .as_ref()
                     .map(|style| convert_syntect_to_ratatui_style(style, true_colour)),
@@ -502,14 +565,33 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
     });
 }
 
-fn spawn_compute_diff(old_line: String, new_line: String, event_sender: UnboundedSender<Event>) {
+fn spawn_compute_diff(old: MatchContent, new: String, event_sender: UnboundedSender<Event>) {
     tokio::spawn(async move {
         // Compute the detailed character-level diff
-        let (old_diffs, new_diffs) = line_diff(&old_line, &new_line);
+        let preview = match old.clone() {
+            MatchContent::ByteRange {
+                lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
+                ..
+            } => build_multiline_diff(
+                &lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
+                &new,
+            ),
+            MatchContent::Line { content, .. } => {
+                let (old_diffs, new_diffs) = line_diff(&content, &new);
+                SearchResultPreview {
+                    old_line_diffs: diffs_to_lines(&old_diffs, DiffLineKind::Removed),
+                    new_line_diffs: diffs_to_lines(&new_diffs, DiffLineKind::Added),
+                }
+            }
+        };
 
         // Cache the result
         let mut cache_guard = cache::diff_cache().lock().unwrap();
-        cache_guard.put((old_line, new_line), (old_diffs, new_diffs));
+        cache_guard.put((old, new), preview);
         drop(cache_guard);
 
         // Trigger re-render to show the detailed diff
@@ -711,25 +793,28 @@ fn build_preview_from_str<'a>(
     wrap: WrapText,
 ) -> anyhow::Result<List<'a>> {
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.line_number - 1;
+    let line_idx = result.search_result.start_line_number() - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
     let cursor = Cursor::new(stdin.as_bytes());
     let lines = utils::surrounding_line_window(cursor, start, end).collect();
 
-    // `num_lines_to_show - 1` because diff takes up 2 lines
-    let (before, cur, after) =
-        utils::split_indexed_lines(lines, line_idx, num_lines_to_show.saturating_sub(1))?;
+    let (before, cur, after) = utils::split_indexed_lines(
+        lines,
+        line_idx,
+        preview.context_lines_to_show(num_lines_to_show),
+    )?;
+
     assert!(
-        cur.1 == result.search_result.line,
+        cur.1 == expected_first_line_content(result),
         "Expected line didn't match actual",
     );
 
+    let after = filter_after_for_multiline(after, result);
     let before = before.iter().map(|(_, l)| to_line_plain(l));
-    let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
     let after = after.iter().map(|(_, l)| to_line_plain(l));
-    line_list(before, diff, after, num_lines_to_show, wrap)
+    line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
         .map_err(|e| anyhow!("failed to combine lines: {e}"))
 }
 
@@ -956,14 +1041,11 @@ fn loading_lines<'a>(syntax_highlighting_theme: Option<&Theme>, true_colour: boo
 const LONG_LINE_THRESHOLD: usize = 5_000;
 
 fn has_long_lines(result: &SearchResultWithReplacement) -> bool {
-    result
-        .search_result
-        .line
-        .len()
-        .max(result.replacement.len())
-        > LONG_LINE_THRESHOLD
+    let content_len = result.search_result.content.matched_text().len();
+    content_len.max(result.replacement.len()) > LONG_LINE_THRESHOLD
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_preview_from_file<'a>(
     num_lines_to_show: u16,
     result: &SearchResultWithReplacement,
@@ -980,7 +1062,7 @@ fn build_preview_from_file<'a>(
         .expect("attempted to build preview list from file with no path");
 
     // Line numbers are 1-indexed
-    let line_idx = result.search_result.line_number - 1;
+    let line_idx = result.search_result.start_line_number() - 1;
     let start = line_idx.saturating_sub(num_lines_to_show as usize);
     let end = line_idx + num_lines_to_show as usize;
 
@@ -995,24 +1077,25 @@ fn build_preview_from_file<'a>(
         )? {
             LinesOrLoading::Loading => Ok(loading_lines(Some(theme), true_colour)),
             LinesOrLoading::Lines(lines) => {
-                // `num_lines_to_show - 1` because diff takes up 2 lines
                 let Ok((before, cur, after)) = utils::split_indexed_lines(
                     lines,
                     line_idx,
-                    num_lines_to_show.saturating_sub(1),
+                    preview.context_lines_to_show(num_lines_to_show),
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                if cur.1.iter().map(|(_, s)| s).join("") != result.search_result.line {
+
+                if cur.1.iter().map(|(_, s)| s).join("") != expected_first_line_content(result) {
                     bail!("File has changed since search (lines don't match)");
                 }
 
+                let after = filter_after_for_multiline(after, result);
                 let before = before.iter().map(|(_, l)| regions_to_line(l, true_colour));
-                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
                 let after = after.iter().map(|(_, l)| regions_to_line(l, true_colour));
 
-                let mut list = line_list(before, diff, after, num_lines_to_show, wrap)
-                    .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
+                let mut list =
+                    line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
+                        .map_err(|e| anyhow!("failed to combine lines: {e}"))?;
                 if let Some(bg) = theme
                     .settings
                     .background
@@ -1033,84 +1116,327 @@ fn build_preview_from_file<'a>(
         )? {
             LinesOrLoading::Loading => Ok(loading_lines(None, true_colour)),
             LinesOrLoading::Lines(lines) => {
-                // `num_lines_to_show - 1` because diff takes up 2 lines
                 let Ok((before, cur, after)) = utils::split_indexed_lines(
                     lines,
                     line_idx,
-                    num_lines_to_show.saturating_sub(1),
+                    preview.context_lines_to_show(num_lines_to_show),
                 ) else {
                     bail!("File has changed since search (lines have changed)");
                 };
-                if cur.1 != result.search_result.line {
+
+                if cur.1 != expected_first_line_content(result) {
                     bail!("File has changed since search (lines don't match)");
                 }
 
+                let after = filter_after_for_multiline(after, result);
                 let before = before.iter().map(|(_, l)| to_line_plain(l));
-                let diff = [preview.old_line_diff.clone(), preview.new_line_diff.clone()];
                 let after = after.iter().map(|(_, l)| to_line_plain(l));
-                line_list(before, diff, after, num_lines_to_show, wrap)
+                line_list(before, preview.diff_lines(), after, num_lines_to_show, wrap)
                     .map_err(|e| anyhow!("failed to combine lines: {e}"))
             }
         }
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SearchResultListItem<'a> {
     file_path: Line<'a>,
     result: &'a SearchResultWithReplacement,
     is_primary_selected: bool,
 }
 
-struct SearchResultPreview {
-    old_line_diff: StyledLine,
-    new_line_diff: StyledLine,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SearchResultPreview {
+    old_line_diffs: Vec<StyledLine>,
+    new_line_diffs: Vec<StyledLine>,
+}
+
+impl SearchResultPreview {
+    /// Compute how many context lines to request, accounting for diff height.
+    /// Always returns at least 1 to avoid errors in downstream processing.
+    fn context_lines_to_show(&self, num_lines_to_show: u16) -> u16 {
+        let diff_height = self.old_line_diffs.len() + self.new_line_diffs.len();
+        let extra = diff_height.saturating_sub(1);
+        num_lines_to_show
+            .saturating_sub(extra.try_into().unwrap_or(u16::MAX))
+            .max(1)
+    }
+
+    /// Returns all diff lines (old then new) for display
+    fn diff_lines(&self) -> impl Iterator<Item = StyledLine> + '_ {
+        self.old_line_diffs
+            .iter()
+            .cloned()
+            .chain(self.new_line_diffs.iter().cloned())
+    }
+}
+
+/// Get the expected first line content for validation
+fn expected_first_line_content(result: &SearchResultWithReplacement) -> &str {
+    match &result.search_result.content {
+        MatchContent::Line { content, .. } => content.as_str(),
+        MatchContent::ByteRange { lines, .. } => &lines[0].1.content,
+    }
+}
+
+/// Filter `after` context to exclude lines that are part of a multiline match
+fn filter_after_for_multiline<T>(
+    after: Vec<(usize, T)>,
+    result: &SearchResultWithReplacement,
+) -> Vec<(usize, T)> {
+    let end_line_idx = result.search_result.end_line_number() - 1;
+    after
+        .into_iter()
+        .filter(|(idx, _)| *idx > end_line_idx)
+        .collect()
+}
+
+/// Helper to push a styled text segment if non-empty
+fn push_styled_segment(line: &mut StyledLine, text: &str, style: Style) {
+    if !text.is_empty() {
+        line.push(styled_segment(text, style));
+    }
+}
+
+/// Build a styled line with three regions: before, middle (highlighted), after
+fn build_three_region_line(
+    kind: DiffLineKind,
+    content: &str,
+    highlight_start: usize,
+    highlight_end: usize,
+    highlight_style: Style,
+) -> StyledLine {
+    let text_style = kind.style();
+    let mut line = vec![kind.prefix_segment()];
+    push_styled_segment(&mut line, &content[..highlight_start], text_style);
+    push_styled_segment(
+        &mut line,
+        &content[highlight_start..highlight_end],
+        highlight_style,
+    );
+    push_styled_segment(&mut line, &content[highlight_end..], text_style);
+    line
+}
+
+/// Get the slice of `content` that overlaps with a global byte range.
+/// Returns an empty string if the ranges don't overlap.
+///
+/// # Panics
+/// Panics if the computed start or end indices are not valid UTF-8 char boundaries.
+fn slice_in_global_range(
+    content: &str,
+    content_start: usize,
+    range_start: usize,
+    range_end: usize,
+) -> &str {
+    let content_end = content_start + content.len();
+    if content_end <= range_start || content_start >= range_end {
+        return "";
+    }
+    let start = range_start.saturating_sub(content_start);
+    let end = (range_end - content_start).min(content.len());
+
+    assert!(
+        content.is_char_boundary(start),
+        "start {start} is not a UTF-8 char boundary in content of len {}",
+        content.len()
+    );
+    assert!(
+        content.is_char_boundary(end),
+        "end {end} is not a UTF-8 char boundary in content of len {}",
+        content.len()
+    );
+
+    &content[start..end]
+}
+
+/// Build a multiline diff preview for `ByteRange` matches.
+///
+/// # Panics
+/// Panics if lines is empty, or if match boundaries exceed line lengths or are not at UTF-8 boundaries.
+fn build_multiline_diff(
+    lines: &[(usize, search::Line)],
+    match_start_in_first_line: usize,
+    match_end_in_last_line: usize,
+    replacement: &str,
+) -> SearchResultPreview {
+    assert!(!lines.is_empty(), "lines must not be empty");
+
+    let first_line = &lines[0].1;
+    let last_line = &lines.last().unwrap().1;
+
+    assert!(
+        match_start_in_first_line <= first_line.content.len(),
+        "match_start_in_first_line ({match_start_in_first_line}) exceeds first line length ({})",
+        first_line.content.len()
+    );
+    assert!(
+        match_end_in_last_line <= last_line.content.len(),
+        "match_end_in_last_line ({match_end_in_last_line}) exceeds last line length ({})",
+        last_line.content.len()
+    );
+    assert!(
+        first_line
+            .content
+            .is_char_boundary(match_start_in_first_line),
+        "match_start_in_first_line must be at UTF-8 boundary"
+    );
+    assert!(
+        last_line.content.is_char_boundary(match_end_in_last_line),
+        "match_end_in_last_line must be at UTF-8 boundary"
+    );
+
+    let removed = DiffLineKind::Removed;
+    let added = DiffLineKind::Added;
+    let red_bg = Style::new().fg(Color::Black).bg(removed.color());
+    let green_bg = Style::new().fg(Color::Black).bg(added.color());
+
+    // Build OLD lines - style: [prefix] [matched portion] [suffix]
+    let old_line_diffs: Vec<StyledLine> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, (_, line))| {
+            let is_first = i == 0;
+            let is_last = i == lines.len() - 1;
+            let match_start = if is_first {
+                match_start_in_first_line
+            } else {
+                0
+            };
+            let match_end = if is_last {
+                match_end_in_last_line
+            } else {
+                line.content.len()
+            };
+            build_three_region_line(removed, &line.content, match_start, match_end, red_bg)
+        })
+        .collect();
+
+    // Build NEW lines - join prefix + replacement + suffix, split by newlines, style by region
+    let (full_new, prefix_end) = reconstruct_new_content(
+        lines,
+        match_start_in_first_line,
+        match_end_in_last_line,
+        replacement,
+    );
+    let replacement_end = prefix_end + replacement.len();
+
+    let mut new_line_diffs = Vec::new();
+    let mut pos = 0;
+    for line_content in full_new.split('\n') {
+        let mut line = vec![added.prefix_segment()];
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, 0, prefix_end),
+            added.style(),
+        );
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, prefix_end, replacement_end),
+            green_bg,
+        );
+        push_styled_segment(
+            &mut line,
+            slice_in_global_range(line_content, pos, replacement_end, usize::MAX),
+            added.style(),
+        );
+        new_line_diffs.push(line);
+        pos += line_content.len() + 1;
+    }
+
+    SearchResultPreview {
+        old_line_diffs,
+        new_line_diffs,
+    }
+}
+
+/// Reconstructs the full new content after replacement for multiline matches.
+/// Returns `(full_new_content, prefix_len)` where `prefix_len` is the length of unchanged prefix.
+fn reconstruct_new_content(
+    lines: &[(usize, search::Line)],
+    match_start_in_first_line: usize,
+    match_end_in_last_line: usize,
+    replacement: &str,
+) -> (String, usize) {
+    let prefix = &lines[0].1.content[..match_start_in_first_line];
+    let suffix = &lines.last().unwrap().1.content[match_end_in_last_line..];
+    (format!("{prefix}{replacement}{suffix}"), prefix.len())
+}
+
+/// Creates a styled segment with control characters stripped
+fn styled_segment(text: &str, style: Style) -> (Cow<'static, str>, Option<Style>) {
+    (
+        Cow::Owned(strip_control_chars(text).into_owned()),
+        Some(style),
+    )
+}
+
+/// Creates a simple styled line (prefix + content, all same color)
+fn simple_styled_line(kind: DiffLineKind, content: &str) -> StyledLine {
+    let style = kind.style();
+    vec![
+        styled_segment(kind.prefix(), style),
+        styled_segment(content, style),
+    ]
 }
 
 /// Creates a simple diff without character-level granularity - just shows entire lines as red/green
-fn simple_diff(old_line: &str, new_line: &str) -> (Vec<Diff>, Vec<Diff>) {
-    let old_diffs = vec![
-        Diff {
-            text: "- ".to_owned(),
-            fg_colour: DiffColour::Red,
-            bg_colour: None,
-        },
-        Diff {
-            text: old_line.to_owned(),
-            fg_colour: DiffColour::Red,
-            bg_colour: None,
-        },
-    ];
-    let new_diffs = vec![
-        Diff {
-            text: "+ ".to_owned(),
-            fg_colour: DiffColour::Green,
-            bg_colour: None,
-        },
-        Diff {
-            text: new_line.to_owned(),
-            fg_colour: DiffColour::Green,
-            bg_colour: None,
-        },
-    ];
-    (old_diffs, new_diffs)
+fn simple_diff(old: &MatchContent, new_content: &str) -> SearchResultPreview {
+    match old {
+        MatchContent::ByteRange {
+            lines,
+            match_start_in_first_line,
+            match_end_in_last_line,
+            ..
+        } => {
+            let old_line_diffs: Vec<StyledLine> = lines
+                .iter()
+                .map(|(_, line)| simple_styled_line(DiffLineKind::Removed, &line.content))
+                .collect();
+
+            let (full_new_content, _) = reconstruct_new_content(
+                lines,
+                *match_start_in_first_line,
+                *match_end_in_last_line,
+                new_content,
+            );
+
+            let new_line_diffs: Vec<StyledLine> = full_new_content
+                .split('\n')
+                .map(|line| simple_styled_line(DiffLineKind::Added, line))
+                .collect();
+
+            SearchResultPreview {
+                old_line_diffs,
+                new_line_diffs,
+            }
+        }
+        MatchContent::Line { content, .. } => {
+            let new_line_diffs: Vec<StyledLine> = new_content
+                .split('\n')
+                .map(|line| simple_styled_line(DiffLineKind::Added, line))
+                .collect();
+            SearchResultPreview {
+                old_line_diffs: vec![simple_styled_line(DiffLineKind::Removed, content)],
+                new_line_diffs,
+            }
+        }
+    }
 }
 
 fn build_search_result_preview(
     result: &SearchResultWithReplacement,
     event_sender: UnboundedSender<Event>,
 ) -> SearchResultPreview {
-    let old_line = &result.search_result.line;
-    let new_line = &result.replacement;
-    let cache_key = (old_line.clone(), new_line.clone());
+    let old_content = &result.search_result.content;
+    let replacement = &result.replacement;
+    let cache_key = (old_content.clone(), replacement.clone());
 
     // Check cache first
     let mut cache_guard = cache::diff_cache().lock().unwrap();
 
-    if let Some((cached_old, cached_new)) = cache_guard.get(&cache_key) {
-        let preview = SearchResultPreview {
-            old_line_diff: diff_to_line(cached_old.iter()),
-            new_line_diff: diff_to_line(cached_new.iter()),
-        };
+    if let Some(preview) = cache_guard.get(&cache_key) {
+        let preview = preview.clone();
         drop(cache_guard);
         return preview;
     }
@@ -1118,14 +1444,10 @@ fn build_search_result_preview(
     drop(cache_guard);
 
     // Cache miss - spawn background task to compute detailed diff
-    spawn_compute_diff(old_line.clone(), new_line.clone(), event_sender);
+    spawn_compute_diff(old_content.clone(), replacement.clone(), event_sender);
 
     // Return simple diff immediately
-    let (old_diffs, new_diffs) = simple_diff(old_line, new_line);
-    SearchResultPreview {
-        old_line_diff: diff_to_line(old_diffs.iter()),
-        new_line_diff: diff_to_line(new_diffs.iter()),
-    }
+    simple_diff(old_content, replacement)
 }
 
 fn search_result<'a>(
@@ -1190,7 +1512,7 @@ fn file_path_line<'a>(
         Some(path) => relative_path(base_path, path),
         None => "stdin".to_string(),
     };
-    let line_num = format!(":{}", result.search_result.line_number);
+    let line_num = format!(":{}", result.search_result.start_line_number());
     let line_num_len = line_num.chars().count();
     let path_space = (list_area_width as usize)
         .saturating_sub(left_content_len + line_num_len + right_content_len);
@@ -2314,5 +2636,376 @@ mod tests {
             .unwrap();
 
         insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    mod simple_diff_tests {
+        use super::*;
+        use scooter_core::line_reader::LineEnding;
+        use scooter_core::search::Line;
+
+        fn line_match(content: &str) -> MatchContent {
+            MatchContent::Line {
+                line_number: 1,
+                content: content.to_string(),
+                line_ending: LineEnding::Lf,
+            }
+        }
+
+        #[test]
+        fn test_simple_diff_single_line_replacement() {
+            let old = line_match("hello world");
+            let preview = simple_diff(&old, "hello rust");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            assert_eq!(preview.new_line_diffs.len(), 1);
+        }
+
+        #[test]
+        fn test_simple_diff_replacement_with_newline() {
+            let old = line_match("hello world");
+            let preview = simple_diff(&old, "hello\nworld");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            assert_eq!(
+                preview.new_line_diffs.len(),
+                2,
+                "replacement with \\n should produce 2 lines"
+            );
+        }
+
+        #[test]
+        fn test_simple_diff_replacement_with_multiple_newlines() {
+            let old = line_match("hello");
+            let preview = simple_diff(&old, "one\ntwo\nthree");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            assert_eq!(
+                preview.new_line_diffs.len(),
+                3,
+                "replacement with 2 \\n should produce 3 lines"
+            );
+        }
+
+        #[test]
+        fn test_simple_diff_replacement_with_crlf() {
+            let old = line_match("hello");
+            let preview = simple_diff(&old, "one\r\ntwo");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            // \r\n splits on \n and strips \r - 2 clean lines
+            assert_eq!(preview.new_line_diffs.len(), 2);
+        }
+
+        #[test]
+        fn test_simple_diff_replacement_ending_with_newline() {
+            let old = line_match("hello");
+            let preview = simple_diff(&old, "hello\n");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            // "hello\n" splits into ["hello", ""] - 2 lines
+            assert_eq!(preview.new_line_diffs.len(), 2);
+        }
+
+        #[test]
+        fn test_simple_diff_multiline_match() {
+            let old = MatchContent::ByteRange {
+                lines: vec![
+                    (
+                        1,
+                        Line {
+                            content: "first".to_string(),
+                            line_ending: LineEnding::Lf,
+                        },
+                    ),
+                    (
+                        2,
+                        Line {
+                            content: "second".to_string(),
+                            line_ending: LineEnding::Lf,
+                        },
+                    ),
+                ],
+                match_start_in_first_line: 0,
+                match_end_in_last_line: 6,
+                byte_start: 0,
+                byte_end: 12,
+                content: "first\nsecond".to_string(),
+            };
+            let preview = simple_diff(&old, "replaced\ntext");
+
+            assert_eq!(preview.old_line_diffs.len(), 2);
+            assert_eq!(preview.new_line_diffs.len(), 2);
+        }
+
+        #[test]
+        fn test_simple_diff_empty_replacement() {
+            let old = line_match("hello");
+            let preview = simple_diff(&old, "");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            // Empty string still produces one line (just the prefix)
+            assert_eq!(preview.new_line_diffs.len(), 1);
+        }
+
+        #[test]
+        fn test_simple_diff_replacement_only_newlines() {
+            let old = line_match("hello");
+            let preview = simple_diff(&old, "\n\n");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            // "\n\n" splits into ["", "", ""] - 3 lines
+            assert_eq!(preview.new_line_diffs.len(), 3);
+        }
+
+        #[test]
+        fn test_simple_diff_unicode_content() {
+            let old = line_match("héllo 世界");
+            let preview = simple_diff(&old, "hëllo 世間");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            assert_eq!(preview.new_line_diffs.len(), 1);
+        }
+
+        #[test]
+        fn test_simple_diff_unicode_with_newlines() {
+            let old = line_match("日本語");
+            let preview = simple_diff(&old, "日本\n語");
+
+            assert_eq!(preview.old_line_diffs.len(), 1);
+            assert_eq!(preview.new_line_diffs.len(), 2);
+        }
+    }
+
+    mod diffs_to_lines_tests {
+        use super::*;
+        use scooter_core::diff::{Diff, DiffColour};
+
+        fn line_to_text(line: &StyledLine) -> String {
+            line.iter().map(|(text, _)| text.as_ref()).collect()
+        }
+
+        fn lines_to_text(lines: &[StyledLine]) -> Vec<String> {
+            lines.iter().map(line_to_text).collect()
+        }
+
+        #[test]
+        fn test_single_line() {
+            let diffs = vec![Diff {
+                text: "hello".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello"]);
+        }
+
+        #[test]
+        fn test_with_newline() {
+            let diffs = vec![Diff {
+                text: "hello\nworld".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello", "+ world"]);
+        }
+
+        #[test]
+        fn test_multiple_newlines() {
+            let diffs = vec![Diff {
+                text: "one\ntwo\nthree".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ one", "+ two", "+ three"]);
+        }
+
+        #[test]
+        fn test_newline_across_segments() {
+            let diffs = vec![
+                Diff {
+                    text: "hello".to_string(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+                Diff {
+                    text: "\n".to_string(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+                Diff {
+                    text: "world".to_string(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+            ];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello", "+ world"]);
+        }
+
+        #[test]
+        fn test_empty_line_between_content() {
+            let diffs = vec![Diff {
+                text: "a\n\nb".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ a", "+ ", "+ b"]);
+        }
+
+        #[test]
+        fn test_empty_diffs() {
+            let diffs: Vec<Diff> = vec![];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ "]);
+        }
+
+        #[test]
+        fn test_multiple_segments_same_line() {
+            let diffs = vec![
+                Diff {
+                    text: "hello ".to_string(),
+                    fg_colour: DiffColour::Green,
+                    bg_colour: None,
+                },
+                Diff {
+                    text: "world".to_string(),
+                    fg_colour: DiffColour::Black,
+                    bg_colour: Some(DiffColour::Green),
+                },
+            ];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello world"]);
+        }
+
+        #[test]
+        fn test_trailing_newline() {
+            let diffs = vec![Diff {
+                text: "hello\n".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello", "+ "]);
+        }
+
+        #[test]
+        fn test_crlf_stripped() {
+            let diffs = vec![Diff {
+                text: "hello\r\nworld".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            // \r should be stripped, resulting in clean lines
+            assert_eq!(lines_to_text(&lines), vec!["+ hello", "+ world"]);
+        }
+
+        #[test]
+        fn test_crlf_at_end() {
+            let diffs = vec![Diff {
+                text: "hello\r\n".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ hello", "+ "]);
+        }
+
+        #[test]
+        fn test_only_newlines() {
+            let diffs = vec![Diff {
+                text: "\n\n\n".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ ", "+ ", "+ ", "+ "]);
+        }
+
+        #[test]
+        fn test_unicode_multibyte() {
+            let diffs = vec![Diff {
+                text: "héllo\n世界".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(lines_to_text(&lines), vec!["+ héllo", "+ 世界"]);
+        }
+
+        #[test]
+        fn test_removed_line_kind() {
+            let diffs = vec![Diff {
+                text: "hello\nworld".to_string(),
+                fg_colour: DiffColour::Red,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Removed);
+            assert_eq!(lines_to_text(&lines), vec!["- hello", "- world"]);
+        }
+
+        #[test]
+        fn test_mixed_crlf_and_lf() {
+            let diffs = vec![Diff {
+                text: "line1\r\nline2\nline3\r\n".to_string(),
+                fg_colour: DiffColour::Green,
+                bg_colour: None,
+            }];
+
+            let lines = diffs_to_lines(&diffs, DiffLineKind::Added);
+            assert_eq!(
+                lines_to_text(&lines),
+                vec!["+ line1", "+ line2", "+ line3", "+ "]
+            );
+        }
+    }
+
+    mod strip_control_chars_cow_tests {
+        use scooter_core::utils::strip_control_chars;
+        use std::borrow::Cow;
+
+        #[test]
+        fn test_no_control_chars_returns_borrowed() {
+            let result = strip_control_chars("hello world");
+            assert!(matches!(result, Cow::Borrowed(_)));
+            assert_eq!(result, "hello world");
+        }
+
+        #[test]
+        fn test_with_control_chars_returns_owned() {
+            let result = strip_control_chars("hello\tworld");
+            assert!(matches!(result, Cow::Owned(_)));
+            assert_eq!(result, "hello  world");
+        }
+
+        #[test]
+        fn test_empty_string_returns_borrowed() {
+            let result = strip_control_chars("");
+            assert!(matches!(result, Cow::Borrowed(_)));
+            assert_eq!(result, "");
+        }
+
+        #[test]
+        fn test_unicode_no_control_returns_borrowed() {
+            let result = strip_control_chars("héllo 世界");
+            assert!(matches!(result, Cow::Borrowed(_)));
+            assert_eq!(result, "héllo 世界");
+        }
     }
 }

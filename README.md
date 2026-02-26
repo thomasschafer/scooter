@@ -4,6 +4,10 @@ scooter is an interactive find-and-replace terminal UI app. By default it recurs
 
 Search with either a fixed string or a regular expression, enter a replacement, and interactively toggle which instances you want to replace. If the instance you're attempting to replace has changed since the search was performed, e.g. if you've switched branches and that line no longer exists, that particular replacement won't occur: you'll see all such cases at the end.
 
+By default scooter searches line-by-line, but you can enable multiline searching by either launching scooter with the `-U` flag, or by hitting `alt-m` when already running.
+
+By default, escape sequences such as `\n` will be entered literally. If you want them to be interpreted, i.e. for `\n` to enter a newline instead of the characters `\` and `n`, then use `-e` (or `--interpret-escape-sequences`). This applies to `\n`, `\t`, and `\\` in replacement text.
+
 ![scooter preview](media/preview.gif)
 
 You can use custom themes for syntax highlighting (see [here](#syntax_highlighting_theme) for more info):
@@ -303,6 +307,11 @@ If omitted, scooter will attempt to determine whether the terminal being used su
 
 Whether to disable fields set by CLI flags. Set to `false` to allow editing of these pre-populated fields. Defaults to `true`.
 
+#### `interpret_escape_sequences`
+
+Whether to interpret escape sequences in replacement text. When enabled, `\n` becomes a newline,
+`\t` becomes a tab, and `\\` becomes a literal backslash. Defaults to `false`.
+
 <!-- CONFIG END -->
 
 ### `[keys]` section
@@ -319,8 +328,10 @@ show_help_menu = "C-h"  # Show the help menu containing keymaps
 
 # Commands available on the search screen
 [keys.search]
-toggle_preview_wrapping = "C-l"  # Toggle wrapping of lines that don't fit within the width of the preview
-toggle_hidden_files = "C-t"      # Toggle inclusion of hidden files and directories, such as those whose name starts with a dot (.)
+toggle_preview_wrapping = "C-l"            # Toggle wrapping of lines that don't fit within the width of the preview
+toggle_hidden_files = "C-t"                # Toggle inclusion of hidden files and directories, such as those whose name starts with a dot (.)
+toggle_multiline = "A-m"                   # Toggle multiline search mode, which allows patterns to match across line boundaries
+toggle_interpret_escape_sequences = "A-e"  # Toggle interpretation of escape sequences in replacement text (\n becomes newline, \t becomes tab, \\ becomes backslash)
 
 # Commands available on the search screen, when the search fields are focussed
 [keys.search.fields]

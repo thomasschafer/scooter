@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self};
 
+use anyhow::Context;
 use content_inspector::{ContentType, inspect};
 use fancy_regex::Regex as FancyRegex;
 use ignore::overrides::Override;
@@ -15,6 +16,12 @@ use crate::{
     line_reader::{BufReadExt, LineEnding},
     replace::{self, ReplaceResult},
 };
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Line {
+    pub content: String,
+    pub line_ending: LineEnding,
+}
 
 #[derive(Clone, Debug)]
 pub enum Searcher {
@@ -38,14 +45,200 @@ impl Searcher {
     }
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct LinePos {
+    pub line: usize, // 1-indexed
+    pub byte_pos: usize,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum MatchContent {
+    /// Line-mode: Replace all occurrences of pattern on the line
+    /// Used for non-multiline search where we replace ALL matches on a single line
+    Line {
+        line_number: usize,
+        content: String,
+        line_ending: LineEnding,
+    },
+    /// Byte-mode: Replace only the specific byte range
+    /// Used for multiline search where we track individual matches precisely
+    ByteRange {
+        lines: Vec<(usize, Line)>, // Line numbers (1-indexed) and line contents
+        match_start_in_first_line: usize, // Byte offset where match starts in first line
+        match_end_in_last_line: usize, // Byte offset where match ends in last line (exclusive)
+        byte_start: usize,         // Absolute byte position in file
+        byte_end: usize,           // Absolute byte position in file (exclusive)
+        content: String,           // The matched bytes
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatchMode {
+    Line,
+    ByteRange,
+}
+
+impl MatchContent {
+    /// Returns the matched text without line ending
+    pub fn matched_text(&self) -> &str {
+        match self {
+            MatchContent::Line { content, .. } | MatchContent::ByteRange { content, .. } => content,
+        }
+    }
+
+    pub fn mode(&self) -> MatchMode {
+        match self {
+            MatchContent::Line { .. } => MatchMode::Line,
+            MatchContent::ByteRange { .. } => MatchMode::ByteRange,
+        }
+    }
+}
+
+/// Asserts all results use the same `MatchContent` variant and returns the mode.
+/// Returns `None` if results is empty.
+pub fn match_mode_of_results(results: &[SearchResultWithReplacement]) -> Option<MatchMode> {
+    let first = results.first()?;
+    let mode = first.search_result.content.mode();
+    assert!(
+        results
+            .iter()
+            .all(|r| r.search_result.content.mode() == mode),
+        "Inconsistent MatchContent variants detected in results"
+    );
+    Some(mode)
+}
+
+/// Parameters for constructing a `SearchResult` with byte-range content.
+#[derive(Clone, Debug)]
+pub struct ByteRangeParams {
+    pub path: Option<PathBuf>,
+    pub lines: Vec<(usize, Line)>,
+    pub match_start_in_first_line: usize,
+    pub match_end_in_last_line: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub content: String,
+    pub included: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
     pub path: Option<PathBuf>,
-    /// 1-indexed
-    pub line_number: usize,
-    pub line: String,
-    pub line_ending: LineEnding,
+    pub content: MatchContent,
+    /// Whether to replace the given match
     pub included: bool,
+}
+
+impl SearchResult {
+    /// Creates a `SearchResult` with line-mode content (single line)
+    pub fn new_line(
+        path: Option<PathBuf>,
+        line_number: usize,
+        content: String,
+        line_ending: LineEnding,
+        included: bool,
+    ) -> Self {
+        Self {
+            path,
+            content: MatchContent::Line {
+                line_number,
+                content,
+                line_ending,
+            },
+            included,
+        }
+    }
+
+    /// Creates a `SearchResult` with byte-range content
+    pub fn new_byte_range(params: ByteRangeParams) -> Self {
+        let ByteRangeParams {
+            path,
+            lines,
+            match_start_in_first_line,
+            match_end_in_last_line,
+            byte_start,
+            byte_end,
+            content,
+            included,
+        } = params;
+        assert!(!lines.is_empty(), "ByteRange must have at least one line");
+        assert!(
+            match_start_in_first_line <= lines[0].1.content.len(),
+            "match_start_in_first_line ({}) exceeds first line length ({})",
+            match_start_in_first_line,
+            lines[0].1.content.len()
+        );
+        assert!(
+            match_end_in_last_line <= lines.last().unwrap().1.content.len(),
+            "match_end_in_last_line ({}) exceeds last line length ({})",
+            match_end_in_last_line,
+            lines.last().unwrap().1.content.len()
+        );
+        assert!(
+            byte_start <= byte_end,
+            "byte_start ({byte_start}) must be <= byte_end ({byte_end})",
+        );
+
+        for i in 1..lines.len() {
+            assert!(
+                lines[i].0 == lines[i - 1].0 + 1,
+                "Line numbers must be sequential: {} followed by {}",
+                lines[i - 1].0,
+                lines[i].0
+            );
+        }
+
+        Self {
+            path,
+            content: MatchContent::ByteRange {
+                lines,
+                match_start_in_first_line,
+                match_end_in_last_line,
+                byte_start,
+                byte_end,
+                content,
+            },
+            included,
+        }
+    }
+
+    /// Returns the full content string for this match (including line ending for Lines mode)
+    pub fn content_string(&self) -> String {
+        match &self.content {
+            MatchContent::Line {
+                content,
+                line_ending,
+                ..
+            } => format!("{}{}", content, line_ending.as_str()),
+            MatchContent::ByteRange { content, .. } => content.clone(),
+        }
+    }
+
+    /// Returns start line number
+    pub fn start_line_number(&self) -> usize {
+        match &self.content {
+            MatchContent::Line { line_number, .. } => *line_number,
+            MatchContent::ByteRange { lines, .. } => {
+                lines
+                    .first()
+                    .expect("ByteRange must have at least one line")
+                    .0
+            }
+        }
+    }
+
+    /// Returns end line number
+    pub fn end_line_number(&self) -> usize {
+        match &self.content {
+            MatchContent::Line { line_number, .. } => *line_number,
+            MatchContent::ByteRange { lines, .. } => {
+                lines
+                    .last()
+                    .expect("ByteRange must have at least one line")
+                    .0
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +246,7 @@ pub struct SearchResultWithReplacement {
     pub search_result: SearchResult,
     pub replacement: String,
     pub replace_result: Option<ReplaceResult>,
+    pub preview_error: Option<String>,
 }
 
 impl SearchResultWithReplacement {
@@ -72,7 +266,7 @@ impl SearchResultWithReplacement {
                 .clone()
                 .unwrap_or_default()
                 .display(),
-            self.search_result.line_number
+            self.search_result.start_line_number()
         );
 
         (path_display, error)
@@ -95,6 +289,12 @@ impl SearchType {
         };
         str.is_empty()
     }
+
+    /// Returns true when full-haystack context is required to validate matches/replacements
+    /// (e.g. advanced regex lookarounds that depend on surrounding text).
+    pub fn needs_haystack_context(&self) -> bool {
+        matches!(self, SearchType::PatternAdvanced(_))
+    }
 }
 
 /// A function that processes search results for a file and determines whether to continue searching.
@@ -107,6 +307,10 @@ impl FileSearcher {
 
     pub fn replace(&self) -> &String {
         &self.search_config.replace
+    }
+
+    pub fn multiline(&self) -> bool {
+        self.search_config.multiline
     }
 }
 
@@ -125,6 +329,8 @@ pub struct ParsedSearchConfig {
     pub search: SearchType,
     /// The text to replace matches with
     pub replace: String,
+    /// Whether to search and replace across multiple lines
+    pub multiline: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -192,6 +398,7 @@ impl FileSearcher {
     /// let search_config = ParsedSearchConfig {
     ///     search: SearchType::Pattern(Regex::new("pattern").unwrap()),
     ///     replace: "replacement".to_string(),
+    ///     multiline: false,
     /// };
     /// let dir_config = ParsedDirConfig {
     ///     overrides: Override::empty(),
@@ -235,7 +442,11 @@ impl FileSearcher {
                 };
 
                 if is_searchable(&entry) {
-                    let results = match search_file(entry.path(), &self.search_config.search) {
+                    let results = match search_file(
+                        entry.path(),
+                        &self.search_config.search,
+                        self.search_config.multiline,
+                    ) {
                         Ok(r) => r,
                         Err(e) => {
                             log::warn!(
@@ -288,8 +499,12 @@ impl FileSearcher {
                 };
 
                 if is_searchable(&entry) {
-                    match replace::replace_all_in_file(entry.path(), self.search(), self.replace())
-                    {
+                    match replace::replace_all_in_file(
+                        entry.path(),
+                        self.search(),
+                        self.replace(),
+                        self.multiline(),
+                    ) {
                         Ok(replaced_in_file) => {
                             if replaced_in_file {
                                 counter.fetch_add(1, Ordering::Relaxed);
@@ -330,15 +545,19 @@ fn is_searchable(entry: &ignore::DirEntry) -> bool {
     entry.file_type().is_some_and(|ft| ft.is_file()) && !is_likely_binary(entry.path())
 }
 
-pub fn contains_search(line: &str, search: &SearchType) -> bool {
-    match search {
-        SearchType::Fixed(fixed_str) => line.contains(fixed_str),
-        SearchType::Pattern(pattern) => pattern.is_match(line),
-        SearchType::PatternAdvanced(pattern) => pattern.is_match(line).is_ok_and(|r| r),
+pub fn contains_search(haystack: &str, needle: &SearchType) -> bool {
+    match needle {
+        SearchType::Fixed(fixed_str) => haystack.contains(fixed_str),
+        SearchType::Pattern(pattern) => pattern.is_match(haystack),
+        SearchType::PatternAdvanced(pattern) => pattern.is_match(haystack).is_ok_and(|r| r),
     }
 }
 
-pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<SearchResult>> {
+pub fn search_file(
+    path: &Path,
+    search: &SearchType,
+    multiline: bool,
+) -> anyhow::Result<Vec<SearchResult>> {
     if search.is_empty() {
         return Ok(vec![]);
     }
@@ -352,6 +571,17 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
     }
     file.seek(SeekFrom::Start(0))?;
 
+    if multiline {
+        let content = std::fs::read_to_string(path).with_context(|| {
+            format!(
+                "Failed to read file as UTF-8 for multiline search: {}",
+                path.display()
+            )
+        })?;
+        return Ok(search_multiline(&content, search, Some(path)));
+    }
+
+    // Line-by-line search for non-multiline mode
     let reader = BufReader::with_capacity(16384, file);
     let mut results = Vec::new();
 
@@ -378,16 +608,16 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
             }
         };
 
-        if let Ok(line) = String::from_utf8(line_bytes)
-            && contains_search(&line, search)
+        if let Ok(line_content) = String::from_utf8(line_bytes)
+            && contains_search(&line_content, search)
         {
-            let result = SearchResult {
-                path: Some(path.to_path_buf()),
+            let result = SearchResult::new_line(
+                Some(path.to_path_buf()),
                 line_number,
-                line,
+                line_content,
                 line_ending,
-                included: true,
-            };
+                true,
+            );
             results.push(result);
         }
     }
@@ -395,9 +625,223 @@ pub fn search_file(path: &Path, search: &SearchType) -> anyhow::Result<Vec<Searc
     Ok(results)
 }
 
+/// Search content for multiline patterns and return `SearchResults`
+pub(crate) fn search_multiline(
+    content: &str,
+    search: &SearchType,
+    path: Option<&Path>,
+) -> Vec<SearchResult> {
+    // Pre-compute newline positions for efficient line number lookups
+    let line_index = LineIndex::new(content);
+
+    let matches: Box<dyn Iterator<Item = (usize, usize)>> = match search {
+        SearchType::Fixed(pattern) => Box::new(
+            content
+                .match_indices(pattern.as_str())
+                .map(|(byte_offset, _)| (byte_offset, byte_offset + pattern.len())),
+        ),
+        SearchType::Pattern(regex) => {
+            Box::new(regex.find_iter(content).map(|mat| (mat.start(), mat.end())))
+        }
+        SearchType::PatternAdvanced(regex) => Box::new(
+            regex
+                .find_iter(content)
+                .flatten()
+                .map(|mat| (mat.start(), mat.end())),
+        ),
+    };
+
+    matches
+        .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
+        .collect()
+}
+
+/// Helper struct to efficiently convert byte offsets to line numbers and extract lines
+pub(crate) struct LineIndex<'a> {
+    content: &'a str,
+    /// Byte positions of newline characters
+    newline_positions: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(content: &'a str) -> Self {
+        let newline_positions: Vec<usize> = content
+            .char_indices()
+            .filter_map(|(i, c)| if c == '\n' { Some(i) } else { None })
+            .collect();
+        Self {
+            content,
+            newline_positions,
+        }
+    }
+
+    /// Get line number (1-indexed) for a byte offset
+    pub(crate) fn line_number_at(&self, byte_offset: usize) -> usize {
+        // Binary search to find how many newlines come before this offset
+        // Both Ok and Err return the same value: the number of newlines before/at this position + 1.
+        // If `byte_offset` lands on a '\n', we treat it as part of the line it terminates.
+        match self.newline_positions.binary_search(&byte_offset) {
+            Ok(idx) | Err(idx) => idx + 1,
+        }
+    }
+
+    /// Get the byte offset where a line starts (`line_num` is 1-indexed)
+    pub(crate) fn line_start_byte(&self, line_num: usize) -> usize {
+        assert!(line_num >= 1, "Line numbers are 1-indexed");
+        if line_num == 1 {
+            0
+        } else {
+            // Line N starts after the (N-1)th newline
+            self.newline_positions[line_num - 2] + 1
+        }
+    }
+
+    /// Get the byte offset where a line ends (exclusive of line ending).
+    /// For `CrLf` lines this excludes the `\r`, matching `BufReadExt::lines_with_endings` behaviour.
+    fn line_end_byte(&self, line_num: usize) -> usize {
+        assert!(line_num >= 1, "Line numbers are 1-indexed");
+        // The end of line N is at the N-1 index in newline_positions (0-indexed)
+        if line_num <= self.newline_positions.len() {
+            let newline_pos = self.newline_positions[line_num - 1];
+            if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
+                newline_pos - 1
+            } else {
+                newline_pos
+            }
+        } else {
+            // Last line without trailing newline
+            self.content.len()
+        }
+    }
+
+    /// Returns the total number of lines in the content
+    fn total_lines(&self) -> usize {
+        // Number of newlines + 1, unless the file is empty
+        if self.content.is_empty() {
+            0
+        } else {
+            self.newline_positions.len() + 1
+        }
+    }
+
+    /// Extract full lines from `start_line` to `end_line` (both 1-indexed, inclusive)
+    pub(crate) fn extract_lines(&self, start_line: usize, end_line: usize) -> Vec<(usize, Line)> {
+        assert!(start_line >= 1, "Line numbers are 1-indexed");
+        assert!(start_line <= end_line, "start_line must be <= end_line");
+
+        (start_line..=end_line)
+            .map(|line_num| {
+                let start = self.line_start_byte(line_num);
+                let end = self.line_end_byte(line_num);
+                let content = self.content[start..end].to_string();
+
+                // Determine line ending
+                let line_ending = if line_num <= self.newline_positions.len() {
+                    let newline_pos = self.newline_positions[line_num - 1];
+                    if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
+                        LineEnding::CrLf
+                    } else {
+                        LineEnding::Lf
+                    }
+                } else {
+                    LineEnding::None
+                };
+
+                (
+                    line_num,
+                    Line {
+                        content,
+                        line_ending,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+/// Create a `SearchResult` from byte offsets in the content.
+/// `end_byte` is exclusive (standard Rust range semantics).
+fn create_search_result_from_bytes(
+    start_byte: usize,
+    end_byte: usize,
+    path: Option<&Path>,
+    line_index: &LineIndex<'_>,
+) -> SearchResult {
+    debug_assert!(
+        start_byte <= end_byte,
+        "Invalid byte range: start_byte={start_byte}, end_byte={end_byte}"
+    );
+
+    let start_line_num = line_index.line_number_at(start_byte);
+    // end_byte is exclusive; for zero-length matches, keep start_line_num
+    let mut end_line_num = if start_byte == end_byte {
+        start_line_num
+    } else {
+        line_index.line_number_at(end_byte.saturating_sub(1))
+    };
+
+    // Compute byte offsets within each line (for preview highlighting)
+    let match_start_in_first_line = start_byte - line_index.line_start_byte(start_line_num);
+
+    let last_line_start = line_index.line_start_byte(end_line_num);
+    let last_line_end = line_index.line_end_byte(end_line_num);
+    let last_line_content_len = last_line_end - last_line_start;
+
+    // Check if match extends into the line ending (newline)
+    // If so, and there's a next line, include it so the preview shows the merge
+    let match_end_in_last_line = if end_byte > last_line_start + last_line_content_len {
+        // Match extends past line content into line ending
+        let has_next_line = end_line_num < line_index.total_lines();
+        if has_next_line {
+            // Include next line with match_end = 0 (match doesn't extend into its content)
+            end_line_num += 1;
+            0
+        } else {
+            last_line_content_len
+        }
+    } else {
+        end_byte - last_line_start
+    };
+
+    // Extract full lines containing the match
+    let lines = line_index.extract_lines(start_line_num, end_line_num);
+
+    // Extract the matched content
+    let expected_content = line_index.content[start_byte..end_byte].to_string();
+
+    SearchResult::new_byte_range(ByteRangeParams {
+        path: path.map(Path::to_path_buf),
+        lines,
+        match_start_in_first_line,
+        match_end_in_last_line,
+        byte_start: start_byte,
+        byte_end: end_byte,
+        content: expected_content,
+        included: true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn byte_range_content(result: &SearchResult) -> &str {
+        match &result.content {
+            MatchContent::ByteRange { content, .. } => content,
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
+
+    fn byte_range_bytes(result: &SearchResult) -> (usize, usize) {
+        match &result.content {
+            MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                ..
+            } => (*byte_start, *byte_end),
+            MatchContent::Line { .. } => panic!("Expected ByteRange"),
+        }
+    }
 
     mod test_helpers {
         use super::*;
@@ -408,15 +852,16 @@ mod tests {
             replace_result: Option<ReplaceResult>,
         ) -> SearchResultWithReplacement {
             SearchResultWithReplacement {
-                search_result: SearchResult {
-                    path: Some(PathBuf::from(path)),
+                search_result: SearchResult::new_line(
+                    Some(PathBuf::from(path)),
                     line_number,
-                    line: "test line".to_string(),
-                    line_ending: LineEnding::Lf,
-                    included: true,
-                },
+                    "test line".to_string(),
+                    LineEnding::Lf,
+                    true,
+                ),
                 replacement: "replacement".to_string(),
                 replace_result,
+                preview_error: None,
             }
         }
 
@@ -441,7 +886,7 @@ mod tests {
             let text = "ASCII text with 世界 (CJK), Здравствуйте (Cyrillic), 안녕하세요 (Hangul), αβγδ (Greek), עִבְרִית (Hebrew)";
             let search = SearchType::Fixed("世界".to_string());
 
-            let result = replace::replacement_if_match(text, &search, "World");
+            let result = replace::replace_all_if_match(text, &search, "World");
 
             assert_eq!(
                 result,
@@ -454,7 +899,7 @@ mod tests {
             let text = "café";
             let search = SearchType::Fixed("é".to_string());
             assert_eq!(
-                replace::replacement_if_match(text, &search, "e"),
+                replace::replace_all_if_match(text, &search, "e"),
                 Some("cafe".to_string())
             );
         }
@@ -465,13 +910,13 @@ mod tests {
 
             let search = SearchType::Pattern(Regex::new(r"\p{Cyrillic}").unwrap());
             assert_eq!(
-                replace::replacement_if_match(text, &search, "X"),
+                replace::replace_all_if_match(text, &search, "X"),
                 Some("Latin A, Cyrillic X, Greek Γ, Hebrew א".to_string())
             );
 
             let search = SearchType::Pattern(Regex::new(r"\p{Greek}").unwrap());
             assert_eq!(
-                replace::replacement_if_match(text, &search, "X"),
+                replace::replace_all_if_match(text, &search, "X"),
                 Some("Latin A, Cyrillic Б, Greek X, Hebrew א".to_string())
             );
         }
@@ -483,7 +928,7 @@ mod tests {
             let search =
                 SearchType::Pattern(Regex::new(r"Name: (\p{Han}+) \(ID: ([A-Z0-9]+)\)").unwrap());
             assert_eq!(
-                replace::replacement_if_match(text, &search, "ID $2 belongs to $1"),
+                replace::replace_all_if_match(text, &search, "ID $2 belongs to $1"),
                 Some("ID A12345 belongs to 李明".to_string())
             );
         }
@@ -495,7 +940,7 @@ mod tests {
         #[test]
         fn test_simple_match_subword() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::Fixed("bar".to_string()),
                     "REPL"
@@ -503,7 +948,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"bar").unwrap()),
                     "REPL"
@@ -511,7 +956,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"bar").unwrap()),
                     "REPL"
@@ -523,7 +968,7 @@ mod tests {
         #[test]
         fn test_no_match() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::Fixed("xyz".to_string()),
                     "REPL"
@@ -531,7 +976,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::Pattern(Regex::new(r"xyz").unwrap()),
                     "REPL"
@@ -539,7 +984,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foobarbaz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"xyz").unwrap()),
                     "REPL"
@@ -551,7 +996,7 @@ mod tests {
         #[test]
         fn test_word_boundaries() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foo bar baz",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -559,7 +1004,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "embargo",
                     &SearchType::Pattern(Regex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -567,7 +1012,7 @@ mod tests {
                 None
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foo bar baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -575,7 +1020,7 @@ mod tests {
                 Some("foo REPL baz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "embargo",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\bbar\b").unwrap()),
                     "REPL"
@@ -587,7 +1032,7 @@ mod tests {
         #[test]
         fn test_capture_groups() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "John Doe",
                     &SearchType::Pattern(Regex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -595,7 +1040,7 @@ mod tests {
                 Some("Doe, John".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "John Doe",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(\w+)\s+(\w+)").unwrap()),
                     "$2, $1"
@@ -607,7 +1052,7 @@ mod tests {
         #[test]
         fn test_lookaround() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "123abc456",
                     &SearchType::PatternAdvanced(
                         FancyRegex::new(r"(?<=\d{3})abc(?=\d{3})").unwrap()
@@ -621,7 +1066,7 @@ mod tests {
         #[test]
         fn test_quantifiers() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "aaa123456bbb",
                     &SearchType::Pattern(Regex::new(r"\d+").unwrap()),
                     "REPL"
@@ -629,7 +1074,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "abc123def456",
                     &SearchType::Pattern(Regex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -637,7 +1082,7 @@ mod tests {
                 Some("abcREPLdefREPL".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "aaa123456bbb",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d+").unwrap()),
                     "REPL"
@@ -645,7 +1090,7 @@ mod tests {
                 Some("aaaREPLbbb".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "abc123def456",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\d{3}").unwrap()),
                     "REPL"
@@ -657,7 +1102,7 @@ mod tests {
         #[test]
         fn test_special_characters() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foo.bar*baz",
                     &SearchType::Fixed(".bar*".to_string()),
                     "REPL"
@@ -665,7 +1110,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foo.bar*baz",
                     &SearchType::Pattern(Regex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -673,7 +1118,7 @@ mod tests {
                 Some("fooREPLbaz".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "foo.bar*baz",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"\.bar\*").unwrap()),
                     "REPL"
@@ -685,7 +1130,7 @@ mod tests {
         #[test]
         fn test_unicode() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "Hello 世界!",
                     &SearchType::Fixed("世界".to_string()),
                     "REPL"
@@ -693,7 +1138,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "Hello 世界!",
                     &SearchType::Pattern(Regex::new(r"世界").unwrap()),
                     "REPL"
@@ -701,7 +1146,7 @@ mod tests {
                 Some("Hello REPL!".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "Hello 世界!",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"世界").unwrap()),
                     "REPL"
@@ -713,7 +1158,7 @@ mod tests {
         #[test]
         fn test_case_insensitive() {
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "HELLO world",
                     &SearchType::Pattern(Regex::new(r"(?i)hello").unwrap()),
                     "REPL"
@@ -721,7 +1166,7 @@ mod tests {
                 Some("REPL world".to_string())
             );
             assert_eq!(
-                replace::replacement_if_match(
+                replace::replace_all_if_match(
                     "HELLO world",
                     &SearchType::PatternAdvanced(FancyRegex::new(r"(?i)hello").unwrap()),
                     "REPL"
@@ -902,5 +1347,341 @@ mod tests {
             assert!(is_likely_binary(Path::new(".hidden.png")));
             assert!(!is_likely_binary(Path::new(".hidden.txt")));
         }
+    }
+
+    mod multiline_tests {
+        use super::*;
+
+        #[test]
+        fn test_line_index_single_line() {
+            let content = "single line";
+            let index = LineIndex::new(content);
+            assert_eq!(index.line_number_at(0), 1);
+            assert_eq!(index.line_number_at(6), 1);
+            assert_eq!(index.line_number_at(11), 1);
+        }
+
+        #[test]
+        fn test_line_index_multiple_lines() {
+            let content = "line 1\nline 2\nline 3";
+            let index = LineIndex::new(content);
+
+            // Line 1 (bytes 0-5)
+            assert_eq!(index.line_number_at(0), 1);
+            assert_eq!(index.line_number_at(5), 1);
+
+            // Newline at byte 6
+            assert_eq!(index.line_number_at(6), 1);
+
+            // Line 2 (bytes 7-12)
+            assert_eq!(index.line_number_at(7), 2);
+            assert_eq!(index.line_number_at(12), 2);
+
+            // Newline at byte 13
+            assert_eq!(index.line_number_at(13), 2);
+
+            // Line 3 (bytes 14-19)
+            assert_eq!(index.line_number_at(14), 3);
+            assert_eq!(index.line_number_at(19), 3);
+        }
+
+        #[test]
+        fn test_line_index_empty_lines() {
+            let content = "line 1\n\nline 3";
+            let index = LineIndex::new(content);
+
+            assert_eq!(index.line_number_at(0), 1); // "l" in line 1
+            assert_eq!(index.line_number_at(6), 1); // first newline
+            assert_eq!(index.line_number_at(7), 2); // second newline (empty line)
+            assert_eq!(index.line_number_at(8), 3); // "l" in line 3
+        }
+
+        #[test]
+        fn test_search_multiline_fixed_string() {
+            let content = "foo\nbar\nbaz";
+            let search = SearchType::Fixed("foo\nb".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(results[0].path, None);
+            assert_eq!(byte_range_content(&results[0]), "foo\nb");
+        }
+
+        #[test]
+        fn test_search_multiline_regex_pattern() {
+            let content = "start\nmiddle\nend\nother";
+            let search = SearchType::Pattern(regex::Regex::new(r"start.*\nmiddle").unwrap());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_content(&results[0]), "start\nmiddle");
+        }
+
+        #[test]
+        fn test_search_multiline_multiple_matches() {
+            let content = "foo\nbar\n\nfoo\nbar\nbaz";
+            let search = SearchType::Fixed("foo\nb".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(results[1].start_line_number(), 4);
+            assert_eq!(results[1].end_line_number(), 5);
+        }
+
+        #[test]
+        fn test_search_multiline_no_matches() {
+            let content = "foo\nbar\nbaz";
+            let search = SearchType::Fixed("not_found".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_search_multiline_with_path() {
+            let content = "test\ndata";
+            let path = Path::new("/test/file.txt");
+            let search = SearchType::Fixed("test".to_string());
+            let results = search_multiline(content, &search, Some(path));
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].path, Some(PathBuf::from("/test/file.txt")));
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_crlf() {
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(byte_range_content(&results[0]), "foo\r\n");
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_lf() {
+            let content = "foo\nbar";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
+        }
+
+        #[test]
+        fn test_search_multiline_line_endings_none() {
+            let content = "foobar";
+            let search = SearchType::Fixed("foo".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            // Only "foo" is matched, not the full line
+            assert_eq!(byte_range_content(&results[0]), "foo");
+        }
+
+        #[test]
+        fn test_search_multiline_spanning_three_lines() {
+            let content = "line1\nline2\nline3\nline4";
+            let search = SearchType::Fixed("ne1\nline2\nli".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 3);
+            assert_eq!(results[0].path, None);
+            assert_eq!(results[0].included, true);
+            assert_eq!(byte_range_content(&results[0]), "ne1\nline2\nli");
+        }
+
+        #[test]
+        fn test_search_multiline_pattern_at_end() {
+            let content = "start\npattern\nend";
+            let search = SearchType::Fixed("pattern\nend".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 2);
+            assert_eq!(results[0].end_line_number(), 3);
+        }
+
+        #[test]
+        fn test_search_multiline_zero_length_match_start() {
+            let content = "foo\nbar";
+            let search = SearchType::Pattern(regex::Regex::new(r"^").unwrap());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 0));
+            assert_eq!(byte_range_content(&results[0]), "");
+        }
+
+        #[test]
+        fn test_create_search_result_single_line_match() {
+            let content = "line1\nline2\nline3";
+            let line_index = LineIndex::new(content);
+
+            let result = create_search_result_from_bytes(6, 11, None, &line_index);
+
+            assert_eq!(result.start_line_number(), 2);
+            assert_eq!(result.end_line_number(), 2);
+            assert_eq!(byte_range_content(&result), "line2");
+            assert_eq!(byte_range_bytes(&result), (6, 11));
+        }
+
+        #[test]
+        fn test_create_search_result_multiline_match() {
+            let content = "line1\nline2\nline3";
+            let line_index = LineIndex::new(content);
+
+            let result = create_search_result_from_bytes(0, 11, None, &line_index);
+
+            assert_eq!(result.start_line_number(), 1);
+            assert_eq!(result.end_line_number(), 2);
+            assert_eq!(byte_range_content(&result), "line1\nline2");
+            assert_eq!(byte_range_bytes(&result), (0, 11));
+        }
+
+        #[test]
+        fn test_crlf_match_ending_at_cr() {
+            // Match "foo\r" in "foo\r\nbar" — match includes the \r which is past line content
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends into line ending → next line included
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\r");
+        }
+
+        #[test]
+        fn test_crlf_match_spanning_crlf_boundary() {
+            // Match "foo\r\nbar" spanning both lines
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\nbar".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 8));
+            assert_eq!(byte_range_content(&results[0]), "foo\r\nbar");
+        }
+
+        #[test]
+        fn test_crlf_match_ending_at_lf() {
+            // Match "foo\r\n" in CRLF content — ends at byte 5, past line content
+            let content = "foo\r\nbar";
+            let search = SearchType::Fixed("foo\r\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends past line content → include next line with match_end=0
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 5));
+            assert_eq!(byte_range_content(&results[0]), "foo\r\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf() {
+            // Match "foo\n" in LF content — ends at byte 4, past line content
+            let content = "foo\nbar";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Match extends past line content → include next line with match_end=0
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf_no_next_line() {
+            // Match "foo\n" — trailing newline means there's technically an empty line 2,
+            // so the "extends into line ending" logic includes it with match_end=0.
+            // To truly test "no next line", use content without trailing newline.
+            let content = "foo\n";
+            let search = SearchType::Fixed("foo\n".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            // Line 2 exists (empty, after trailing \n), so it gets included
+            assert_eq!(results[0].end_line_number(), 2);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 4));
+            assert_eq!(byte_range_content(&results[0]), "foo\n");
+        }
+
+        #[test]
+        fn test_lf_match_ending_at_lf_truly_no_next_line() {
+            // "foo" with no trailing newline — match the whole thing
+            // This tests the fallback to last_line_content_len when there's no next line
+            let content = "foo";
+            let search = SearchType::Fixed("foo".to_string());
+            let results = search_multiline(content, &search, None);
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+            assert_eq!(results[0].end_line_number(), 1);
+            assert_eq!(byte_range_bytes(&results[0]), (0, 3));
+            assert_eq!(byte_range_content(&results[0]), "foo");
+        }
+    }
+
+    #[test]
+    fn test_multiple_matches_per_line() {
+        // "foo\nbar baz bar qux\nbar\nbux\n"
+        //  0123 456789012345678 901234567
+        //       ^     ^         ^
+        //       4-7   12-15     20-23  (exclusive end)
+        let content = "foo\nbar baz bar qux\nbar\nbux\n";
+        let search = SearchType::Fixed("bar".to_string());
+
+        let results = search_multiline(content, &search, None);
+
+        // Should find 3 matches: 2 on line 2, 1 on line 3
+        assert_eq!(results.len(), 3);
+
+        // First match: "bar" at bytes 4-7 on line 2
+        assert_eq!(results[0].start_line_number(), 2);
+        assert_eq!(results[0].end_line_number(), 2);
+        assert_eq!(byte_range_bytes(&results[0]), (4, 7));
+
+        // Second match: "bar" at bytes 12-15 on line 2 (same line!)
+        assert_eq!(results[1].start_line_number(), 2);
+        assert_eq!(results[1].end_line_number(), 2);
+        assert_eq!(byte_range_bytes(&results[1]), (12, 15));
+
+        // Third match: "bar" at bytes 20-23 on line 3
+        assert_eq!(results[2].start_line_number(), 3);
+        assert_eq!(results[2].end_line_number(), 3);
+        assert_eq!(byte_range_bytes(&results[2]), (20, 23));
+    }
+
+    #[test]
+    fn test_extract_lines_crlf_content_should_not_include_cr() {
+        let content = "hello\r\nworld\r\n";
+        let index = LineIndex::new(content);
+        let lines = index.extract_lines(1, 2);
+
+        assert_eq!(lines.len(), 2);
+
+        // Content must NOT include \r — line_ending encodes it separately
+        assert_eq!(lines[0].1.content, "hello");
+        assert_eq!(lines[0].1.line_ending, LineEnding::CrLf);
+
+        assert_eq!(lines[1].1.content, "world");
+        assert_eq!(lines[1].1.line_ending, LineEnding::CrLf);
     }
 }

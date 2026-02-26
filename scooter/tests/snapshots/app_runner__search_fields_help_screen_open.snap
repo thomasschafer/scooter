@@ -10,21 +10,21 @@ expression: snapshot
     │                                                                                        │     
     └────────────────────────────────────────────────────────────────────────────────────────┘     
     ┌───┐                                                                                          
-    │   │ Fixed strings                                                                            
-    └──┌───────────────────────────────────────Help────────────────────────────────────────┐       
-    ┌──│  <enter>  jump to results                                                         │       
-    │  │    <tab>  focus next                                                              │       
-    └──│  <S-tab>  focus previous                                                          │       
-    ┌──│  <space>  toggle checkbox                                                         │       
-    │ X│    <A-u>  unlock pre-populated fields                                             │       
-    └──│    <C-l>  toggle text wrapping in preview                                         │       
-    ┌Fi│    <C-t>  toggle hidden files                                                     │─┐     
-    │  │    <C-r>  reset                                                                   │ │     
-    └──│    <C-h>  help                                                                    │─┘     
-    ┌Fi│    <esc>  close popup                                                             │─┐     
-    │  │    <C-c>  quit                                                                    │ │     
-    └──└───────────────────────────────────────────────────────────────────────────────────┘─┘     
-                                                                                                   
+    │  ┌───────────────────────────────────────Help────────────────────────────────────────┐       
+    └──│  <enter>  jump to results                                                         │       
+    ┌──│    <tab>  focus next                                                              │       
+    │  │  <S-tab>  focus previous                                                          │       
+    └──│  <space>  toggle checkbox                                                         │       
+    ┌──│    <A-u>  unlock pre-populated fields                                             │       
+    │ X│    <C-l>  toggle text wrapping in preview                                         │       
+    └──│    <C-t>  toggle hidden files                                                     │       
+    ┌Fi│    <A-m>  toggle multiline                                                        │─┐     
+    │  │    <A-e>  toggle escape sequences                                                 │ │     
+    └──│    <C-r>  reset                                                                   │─┘     
+    ┌Fi│    <C-h>  help                                                                    │─┐     
+    │  │    <esc>  close popup                                                             │ │     
+    └──│    <C-c>  quit                                                                    │─┘     
+       └───────────────────────────────────────────────────────────────────────────────────┘       
                                                                                                    
                                                                                                    
                                                                                                    

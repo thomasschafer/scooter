@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.102"
-scooter-core = { version = "0.3.1", path = "../scooter-core", features = [
+scooter-core = { version = "0.3.2", path = "../scooter-core", features = [
   "term",
 ] }
 clap = { version = "4.5.58", features = ["derive"] }

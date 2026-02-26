@@ -1,5 +1,6 @@
 ---
 source: scooter-core/tests/app.rs
+assertion_line: 333
 expression: app.keymaps_all()
 ---
 [
@@ -70,6 +71,14 @@ expression: app.keymaps_all()
     (
         "<C-t>",
         "toggle hidden files",
+    ),
+    (
+        "<A-m>",
+        "toggle multiline",
+    ),
+    (
+        "<A-e>",
+        "toggle escape sequences",
     ),
     (
         "<C-r>",

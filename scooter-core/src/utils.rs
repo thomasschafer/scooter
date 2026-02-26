@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::File,
     io::{self, BufReader},
     num::NonZeroUsize,
@@ -190,15 +191,33 @@ pub fn split_indexed_lines<T>(
     Ok((filtered_lines, current, after))
 }
 
-pub fn strip_control_chars(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\t' => String::from("  "),
-            '\n' => String::from(" "),
-            c if c.is_control() => String::from("�"),
-            c => String::from(c),
-        })
-        .collect()
+/// Returns true if a character needs to be replaced or removed for display purposes.
+fn needs_replacement(c: char) -> bool {
+    c == '\t' || c == '\n' || c == '\r' || c.is_control()
+}
+
+/// Strips or replaces control characters in text for display purposes.
+/// Returns a `Cow` to avoid allocation when no replacements are needed.
+/// - Tabs are replaced with two spaces
+/// - Newlines are replaced with a space
+/// - Carriage returns are stripped entirely
+/// - Other control characters are replaced with the replacement character (�)
+pub fn strip_control_chars(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(needs_replacement) {
+        return Cow::Borrowed(text);
+    }
+
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => result.push_str("  "),
+            '\n' => result.push(' '),
+            '\r' => {} // Strip carriage returns entirely
+            c if c.is_control() => result.push('�'),
+            c => result.push(c),
+        }
+    }
+    Cow::Owned(result)
 }
 
 pub fn ceil_div<T>(a: T, b: T) -> T
@@ -844,6 +863,14 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_carriage_returns() {
+        // Carriage returns should be stripped entirely
+        assert_eq!(strip_control_chars("hello\rworld"), "helloworld");
+        assert_eq!(strip_control_chars("hello\r\nworld"), "hello world");
+        assert_eq!(strip_control_chars("\r\r\r"), "");
+    }
+
+    #[test]
     fn test_ceil_div() {
         assert_eq!(ceil_div(1, 1), 1);
         assert_eq!(ceil_div(2, 1), 2);
@@ -1311,6 +1338,7 @@ mod tests {
         assert_eq!(last_n_chars(s, 9), "👋 World 🌍");
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_typescript_syntax_available() {
         let syntax_set = two_face::syntax::extra_no_newlines();
