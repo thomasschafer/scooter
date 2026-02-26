@@ -101,12 +101,21 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
                     return;
                 }
 
-                if let Some(config) = &validation_search_config {
-                    validate_search_result_correctness(
+                if let Some(config) = &validation_search_config
+                    && let Err(e) = validate_search_result_correctness(
                         config,
                         &results,
                         file_content_provider.as_ref(),
-                    );
+                    )
+                {
+                    for res in &mut results {
+                        res.replace_result =
+                            Some(ReplaceResult::Error(format!("Validation failed: {e}")));
+                    }
+                    for result in results {
+                        on_completion(result);
+                    }
+                    return;
                 }
                 if let Err(file_err) = replace_in_file(&mut results) {
                     for res in &mut results {
@@ -132,22 +141,22 @@ fn validate_search_result_correctness(
     validation_search_config: &FileSearcher,
     results: &[SearchResultWithReplacement],
     file_content_provider: &dyn FileContentProvider,
-) {
+) -> anyhow::Result<()> {
     let Some(res) = results.first() else {
-        return;
+        return Ok(());
     };
     let expected_path = res
         .search_result
         .path
         .as_ref()
-        .expect("Expected file path for validation");
+        .ok_or_else(|| anyhow::anyhow!("Expected file path for validation"))?;
 
-    assert!(
-        results
-            .iter()
-            .all(|r| r.search_result.path.as_ref() == Some(expected_path)),
-        "Validation expects all results to share the same path"
-    );
+    if !results
+        .iter()
+        .all(|r| r.search_result.path.as_ref() == Some(expected_path))
+    {
+        anyhow::bail!("Validation expects all results to share the same path");
+    }
 
     // For advanced regex lookarounds, the replacement must be computed with full-file context.
     // Without the surrounding text, lookbehind/lookahead checks fail.
@@ -162,7 +171,7 @@ fn validate_search_result_correctness(
         Some(read_validation_haystack(
             expected_path,
             file_content_provider,
-        ))
+        )?)
     } else {
         None
     };
@@ -187,7 +196,7 @@ fn validate_search_result_correctness(
                         *byte_start,
                         *byte_end,
                     )
-                    .expect("Expected match at byte range for validation")
+                    .ok_or_else(|| anyhow::anyhow!("Expected match at byte range for validation"))?
                 } else {
                     replacement_for_match(
                         res.search_result.content.matched_text(),
@@ -199,21 +208,21 @@ fn validate_search_result_correctness(
             }
         };
         let actual = &res.replacement;
-        assert_eq!(
-            expected.as_ref(),
-            Some(actual),
+        anyhow::ensure!(
+            expected.as_ref() == Some(actual),
             "Expected replacement does not match actual"
         );
     }
+    Ok(())
 }
 
 fn read_validation_haystack(
     path: &Path,
     file_content_provider: &dyn FileContentProvider,
-) -> Arc<String> {
+) -> anyhow::Result<Arc<String>> {
     file_content_provider
         .read_to_string(path)
-        .expect("Failed to read file for replacement validation")
+        .map_err(|e| anyhow::anyhow!("Failed to read file for replacement validation: {e}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1017,11 +1026,11 @@ mod tests {
     }
 
     mod validate_search_result_correctness_tests {
-        use super::*;
+        use super::super::validate_search_result_correctness;
         use crate::file_content::FileContentProvider;
         use crate::line_reader::LineEnding;
         use crate::search::{
-            FileSearcher, Line, ParsedDirConfig, ParsedSearchConfig, SearchResult,
+            ByteRangeParams, FileSearcher, Line, ParsedDirConfig, ParsedSearchConfig, SearchResult,
             SearchResultWithReplacement, SearchType,
         };
         use fancy_regex::Regex as FancyRegex;
@@ -1069,16 +1078,16 @@ mod tests {
                 content: matched.to_string(),
                 line_ending: LineEnding::Lf,
             };
-            let search_result = SearchResult::new_byte_range(
-                Some(path.to_path_buf()),
-                vec![(2, line)],
-                0,
-                matched.len(),
+            let search_result = SearchResult::new_byte_range(ByteRangeParams {
+                path: Some(path.to_path_buf()),
+                lines: vec![(2, line)],
+                match_start_in_first_line: 0,
+                match_end_in_last_line: matched.len(),
                 byte_start,
                 byte_end,
-                matched.to_string(),
-                true,
-            );
+                content: matched.to_string(),
+                included: true,
+            });
             SearchResultWithReplacement {
                 search_result,
                 replacement: replacement.to_string(),
@@ -1087,7 +1096,8 @@ mod tests {
         }
 
         #[test]
-        fn test_validate_search_result_correctness_advanced_regex_uses_haystack() {
+        fn test_validate_search_result_correctness_advanced_regex_uses_haystack()
+        -> anyhow::Result<()> {
             let haystack = "start\nmiddle\nend\n";
             let search = SearchType::PatternAdvanced(
                 FancyRegex::new(r"(?<=start\n)middle(?=\nend)").unwrap(),
@@ -1103,12 +1113,12 @@ mod tests {
                 fail: false,
             };
 
-            validate_search_result_correctness(&searcher, &[result], &provider);
+            validate_search_result_correctness(&searcher, &[result], &provider)?;
+            Ok(())
         }
 
         #[test]
-        #[should_panic(expected = "Failed to read file for replacement validation")]
-        fn test_validate_search_result_correctness_panics_on_read_failure() {
+        fn test_validate_search_result_correctness_returns_error_on_read_failure() {
             let haystack = "start\nmiddle\nend\n";
             let search = SearchType::PatternAdvanced(
                 FancyRegex::new(r"(?<=start\n)middle(?=\nend)").unwrap(),
@@ -1124,12 +1134,17 @@ mod tests {
                 fail: true,
             };
 
-            validate_search_result_correctness(&searcher, &[result], &provider);
+            let err = validate_search_result_correctness(&searcher, &[result], &provider);
+            assert!(err.is_err());
+            assert!(
+                err.unwrap_err()
+                    .to_string()
+                    .contains("Failed to read file for replacement validation")
+            );
         }
 
         #[test]
-        #[should_panic(expected = "Expected match at byte range for validation")]
-        fn test_validate_search_result_correctness_panics_on_missing_match() {
+        fn test_validate_search_result_correctness_returns_error_on_missing_match() {
             let haystack = "start\nmiddle\nend\n";
             let search = SearchType::PatternAdvanced(
                 FancyRegex::new(r"(?<=start\n)middle(?=\nend)").unwrap(),
@@ -1145,7 +1160,13 @@ mod tests {
                 fail: false,
             };
 
-            validate_search_result_correctness(&searcher, &[result], &provider);
+            let err = validate_search_result_correctness(&searcher, &[result], &provider);
+            assert!(err.is_err());
+            assert!(
+                err.unwrap_err()
+                    .to_string()
+                    .contains("Expected match at byte range for validation")
+            );
         }
     }
 
@@ -3804,7 +3825,7 @@ mod tests {
 
     mod multiline_replace_tests {
         use super::*;
-        use crate::search::{Line, search_multiline};
+        use crate::search::{ByteRangeParams, Line, search_multiline};
 
         /// Helper to create a single-line `ByteRange` result for testing.
         /// `line_content` is the full line content (without newline).
@@ -3823,22 +3844,22 @@ mod tests {
             let byte_end = byte_start + expected_content.len();
 
             SearchResultWithReplacement {
-                search_result: SearchResult::new_byte_range(
-                    Some(path.to_path_buf()),
-                    vec![(
+                search_result: SearchResult::new_byte_range(ByteRangeParams {
+                    path: Some(path.to_path_buf()),
+                    lines: vec![(
                         line_number,
                         Line {
                             content: line_content.to_string(),
                             line_ending: LineEnding::Lf,
                         },
                     )],
-                    match_start,
-                    match_end,
+                    match_start_in_first_line: match_start,
+                    match_end_in_last_line: match_end,
                     byte_start,
                     byte_end,
-                    expected_content,
-                    true,
-                ),
+                    content: expected_content,
+                    included: true,
+                }),
                 replacement: replacement.to_string(),
                 replace_result: None,
             }
@@ -3915,16 +3936,16 @@ mod tests {
             };
 
             SearchResultWithReplacement {
-                search_result: SearchResult::new_byte_range(
-                    Some(PathBuf::from(path)),
+                search_result: SearchResult::new_byte_range(ByteRangeParams {
+                    path: Some(PathBuf::from(path)),
                     lines,
                     match_start_in_first_line,
                     match_end_in_last_line,
                     byte_start,
                     byte_end,
-                    content.to_string(),
-                    true,
-                ),
+                    content: content.to_string(),
+                    included: true,
+                }),
                 replacement: replacement.to_string(),
                 replace_result: None,
             }
@@ -4772,7 +4793,7 @@ mod tests {
 
     mod mark_conflicting_replacements_tests {
         use super::{super::mark_conflicting_replacements, *};
-        use crate::search::Line;
+        use crate::search::{ByteRangeParams, Line};
 
         /// Create a `ByteRange` result for conflict detection testing.
         /// Since `mark_conflicting_replacements` only handles `ByteRange`, this always creates `ByteRange`.
@@ -4797,16 +4818,16 @@ mod tests {
                 .collect();
             let last_line_content_len = lines.last().map_or(0, |(_, l)| l.content.len());
             SearchResultWithReplacement {
-                search_result: SearchResult::new_byte_range(
-                    Some(PathBuf::from("test.txt")),
+                search_result: SearchResult::new_byte_range(ByteRangeParams {
+                    path: Some(PathBuf::from("test.txt")),
                     lines,
-                    0,                     // match_start_in_first_line
-                    last_line_content_len, // match_end_in_last_line (entire last line)
+                    match_start_in_first_line: 0,
+                    match_end_in_last_line: last_line_content_len,
                     byte_start,
                     byte_end,
                     content,
-                    true,
-                ),
+                    included: true,
+                }),
                 replacement: "REPLACED".to_string(),
                 replace_result: None,
             }
@@ -5019,7 +5040,7 @@ mod tests {
 
     mod byte_mode_replace_tests {
         use super::*;
-        use crate::search::Line;
+        use crate::search::{ByteRangeParams, Line};
 
         fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
             let path = dir.path().join(name);
@@ -5054,16 +5075,16 @@ mod tests {
                 .collect();
             let last_line_content_len = lines.last().map_or(0, |(_, l)| l.content.len());
             SearchResultWithReplacement {
-                search_result: SearchResult::new_byte_range(
-                    Some(PathBuf::from(path)),
+                search_result: SearchResult::new_byte_range(ByteRangeParams {
+                    path: Some(PathBuf::from(path)),
                     lines,
-                    0,                     // match_start_in_first_line
-                    last_line_content_len, // match_end_in_last_line (entire last line)
+                    match_start_in_first_line: 0,
+                    match_end_in_last_line: last_line_content_len,
                     byte_start,
                     byte_end,
-                    content.to_string(),
-                    true,
-                ),
+                    content: content.to_string(),
+                    included: true,
+                }),
                 replacement: replacement.to_string(),
                 replace_result: None,
             }
@@ -5139,22 +5160,22 @@ mod tests {
             let file_path = create_test_file(&temp_dir, "test.txt", "hello world");
 
             let mut results = vec![SearchResultWithReplacement {
-                search_result: SearchResult::new_byte_range(
-                    Some(file_path.clone()),
-                    vec![(
+                search_result: SearchResult::new_byte_range(ByteRangeParams {
+                    path: Some(file_path.clone()),
+                    lines: vec![(
                         1,
                         Line {
                             content: "hello world".to_string(),
                             line_ending: LineEnding::Lf,
                         },
                     )],
-                    5, // match_start_in_first_line
-                    5, // match_end_in_last_line
-                    5, // byte_start
-                    5, // byte_end (zero-length match)
-                    "".to_string(),
-                    true,
-                ),
+                    match_start_in_first_line: 5,
+                    match_end_in_last_line: 5,
+                    byte_start: 5,
+                    byte_end: 5, // zero-length match
+                    content: "".to_string(),
+                    included: true,
+                }),
                 replacement: "X".to_string(),
                 replace_result: None,
             }];

@@ -108,6 +108,19 @@ pub fn match_mode_of_results(results: &[SearchResultWithReplacement]) -> Option<
     Some(mode)
 }
 
+/// Parameters for constructing a `SearchResult` with byte-range content.
+#[derive(Clone, Debug)]
+pub struct ByteRangeParams {
+    pub path: Option<PathBuf>,
+    pub lines: Vec<(usize, Line)>,
+    pub match_start_in_first_line: usize,
+    pub match_end_in_last_line: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+    pub content: String,
+    pub included: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchResult {
     pub path: Option<PathBuf>,
@@ -137,17 +150,17 @@ impl SearchResult {
     }
 
     /// Creates a `SearchResult` with byte-range content
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_byte_range(
-        path: Option<PathBuf>,
-        lines: Vec<(usize, Line)>,
-        match_start_in_first_line: usize,
-        match_end_in_last_line: usize,
-        byte_start: usize,
-        byte_end: usize,
-        content: String,
-        included: bool,
-    ) -> Self {
+    pub fn new_byte_range(params: ByteRangeParams) -> Self {
+        let ByteRangeParams {
+            path,
+            lines,
+            match_start_in_first_line,
+            match_end_in_last_line,
+            byte_start,
+            byte_end,
+            content,
+            included,
+        } = params;
         assert!(!lines.is_empty(), "ByteRange must have at least one line");
         assert!(
             match_start_in_first_line <= lines[0].1.content.len(),
@@ -795,16 +808,16 @@ fn create_search_result_from_bytes(
     // Extract the matched content
     let expected_content = line_index.content[start_byte..end_byte].to_string();
 
-    SearchResult::new_byte_range(
-        path.map(Path::to_path_buf),
+    SearchResult::new_byte_range(ByteRangeParams {
+        path: path.map(Path::to_path_buf),
         lines,
         match_start_in_first_line,
         match_end_in_last_line,
-        start_byte,
-        end_byte,
-        expected_content,
-        true,
-    )
+        byte_start: start_byte,
+        byte_end: end_byte,
+        content: expected_content,
+        included: true,
+    })
 }
 
 #[cfg(test)]
