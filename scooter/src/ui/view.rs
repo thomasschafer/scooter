@@ -12,7 +12,7 @@ use scooter_core::{
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
-    replace::{PerformingReplacementState, ReplaceResult, ReplaceState},
+    replace::{PerformingReplacementState, ReplaceState},
     search,
     utils::{
         self, HighlightedLine, last_n_chars, read_lines_range_highlighted, relative_path,
@@ -360,7 +360,7 @@ fn render_search_results(
             .expect("Selected item should be in view");
         let lines_to_show = preview_area.height;
 
-        if let Some(ReplaceResult::Error(error)) = &selected.result.replace_result {
+        if let Some(error) = &selected.result.preview_error {
             frame.render_widget(
                 Paragraph::new(format!("Error generating preview: {error}")).fg(Color::Red),
                 preview_area,

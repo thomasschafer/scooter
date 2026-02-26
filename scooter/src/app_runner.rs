@@ -629,6 +629,14 @@ fn write_stdin_line_mode(
     state: &mut ExitAndReplaceState,
     writer: &mut impl Write,
 ) -> anyhow::Result<(usize, usize)> {
+    debug_assert!(
+        state
+            .replace_results
+            .iter()
+            .all(|r| r.preview_error.is_none()),
+        "stdin mode should never have preview errors"
+    );
+
     let mut num_successes = 0;
     let mut num_ignored = 0;
 
@@ -684,6 +692,14 @@ fn write_stdin_byte_mode(
     state: &mut ExitAndReplaceState,
     writer: &mut impl Write,
 ) -> anyhow::Result<(usize, usize)> {
+    debug_assert!(
+        state
+            .replace_results
+            .iter()
+            .all(|r| r.preview_error.is_none()),
+        "stdin mode should never have preview errors"
+    );
+
     let mut num_successes = 0;
     let mut num_ignored = 0;
 
@@ -771,6 +787,7 @@ mod tests {
             ),
             replacement: "replacement".to_string(),
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+            preview_error: None,
         };
 
         let result = format_replacement_results(3, Some(1), Some(&[error_result]));

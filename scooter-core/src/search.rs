@@ -246,6 +246,7 @@ pub struct SearchResultWithReplacement {
     pub search_result: SearchResult,
     pub replacement: String,
     pub replace_result: Option<ReplaceResult>,
+    pub preview_error: Option<String>,
 }
 
 impl SearchResultWithReplacement {
@@ -860,6 +861,7 @@ mod tests {
                 ),
                 replacement: "replacement".to_string(),
                 replace_result,
+                preview_error: None,
             }
         }
 

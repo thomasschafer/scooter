@@ -31,7 +31,7 @@ use crate::{
     file_content::{FileContentProvider, default_file_content_provider},
     keyboard::{KeyCode, KeyEvent, KeyModifiers},
     line_reader::{BufReadExt, LineEnding},
-    replace::{self, PerformingReplacementState, ReplaceResult, ReplaceState},
+    replace::{self, PerformingReplacementState, ReplaceState},
     replace::{replace_all_if_match, replacement_for_match, replacement_for_match_in_haystack},
     search::Searcher,
     search::{
@@ -586,7 +586,7 @@ enum ReplacementCacheKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum ReplacementOutcome {
+enum PreviewOutcome {
     Replacement(String),
     NoMatch,
     Error(String),
@@ -594,36 +594,38 @@ enum ReplacementOutcome {
 
 fn result_with_outcome(
     search_result: SearchResult,
-    outcome: ReplacementOutcome,
+    outcome: PreviewOutcome,
 ) -> Option<SearchResultWithReplacement> {
     match outcome {
-        ReplacementOutcome::Replacement(replacement) => Some(SearchResultWithReplacement {
+        PreviewOutcome::Replacement(replacement) => Some(SearchResultWithReplacement {
             search_result,
             replacement,
             replace_result: None,
+            preview_error: None,
         }),
-        ReplacementOutcome::Error(error) => Some(SearchResultWithReplacement {
+        PreviewOutcome::Error(error) => Some(SearchResultWithReplacement {
             search_result,
             replacement: String::new(),
-            replace_result: Some(ReplaceResult::Error(error)),
+            replace_result: None,
+            preview_error: Some(error),
         }),
-        ReplacementOutcome::NoMatch => None,
+        PreviewOutcome::NoMatch => None,
     }
 }
 
-fn apply_outcome(result: &mut SearchResultWithReplacement, outcome: ReplacementOutcome) -> bool {
+fn apply_outcome(result: &mut SearchResultWithReplacement, outcome: PreviewOutcome) -> bool {
     match outcome {
-        ReplacementOutcome::Replacement(replacement) => {
+        PreviewOutcome::Replacement(replacement) => {
             result.replacement = replacement;
-            result.replace_result = None;
+            result.preview_error = None;
             true
         }
-        ReplacementOutcome::Error(error) => {
+        PreviewOutcome::Error(error) => {
             result.replacement.clear();
-            result.replace_result = Some(ReplaceResult::Error(error));
+            result.preview_error = Some(error);
             true
         }
-        ReplacementOutcome::NoMatch => false,
+        PreviewOutcome::NoMatch => false,
     }
 }
 
@@ -653,11 +655,11 @@ impl<'a> ReplacementContext<'a> {
         }
     }
 
-    fn replacement_for_search_result(&mut self, res: &SearchResult) -> ReplacementOutcome {
+    fn replacement_for_search_result(&mut self, res: &SearchResult) -> PreviewOutcome {
         match &res.content {
             MatchContent::Line { content, .. } => {
                 replace_all_if_match(content, self.searcher.search(), self.searcher.replace())
-                    .map_or(ReplacementOutcome::NoMatch, ReplacementOutcome::Replacement)
+                    .map_or(PreviewOutcome::NoMatch, PreviewOutcome::Replacement)
             }
             MatchContent::ByteRange {
                 content,
@@ -675,14 +677,14 @@ impl<'a> ReplacementContext<'a> {
                 }
 
                 if contains_search(content, self.searcher.search()) {
-                    return ReplacementOutcome::Replacement(replacement_for_match(
+                    return PreviewOutcome::Replacement(replacement_for_match(
                         content,
                         self.searcher.search(),
                         self.searcher.replace(),
                     ));
                 }
 
-                ReplacementOutcome::NoMatch
+                PreviewOutcome::NoMatch
             }
         }
     }
@@ -693,10 +695,10 @@ impl<'a> ReplacementContext<'a> {
         content: &str,
         byte_start: usize,
         byte_end: usize,
-    ) -> ReplacementOutcome {
+    ) -> PreviewOutcome {
         let haystack = match self.haystack_for_result(res) {
             Ok(haystack) => haystack,
-            Err(error) => return ReplacementOutcome::Error(error),
+            Err(error) => return PreviewOutcome::Error(error),
         };
 
         if haystack.get(byte_start..byte_end) != Some(content) {
@@ -705,13 +707,13 @@ impl<'a> ReplacementContext<'a> {
             } else {
                 "Input changed since search".to_string()
             };
-            return ReplacementOutcome::Error(message);
+            return PreviewOutcome::Error(message);
         }
 
         if let Some(map) = self.replacement_map_for_result(res, haystack.as_str())
             && let Some(replacement) = map.get(&(byte_start, byte_end))
         {
-            return ReplacementOutcome::Replacement(replacement.clone());
+            return PreviewOutcome::Replacement(replacement.clone());
         }
 
         // NOTE: advanced regex lookarounds require the full haystack. If we run the
@@ -725,10 +727,10 @@ impl<'a> ReplacementContext<'a> {
             byte_start,
             byte_end,
         ) {
-            return ReplacementOutcome::Replacement(replacement);
+            return PreviewOutcome::Replacement(replacement);
         }
 
-        ReplacementOutcome::NoMatch
+        PreviewOutcome::NoMatch
     }
 
     fn replacement_map_for_result(
@@ -1281,27 +1283,6 @@ impl<'a> App {
                 long: "Try again when complete".to_string(),
             });
             return false;
-        } else if let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(state),
-            ..
-        }) = &self.ui_state.current_screen
-        {
-            if let Some(error) = state.results.iter().find_map(|result| {
-                if result.search_result.included {
-                    match &result.replace_result {
-                        Some(ReplaceResult::Error(error)) => Some(error.clone()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }) {
-                self.add_error(AppError {
-                    name: "Replacement preview error".to_string(),
-                    long: error,
-                });
-                return false;
-            }
         } else if !self
             .background_processing_reciever()
             .is_some_and(|r| r.is_empty())
@@ -2328,7 +2309,7 @@ mod tests {
 
         assert!(matches!(
             context.replacement_for_search_result(&result),
-            ReplacementOutcome::NoMatch
+            PreviewOutcome::NoMatch
         ));
     }
 
@@ -2349,6 +2330,7 @@ mod tests {
             ),
             replacement: "bar".to_owned(),
             replace_result: None,
+            preview_error: None,
         }
     }
 
@@ -2364,6 +2346,7 @@ mod tests {
                 ),
                 replacement: format!("replacement {i}").to_string(),
                 replace_result: None,
+                preview_error: None,
             })
             .collect()
     }
@@ -2471,6 +2454,7 @@ mod tests {
             ),
             replacement: "bar".to_owned(),
             replace_result: Some(ReplaceResult::Success),
+            preview_error: None,
         }
     }
 
@@ -2486,6 +2470,7 @@ mod tests {
             ),
             replacement: "bar".to_owned(),
             replace_result: None,
+            preview_error: None,
         }
     }
 
@@ -2501,6 +2486,7 @@ mod tests {
             ),
             replacement: "bar".to_owned(),
             replace_result: Some(ReplaceResult::Error("error".to_owned())),
+            preview_error: None,
         }
     }
 
@@ -2509,7 +2495,7 @@ mod tests {
         let search_results_with_replacements =
             vec![success_result(), success_result(), success_result()];
 
-        let (results, _num_ignored) =
+        let (results, _preview_errored, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
         let stats = crate::replace::calculate_statistics(results);
 
@@ -2533,7 +2519,7 @@ mod tests {
             ignored_result(),
         ];
 
-        let (results, _num_ignored) =
+        let (results, _preview_errored, _num_ignored) =
             crate::replace::split_results(search_results_with_replacements);
         let stats = crate::replace::calculate_statistics(results);
 

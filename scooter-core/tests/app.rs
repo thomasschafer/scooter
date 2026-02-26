@@ -41,6 +41,7 @@ async fn test_replace_state() {
                 ),
                 replacement: format!("error replacement {n}"),
                 replace_result: Some(ReplaceResult::Error(format!("Test error {n}"))),
+                preview_error: None,
             })
             .collect::<Vec<_>>(),
         replacement_errors_pos: 0,
@@ -405,6 +406,7 @@ async fn test_keymaps_results() {
             ),
             replacement: "replacement".to_string(),
             replace_result: Some(ReplaceResult::Error("Test error".to_string())),
+            preview_error: None,
         }],
         replacement_errors_pos: 0,
     };

@@ -52,12 +52,19 @@ fn create_temp_file_in_with_permissions(
 
 pub fn split_results(
     results: Vec<SearchResultWithReplacement>,
-) -> (Vec<SearchResultWithReplacement>, usize) {
+) -> (
+    Vec<SearchResultWithReplacement>,
+    Vec<SearchResultWithReplacement>,
+    usize,
+) {
     let (included, excluded): (Vec<_>, Vec<_>) = results
         .into_iter()
         .partition(|res| res.search_result.included);
     let num_ignored = excluded.len();
-    (included, num_ignored)
+    let (replaceable, preview_errored): (Vec<_>, Vec<_>) = included
+        .into_iter()
+        .partition(|res| res.preview_error.is_none());
+    (replaceable, preview_errored, num_ignored)
 }
 
 fn group_results(
@@ -81,9 +88,19 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
     file_content_provider: Arc<dyn FileContentProvider>,
     on_completion: T,
 ) -> usize {
-    let (included, num_ignored) = split_results(search_results);
+    let (included, preview_errored, num_ignored) = split_results(search_results);
 
     thread::spawn(move || {
+        for mut result in preview_errored {
+            let error = result
+                .preview_error
+                .take()
+                .expect("preview_errored results must have preview_error set");
+            result.replace_result = Some(ReplaceResult::Error(error));
+            replacements_completed.fetch_add(1, Ordering::Relaxed);
+            on_completion(result);
+        }
+
         let path_groups = group_results(included);
 
         let num_threads = thread::available_parallelism()
@@ -411,6 +428,10 @@ fn replace_line_mode(
     file_path: &Path,
     results: &mut [SearchResultWithReplacement],
 ) -> anyhow::Result<()> {
+    debug_assert!(
+        results.iter().all(|r| r.preview_error.is_none()),
+        "preview-errored results should not reach replace_line_mode"
+    );
     let mut line_map: HashMap<usize, &mut SearchResultWithReplacement> = results
         .iter_mut()
         .map(|res| (res.search_result.start_line_number(), res))
@@ -462,6 +483,11 @@ fn replace_byte_mode(
     results: &mut [SearchResultWithReplacement],
 ) -> anyhow::Result<()> {
     use std::io::Read;
+
+    debug_assert!(
+        results.iter().all(|r| r.preview_error.is_none()),
+        "preview-errored results should not reach replace_byte_mode"
+    );
 
     mark_conflicting_replacements(results);
 
@@ -610,6 +636,7 @@ pub fn add_replacement_with_haystack(
         search_result,
         replacement,
         replace_result: None,
+        preview_error: None,
     })
 }
 
@@ -822,6 +849,10 @@ where
         assert!(
             res.search_result.included,
             "Expected only included results, found {res:?}"
+        );
+        debug_assert!(
+            res.preview_error.is_none(),
+            "preview_error should have been moved to replace_result before reaching calculate_statistics: {res:?}"
         );
         match &res.replace_result {
             Some(ReplaceResult::Success) => {
@@ -1190,6 +1221,7 @@ mod tests {
             ),
             replacement: replacement.to_string(),
             replace_result,
+            preview_error: None,
         }
     }
 
@@ -1225,8 +1257,9 @@ mod tests {
 
         let search_results = vec![result1.clone(), result2.clone(), result3.clone()];
 
-        let (included, num_ignored) = replace::split_results(search_results);
+        let (included, preview_errored, num_ignored) = replace::split_results(search_results);
         assert_eq!(num_ignored, 0);
+        assert!(preview_errored.is_empty());
         assert_eq!(included, vec![result1, result2, result3]);
     }
 
@@ -1271,10 +1304,53 @@ mod tests {
 
         let search_results = vec![result1.clone(), result2, result3.clone(), result4];
 
-        let (included, num_ignored) = replace::split_results(search_results);
+        let (included, preview_errored, num_ignored) = replace::split_results(search_results);
         assert_eq!(num_ignored, 2);
+        assert!(preview_errored.is_empty());
         assert_eq!(included, vec![result1, result3]);
         assert!(included.iter().all(|r| r.search_result.included));
+    }
+
+    #[test]
+    fn test_split_results_separates_preview_errors() {
+        let mut normal = create_search_result_with_replacement(
+            "file1.txt",
+            1,
+            "line1",
+            LineEnding::Lf,
+            "repl1",
+            true,
+            None,
+        );
+        normal.preview_error = None;
+
+        let mut errored = create_search_result_with_replacement(
+            "file2.txt",
+            2,
+            "line2",
+            LineEnding::Lf,
+            "",
+            true,
+            None,
+        );
+        errored.preview_error = Some("file unreadable".to_string());
+
+        let excluded = create_search_result_with_replacement(
+            "file3.txt",
+            3,
+            "line3",
+            LineEnding::Lf,
+            "repl3",
+            false,
+            None,
+        );
+
+        let search_results = vec![normal.clone(), errored.clone(), excluded];
+
+        let (included, preview_errored, num_ignored) = replace::split_results(search_results);
+        assert_eq!(num_ignored, 1);
+        assert_eq!(included, vec![normal]);
+        assert_eq!(preview_errored, vec![errored]);
     }
 
     #[test]
@@ -1534,6 +1610,42 @@ mod tests {
             Some(ReplaceResult::Error(
                 "Failed to find search result in file".to_owned()
             ))
+        );
+    }
+
+    #[test]
+    fn test_calculate_statistics_with_preview_error_converted() {
+        let mut preview_errored = create_search_result_with_replacement(
+            "file1.txt",
+            1,
+            "line1",
+            LineEnding::Lf,
+            "",
+            true,
+            None,
+        );
+        preview_errored.preview_error = Some("file unreadable".to_string());
+
+        // Simulate what spawn_replace_included does: move preview_error into replace_result
+        let error = preview_errored.preview_error.take().unwrap();
+        preview_errored.replace_result = Some(ReplaceResult::Error(error));
+
+        let success = create_search_result_with_replacement(
+            "file2.txt",
+            2,
+            "line2",
+            LineEnding::Lf,
+            "repl2",
+            true,
+            Some(ReplaceResult::Success),
+        );
+
+        let stats = crate::replace::calculate_statistics(vec![preview_errored, success]);
+        assert_eq!(stats.num_successes, 1);
+        assert_eq!(stats.errors.len(), 1);
+        assert_eq!(
+            stats.errors[0].replace_result,
+            Some(ReplaceResult::Error("file unreadable".to_string()))
         );
     }
 
