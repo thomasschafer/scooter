@@ -3068,8 +3068,7 @@ mod tests {
 
                 let last_len = lines
                     .last()
-                    .map(|(_, line)| line.content.len())
-                    .unwrap_or(0);
+                    .map_or(0, |(_, line)| line.content.len());
 
                 let result = SearchResultWithReplacement {
                     search_result: SearchResult {
@@ -3140,8 +3139,7 @@ mod tests {
 
                 let last_len = lines
                     .last()
-                    .map(|(_, line)| line.content.len())
-                    .unwrap_or(0);
+                    .map_or(0, |(_, line)| line.content.len());
 
                 let result = SearchResultWithReplacement {
                     search_result: SearchResult {
@@ -3238,10 +3236,7 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                let last_len = lines
-                    .last()
-                    .map(|(_, line)| line.content.len())
-                    .unwrap_or(0);
+                let last_len = lines.last().map_or(0, |(_, line)| line.content.len());
 
                 let result_a = SearchResultWithReplacement {
                     search_result: SearchResult {
@@ -3385,8 +3380,7 @@ mod tests {
                 let elapsed = start.elapsed();
                 assert!(
                     elapsed < Duration::from_millis(80),
-                    "Heavy diff task blocked current-thread runtime for {:?} (expected < 80ms)",
-                    elapsed,
+                    "Heavy diff task blocked current-thread runtime for {elapsed:?} (expected < 80ms)",
                 );
             });
         }
