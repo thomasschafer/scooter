@@ -565,36 +565,118 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
     });
 }
 
-fn spawn_compute_diff(old: MatchContent, new: String, event_sender: UnboundedSender<Event>) {
+fn compute_detailed_diff(old: &MatchContent, new: &str) -> SearchResultPreview {
+    match old {
+        MatchContent::ByteRange {
+            lines,
+            match_start_in_first_line,
+            match_end_in_last_line,
+            ..
+        } => build_multiline_diff(
+            lines,
+            *match_start_in_first_line,
+            *match_end_in_last_line,
+            new,
+        ),
+        MatchContent::Line { content, .. } => {
+            let (old_diffs, new_diffs) = line_diff(content, new);
+            SearchResultPreview {
+                old_line_diffs: diffs_to_lines(&old_diffs, DiffLineKind::Removed),
+                new_line_diffs: diffs_to_lines(&new_diffs, DiffLineKind::Added),
+            }
+        }
+    }
+}
+
+fn diff_cache_entry_for_key(
+    cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
+    hash_key: u64,
+    full_key: &cache::DiffCacheFullKey,
+) -> Option<cache::DiffTaskCacheEntry> {
+    cache_guard.get_mut(&hash_key).and_then(|records| {
+        records
+            .iter()
+            .find(|record| record.full_key == *full_key)
+            .map(|record| record.entry.clone())
+    })
+}
+
+fn upsert_diff_cache_entry(
+    cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
+    hash_key: u64,
+    full_key: cache::DiffCacheFullKey,
+    entry: cache::DiffTaskCacheEntry,
+) {
+    match cache_guard.get_mut(&hash_key) {
+        Some(records) => {
+            if let Some(record) = records
+                .iter_mut()
+                .find(|record| record.full_key == full_key)
+            {
+                record.entry = entry;
+            } else {
+                records.push(cache::DiffCacheRecord { full_key, entry });
+            }
+        }
+        None => {
+            cache_guard.put(hash_key, vec![cache::DiffCacheRecord { full_key, entry }]);
+        }
+    }
+}
+
+fn remove_diff_cache_entry(
+    cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
+    hash_key: u64,
+    full_key: &cache::DiffCacheFullKey,
+) {
+    if let Some(records) = cache_guard.get_mut(&hash_key) {
+        if let Some(idx) = records
+            .iter()
+            .position(|record| record.full_key == *full_key)
+        {
+            records.swap_remove(idx);
+        }
+        if records.is_empty() {
+            let _ = cache_guard.pop(&hash_key);
+        }
+    }
+}
+
+fn spawn_compute_diff(
+    hash_key: u64,
+    full_key: cache::DiffCacheFullKey,
+    event_sender: UnboundedSender<Event>,
+) {
     tokio::spawn(async move {
-        // Compute the detailed character-level diff
-        let preview = match old.clone() {
-            MatchContent::ByteRange {
-                lines,
-                match_start_in_first_line,
-                match_end_in_last_line,
-                ..
-            } => build_multiline_diff(
-                &lines,
-                match_start_in_first_line,
-                match_end_in_last_line,
-                &new,
-            ),
-            MatchContent::Line { content, .. } => {
-                let (old_diffs, new_diffs) = line_diff(&content, &new);
-                SearchResultPreview {
-                    old_line_diffs: diffs_to_lines(&old_diffs, DiffLineKind::Removed),
-                    new_line_diffs: diffs_to_lines(&new_diffs, DiffLineKind::Added),
-                }
+        let compute_key = full_key.clone();
+        let compute_result = tokio::task::spawn_blocking(move || {
+            compute_detailed_diff(&compute_key.old, &compute_key.replacement)
+        })
+        .await;
+
+        let preview = match compute_result {
+            Ok(preview) => preview,
+            Err(err) => {
+                let mut cache_guard = cache::diff_cache().lock().unwrap();
+                remove_diff_cache_entry(&mut cache_guard, hash_key, &full_key);
+                drop(cache_guard);
+
+                log::warn!(
+                    "Diff preview background task failed; removed in-progress cache entry for retry: {err}"
+                );
+                return;
             }
         };
 
-        // Cache the result
         let mut cache_guard = cache::diff_cache().lock().unwrap();
-        cache_guard.put((old, new), preview);
+        upsert_diff_cache_entry(
+            &mut cache_guard,
+            hash_key,
+            full_key,
+            cache::DiffTaskCacheEntry::Ready { preview },
+        );
         drop(cache_guard);
 
-        // Trigger re-render to show the detailed diff
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::Rerender);
     });
@@ -1430,24 +1512,30 @@ fn build_search_result_preview(
 ) -> SearchResultPreview {
     let old_content = &result.search_result.content;
     let replacement = &result.replacement;
-    let cache_key = (old_content.clone(), replacement.clone());
+    let full_key = cache::DiffCacheFullKey::new(old_content.clone(), replacement.clone());
+    let hash_key = cache::diff_cache_hash(&full_key.old, &full_key.replacement);
 
-    // Check cache first
     let mut cache_guard = cache::diff_cache().lock().unwrap();
 
-    if let Some(preview) = cache_guard.get(&cache_key) {
-        let preview = preview.clone();
-        drop(cache_guard);
-        return preview;
+    if let Some(entry) = diff_cache_entry_for_key(&mut cache_guard, hash_key, &full_key) {
+        return match entry {
+            cache::DiffTaskCacheEntry::InProgress { simple_preview } => simple_preview,
+            cache::DiffTaskCacheEntry::Ready { preview } => preview,
+        };
     }
 
+    let simple_preview = simple_diff(old_content, replacement);
+    upsert_diff_cache_entry(
+        &mut cache_guard,
+        hash_key,
+        full_key.clone(),
+        cache::DiffTaskCacheEntry::InProgress {
+            simple_preview: simple_preview.clone(),
+        },
+    );
     drop(cache_guard);
-
-    // Cache miss - spawn background task to compute detailed diff
-    spawn_compute_diff(old_content.clone(), replacement.clone(), event_sender);
-
-    // Return simple diff immediately
-    simple_diff(old_content, replacement)
+    spawn_compute_diff(hash_key, full_key, event_sender);
+    simple_preview
 }
 
 fn search_result<'a>(
@@ -2636,6 +2724,672 @@ mod tests {
             .unwrap();
 
         insta::assert_snapshot!(get_snapshot(&terminal));
+    }
+
+    mod multiline_diff_tests {
+        use super::*;
+        use scooter_core::app::Event;
+        use scooter_core::line_reader::LineEnding;
+        use scooter_core::search::{Line, SearchResult, SearchResultWithReplacement};
+        use std::sync::{Mutex, OnceLock};
+        use tokio::sync::mpsc;
+        use tokio::time::{Duration, sleep};
+
+        fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+            static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+        }
+
+        fn clear_diff_cache() {
+            crate::ui::cache::diff_cache().lock().unwrap().clear();
+        }
+
+        fn preview_has_background(preview: &SearchResultPreview) -> bool {
+            preview
+                .old_line_diffs
+                .iter()
+                .chain(preview.new_line_diffs.iter())
+                .flat_map(|line| line.iter())
+                .any(|(_, style)| style.as_ref().is_some_and(|s| s.bg.is_some()))
+        }
+
+        fn drain_rerender_events(event_rx: &mut mpsc::UnboundedReceiver<Event>) -> usize {
+            let mut rerender_events = 0usize;
+            while let Ok(event) = event_rx.try_recv() {
+                if matches!(event, Event::Rerender) {
+                    rerender_events += 1;
+                }
+            }
+            rerender_events
+        }
+
+        async fn wait_for_rerender_events(
+            event_rx: &mut mpsc::UnboundedReceiver<Event>,
+            min_events: usize,
+            timeout: Duration,
+        ) -> usize {
+            let mut rerender_events = 0usize;
+            let wait_start = tokio::time::Instant::now();
+            while wait_start.elapsed() < timeout && rerender_events < min_events {
+                sleep(Duration::from_millis(50)).await;
+                rerender_events += drain_rerender_events(event_rx);
+            }
+            rerender_events
+        }
+
+        fn heavy_line_result() -> SearchResultWithReplacement {
+            SearchResultWithReplacement {
+                search_result: SearchResult::new_line(
+                    None,
+                    1,
+                    "a".repeat(15_000),
+                    LineEnding::Lf,
+                    true,
+                ),
+                replacement: "b".repeat(15_000),
+                replace_result: None,
+                preview_error: None,
+            }
+        }
+
+        fn assert_line_has_segment(line: &StyledLine, expected_text: &str, expected_style: Style) {
+            let found = line.iter().any(|(text, style)| {
+                text.as_ref() == expected_text && *style == Some(expected_style)
+            });
+            assert!(
+                found,
+                "Expected segment '{expected_text}' with style {expected_style:?}, got line: {line:?}",
+            );
+        }
+
+        #[test]
+        fn test_build_multiline_diff_changed_and_unchanged_regions_have_expected_styles() {
+            let _guard = test_lock();
+            let lines = vec![
+                (
+                    1,
+                    Line {
+                        content: "abc123".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ),
+                (
+                    2,
+                    Line {
+                        content: "def456".to_string(),
+                        line_ending: LineEnding::Lf,
+                    },
+                ),
+            ];
+
+            // Match spans "123\ndef" (partial first and last lines)
+            let preview = build_multiline_diff(&lines, 3, 3, "XYZ\nQ");
+
+            assert_eq!(preview.old_line_diffs.len(), 2);
+            assert_eq!(preview.new_line_diffs.len(), 2);
+
+            let old_1 = &preview.old_line_diffs[0];
+            let old_2 = &preview.old_line_diffs[1];
+            let new_1 = &preview.new_line_diffs[0];
+            let new_2 = &preview.new_line_diffs[1];
+
+            // Old side: unchanged text should be red foreground only, changed text black on red.
+            assert_line_has_segment(old_1, "abc", Style::new().fg(Color::Red));
+            assert_line_has_segment(old_1, "123", Style::new().fg(Color::Black).bg(Color::Red));
+            assert_line_has_segment(old_2, "def", Style::new().fg(Color::Black).bg(Color::Red));
+            assert_line_has_segment(old_2, "456", Style::new().fg(Color::Red));
+
+            // New side: unchanged text should be green foreground only, changed text black on green.
+            assert_line_has_segment(new_1, "abc", Style::new().fg(Color::Green));
+            assert_line_has_segment(new_1, "XYZ", Style::new().fg(Color::Black).bg(Color::Green));
+            assert_line_has_segment(new_2, "Q", Style::new().fg(Color::Black).bg(Color::Green));
+            assert_line_has_segment(new_2, "456", Style::new().fg(Color::Green));
+        }
+
+        #[test]
+        fn test_build_multiline_diff_preserves_full_line_counts_for_large_byte_range() {
+            let _guard = test_lock();
+            let old_line_count = 120usize;
+            let new_line_count = 155usize;
+
+            let lines: Vec<(usize, Line)> = (1..=old_line_count)
+                .map(|i| {
+                    (
+                        i,
+                        Line {
+                            content: format!("line_{i:03}_old"),
+                            line_ending: LineEnding::Lf,
+                        },
+                    )
+                })
+                .collect();
+
+            // Match the entire old range, replace with a larger multiline payload.
+            let replacement = (1..=new_line_count)
+                .map(|i| format!("line_{i:03}_new"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let last_line_len = lines.last().unwrap().1.content.len();
+            let preview = build_multiline_diff(&lines, 0, last_line_len, &replacement);
+
+            assert_eq!(
+                preview.old_line_diffs.len(),
+                old_line_count,
+                "Old-side diff lines should include the full matched ByteRange",
+            );
+            assert_eq!(
+                preview.new_line_diffs.len(),
+                new_line_count,
+                "New-side diff lines should include all replacement lines",
+            );
+        }
+
+        #[test]
+        fn test_build_search_result_preview_transitions_simple_to_full_after_background_compute() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+                let result = heavy_line_result();
+
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                let first = build_search_result_preview(&result, event_tx.clone());
+                assert!(
+                    !preview_has_background(&first),
+                    "First render should be simple diff while full diff is pending",
+                );
+
+                let second = build_search_result_preview(&result, event_tx.clone());
+                assert!(
+                    !preview_has_background(&second),
+                    "Repeated request while pending should still return simple diff",
+                );
+
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(3)).await >= 1,
+                    "Expected background task to emit at least one rerender event",
+                );
+
+                let third = build_search_result_preview(&result, event_tx);
+                assert!(
+                    preview_has_background(&third),
+                    "After background completion, preview should contain full-diff background styling",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_cache_hit_for_equivalent_payload_reuses_ready_diff() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+                let result = heavy_line_result();
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                let _ = build_search_result_preview(&result, event_tx.clone());
+                let mut warmed = false;
+                let wait_start = tokio::time::Instant::now();
+                while wait_start.elapsed() < Duration::from_secs(4) {
+                    if preview_has_background(&build_search_result_preview(&result, event_tx.clone()))
+                    {
+                        warmed = true;
+                        break;
+                    }
+                    sleep(Duration::from_millis(50)).await;
+                }
+                assert!(
+                    warmed,
+                    "Expected initial line diff to be fully computed before validating ready-cache hit",
+                );
+                let _ = drain_rerender_events(&mut event_rx);
+
+                // Build a logically equivalent payload from scratch.
+                let equivalent = SearchResultWithReplacement {
+                    search_result: SearchResult::new_line(
+                        None,
+                        1,
+                        "a".repeat(15_000),
+                        LineEnding::Lf,
+                        true,
+                    ),
+                    replacement: "b".repeat(15_000),
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let ready_preview = build_search_result_preview(&equivalent, event_tx);
+                assert!(
+                    preview_has_background(&ready_preview),
+                    "Equivalent key should hit ready cache and return full diff immediately",
+                );
+
+                sleep(Duration::from_millis(100)).await;
+                assert_eq!(
+                    drain_rerender_events(&mut event_rx),
+                    0,
+                    "Ready cache hit should not enqueue a new background diff computation",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_distinct_key_triggers_new_background_compute() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+                let result = heavy_line_result();
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                let _ = build_search_result_preview(&result, event_tx.clone());
+                sleep(Duration::from_millis(700)).await;
+                let _ = drain_rerender_events(&mut event_rx);
+
+                let distinct = SearchResultWithReplacement {
+                    replacement: "c".repeat(15_000),
+                    ..result
+                };
+                let preview = build_search_result_preview(&distinct, event_tx);
+                assert!(
+                    !preview_has_background(&preview),
+                    "Distinct key should miss cache initially and return simple diff",
+                );
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(3)).await >= 1,
+                    "Distinct key should trigger a new background compute",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_dedupes_inflight_requests_per_key() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+                let result = heavy_line_result();
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                // Multiple requests for same key while first computation is still in-flight
+                // should produce just one background compute completion event.
+                for _ in 0..8 {
+                    let _ = build_search_result_preview(&result, event_tx.clone());
+                }
+
+                let mut rerender_events =
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(3)).await;
+                sleep(Duration::from_millis(250)).await;
+                rerender_events += drain_rerender_events(&mut event_rx);
+
+                assert_eq!(
+                    rerender_events, 1,
+                    "Expected one rerender from a single deduped background diff task, found {rerender_events}",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_dedupes_inflight_requests_per_key_byte_range() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+
+                let lines: Vec<(usize, Line)> = (1..=1_200)
+                    .map(|i| {
+                        (
+                            i,
+                            Line {
+                                content: format!("line_{i:04}_{}", "a".repeat(280)),
+                                line_ending: LineEnding::Lf,
+                            },
+                        )
+                    })
+                    .collect();
+
+                let matched_content = lines
+                    .iter()
+                    .map(|(_, line)| line.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let replacement = (1..=1_200)
+                    .map(|i| format!("line_{i:04}_{}", "b".repeat(280)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let last_len = lines
+                    .last()
+                    .map(|(_, line)| line.content.len())
+                    .unwrap_or(0);
+
+                let result = SearchResultWithReplacement {
+                    search_result: SearchResult {
+                        path: None,
+                        content: MatchContent::ByteRange {
+                            lines,
+                            match_start_in_first_line: 0,
+                            match_end_in_last_line: last_len,
+                            byte_start: 0,
+                            byte_end: matched_content.len(),
+                            content: matched_content,
+                        },
+                        included: true,
+                    },
+                    replacement,
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                for _ in 0..6 {
+                    let _ = build_search_result_preview(&result, event_tx.clone());
+                }
+
+                let mut rerender_events =
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(4)).await;
+                sleep(Duration::from_millis(250)).await;
+                rerender_events += drain_rerender_events(&mut event_rx);
+
+                assert_eq!(
+                    rerender_events, 1,
+                    "Expected one rerender from a single deduped ByteRange diff task, found {rerender_events}",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_byte_range_cache_hit_for_equivalent_payload() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+
+                let lines: Vec<(usize, Line)> = (1..=180)
+                    .map(|i| {
+                        (
+                            i,
+                            Line {
+                                content: format!("line_{i:04}_{}", "x".repeat(80)),
+                                line_ending: LineEnding::Lf,
+                            },
+                        )
+                    })
+                    .collect();
+
+                let matched_content = lines
+                    .iter()
+                    .map(|(_, line)| line.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let replacement = (1..=180)
+                    .map(|i| format!("line_{i:04}_{}", "y".repeat(80)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let last_len = lines
+                    .last()
+                    .map(|(_, line)| line.content.len())
+                    .unwrap_or(0);
+
+                let result = SearchResultWithReplacement {
+                    search_result: SearchResult {
+                        path: None,
+                        content: MatchContent::ByteRange {
+                            lines: lines.clone(),
+                            match_start_in_first_line: 0,
+                            match_end_in_last_line: last_len,
+                            byte_start: 0,
+                            byte_end: matched_content.len(),
+                            content: matched_content.clone(),
+                        },
+                        included: true,
+                    },
+                    replacement: replacement.clone(),
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+                let _ = build_search_result_preview(&result, event_tx.clone());
+                let mut rerender_events = 0usize;
+                let wait_start = tokio::time::Instant::now();
+                while wait_start.elapsed() < Duration::from_secs(3) && rerender_events == 0 {
+                    sleep(Duration::from_millis(50)).await;
+                    rerender_events += drain_rerender_events(&mut event_rx);
+                }
+                assert!(
+                    rerender_events >= 1,
+                    "Expected initial ByteRange background diff compute to complete before validating cache hit",
+                );
+
+                let equivalent = SearchResultWithReplacement {
+                    search_result: SearchResult {
+                        path: None,
+                        content: MatchContent::ByteRange {
+                            lines,
+                            match_start_in_first_line: 0,
+                            match_end_in_last_line: last_len,
+                            byte_start: 0,
+                            byte_end: matched_content.len(),
+                            content: matched_content,
+                        },
+                        included: true,
+                    },
+                    replacement,
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let ready_preview = build_search_result_preview(&equivalent, event_tx);
+                assert!(
+                    preview_has_background(&ready_preview),
+                    "Equivalent ByteRange payload should hit ready cache and return full diff immediately",
+                );
+
+                sleep(Duration::from_millis(100)).await;
+                assert_eq!(
+                    drain_rerender_events(&mut event_rx),
+                    0,
+                    "Ready ByteRange cache hit should not enqueue a new background compute",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_byte_range_distinct_metadata_misses_cache() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+
+                let lines: Vec<(usize, Line)> = (1..=260)
+                    .map(|i| {
+                        (
+                            i,
+                            Line {
+                                content: format!("line_{i:04}_{}", "m".repeat(120)),
+                                line_ending: LineEnding::Lf,
+                            },
+                        )
+                    })
+                    .collect();
+
+                let matched_content = lines
+                    .iter()
+                    .map(|(_, line)| line.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let replacement = (1..=260)
+                    .map(|i| format!("line_{i:04}_{}", "n".repeat(120)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let last_len = lines
+                    .last()
+                    .map(|(_, line)| line.content.len())
+                    .unwrap_or(0);
+
+                let result_a = SearchResultWithReplacement {
+                    search_result: SearchResult {
+                        path: None,
+                        content: MatchContent::ByteRange {
+                            lines: lines.clone(),
+                            match_start_in_first_line: 0,
+                            match_end_in_last_line: last_len,
+                            byte_start: 0,
+                            byte_end: matched_content.len(),
+                            content: matched_content.clone(),
+                        },
+                        included: true,
+                    },
+                    replacement: replacement.clone(),
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+                let _ = build_search_result_preview(&result_a, event_tx.clone());
+                sleep(Duration::from_millis(1_000)).await;
+                let _ = drain_rerender_events(&mut event_rx);
+
+                // Same lines and replacement but a different matched subrange should produce a distinct key.
+                let result_b = SearchResultWithReplacement {
+                    search_result: SearchResult {
+                        path: None,
+                        content: MatchContent::ByteRange {
+                            lines,
+                            match_start_in_first_line: 3,
+                            match_end_in_last_line: last_len.saturating_sub(3),
+                            byte_start: 3,
+                            byte_end: matched_content.len().saturating_sub(3),
+                            content: matched_content,
+                        },
+                        included: true,
+                    },
+                    replacement,
+                    replace_result: None,
+                    preview_error: None,
+                };
+
+                let preview = build_search_result_preview(&result_b, event_tx);
+                assert!(
+                    !preview_has_background(&preview),
+                    "Distinct ByteRange metadata should miss cache and return simple diff first",
+                );
+
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(4)).await >= 1,
+                    "Distinct ByteRange metadata should trigger a new background compute",
+                );
+            });
+        }
+
+        #[test]
+        fn test_failed_in_progress_entry_cleanup_allows_retry() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+
+                let result = heavy_line_result();
+                let old_content = result.search_result.content.clone();
+                let replacement = result.replacement.clone();
+                let full_key =
+                    cache::DiffCacheFullKey::new(old_content.clone(), replacement.clone());
+                let hash_key = cache::diff_cache_hash(&old_content, &replacement);
+                let seeded_simple_preview = simple_diff(&old_content, &replacement);
+
+                {
+                    let mut cache_guard = cache::diff_cache().lock().unwrap();
+                    upsert_diff_cache_entry(
+                        &mut cache_guard,
+                        hash_key,
+                        full_key.clone(),
+                        cache::DiffTaskCacheEntry::InProgress {
+                            simple_preview: seeded_simple_preview.clone(),
+                        },
+                    );
+                }
+
+                let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
+
+                let stale_preview = build_search_result_preview(&result, event_tx.clone());
+                assert!(
+                    !preview_has_background(&stale_preview),
+                    "Stale in-progress entry should still return simple preview",
+                );
+
+                {
+                    let mut cache_guard = cache::diff_cache().lock().unwrap();
+                    remove_diff_cache_entry(&mut cache_guard, hash_key, &full_key);
+                    assert!(
+                        cache_guard.get(&hash_key).is_none(),
+                        "Cleanup should remove the hash bucket when it contains no records",
+                    );
+                }
+
+                let retried_preview = build_search_result_preview(&result, event_tx.clone());
+                assert!(
+                    !preview_has_background(&retried_preview),
+                    "Retry should start from simple preview while new background compute runs",
+                );
+
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(3)).await >= 1,
+                    "Retry should trigger a fresh background compute rerender event",
+                );
+
+                let ready_preview = build_search_result_preview(&result, event_tx);
+                assert!(
+                    preview_has_background(&ready_preview),
+                    "After retry completes, ready preview should include full background styling",
+                );
+            });
+        }
+
+        #[test]
+        fn test_build_search_result_preview_does_not_block_current_thread_runtime() {
+            let _guard = test_lock();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+
+            runtime.block_on(async {
+                clear_diff_cache();
+                let result = heavy_line_result();
+                let (event_tx, _event_rx) = mpsc::unbounded_channel::<Event>();
+
+                let start = std::time::Instant::now();
+                let _ = build_search_result_preview(&result, event_tx);
+
+                // Yield so spawned task can be scheduled.
+                tokio::task::yield_now().await;
+                sleep(Duration::from_millis(30)).await;
+
+                let elapsed = start.elapsed();
+                assert!(
+                    elapsed < Duration::from_millis(80),
+                    "Heavy diff task blocked current-thread runtime for {:?} (expected < 80ms)",
+                    elapsed,
+                );
+            });
+        }
     }
 
     mod simple_diff_tests {
