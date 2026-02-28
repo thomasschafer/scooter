@@ -2749,7 +2749,7 @@ mod tests {
             TEST_LOCK
                 .get_or_init(|| Mutex::new(()))
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
         }
 
         fn clear_diff_cache() {
@@ -3396,7 +3396,7 @@ mod tests {
                 let elapsed = start.elapsed();
                 assert!(
                     elapsed < Duration::from_millis(500),
-                    "Heavy diff task blocked current-thread runtime for {elapsed:?} (expected < 80ms)",
+                    "Heavy diff task blocked current-thread runtime for {elapsed:?} (expected < 500ms)",
                 );
             });
         }
