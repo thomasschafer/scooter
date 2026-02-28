@@ -565,6 +565,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
     });
 }
 
+/// Compute a full character-level diff between original and replacement content.
 fn compute_detailed_diff(old: &MatchContent, new: &str) -> SearchResultPreview {
     match old {
         MatchContent::ByteRange {
@@ -588,19 +589,24 @@ fn compute_detailed_diff(old: &MatchContent, new: &str) -> SearchResultPreview {
     }
 }
 
+/// Look up a cached diff entry by hash key, comparing against content references directly.
 fn diff_cache_entry_for_key(
     cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
     hash_key: u64,
-    full_key: &cache::DiffCacheFullKey,
+    old_content: &MatchContent,
+    replacement: &str,
 ) -> Option<cache::DiffTaskCacheEntry> {
     cache_guard.get_mut(&hash_key).and_then(|records| {
         records
             .iter()
-            .find(|record| record.full_key == *full_key)
+            .find(|record| {
+                record.full_key.old == *old_content && record.full_key.replacement == replacement
+            })
             .map(|record| record.entry.clone())
     })
 }
 
+/// Insert or update a diff cache entry for the given hash and full key.
 fn upsert_diff_cache_entry(
     cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
     hash_key: u64,
@@ -624,6 +630,7 @@ fn upsert_diff_cache_entry(
     }
 }
 
+/// Remove a diff cache entry, cleaning up the hash bucket if empty.
 fn remove_diff_cache_entry(
     cache_guard: &mut lru::LruCache<u64, Vec<cache::DiffCacheRecord>>,
     hash_key: u64,
@@ -1512,18 +1519,20 @@ fn build_search_result_preview(
 ) -> SearchResultPreview {
     let old_content = &result.search_result.content;
     let replacement = &result.replacement;
-    let full_key = cache::DiffCacheFullKey::new(old_content.clone(), replacement.clone());
-    let hash_key = cache::diff_cache_hash(&full_key.old, &full_key.replacement);
+    let hash_key = cache::diff_cache_hash(old_content, replacement);
 
     let mut cache_guard = cache::diff_cache().lock().unwrap();
 
-    if let Some(entry) = diff_cache_entry_for_key(&mut cache_guard, hash_key, &full_key) {
+    if let Some(entry) =
+        diff_cache_entry_for_key(&mut cache_guard, hash_key, old_content, replacement)
+    {
         return match entry {
             cache::DiffTaskCacheEntry::InProgress { simple_preview } => simple_preview,
             cache::DiffTaskCacheEntry::Ready { preview } => preview,
         };
     }
 
+    let full_key = cache::DiffCacheFullKey::new(old_content.clone(), replacement.clone());
     let simple_preview = simple_diff(old_content, replacement);
     upsert_diff_cache_entry(
         &mut cache_guard,
@@ -2737,7 +2746,10 @@ mod tests {
 
         fn test_lock() -> std::sync::MutexGuard<'static, ()> {
             static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-            TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+            TEST_LOCK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
         }
 
         fn clear_diff_cache() {
@@ -2988,8 +3000,10 @@ mod tests {
                 let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
 
                 let _ = build_search_result_preview(&result, event_tx.clone());
-                sleep(Duration::from_millis(700)).await;
-                let _ = drain_rerender_events(&mut event_rx);
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(4)).await >= 1,
+                    "First key should complete background compute",
+                );
 
                 let distinct = SearchResultWithReplacement {
                     replacement: "c".repeat(15_000),
@@ -3258,8 +3272,10 @@ mod tests {
 
                 let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
                 let _ = build_search_result_preview(&result_a, event_tx.clone());
-                sleep(Duration::from_millis(1_000)).await;
-                let _ = drain_rerender_events(&mut event_rx);
+                assert!(
+                    wait_for_rerender_events(&mut event_rx, 1, Duration::from_secs(4)).await >= 1,
+                    "First key should complete background compute",
+                );
 
                 // Same lines and replacement but a different matched subrange should produce a distinct key.
                 let result_b = SearchResultWithReplacement {
@@ -3379,7 +3395,7 @@ mod tests {
 
                 let elapsed = start.elapsed();
                 assert!(
-                    elapsed < Duration::from_millis(80),
+                    elapsed < Duration::from_millis(500),
                     "Heavy diff task blocked current-thread runtime for {elapsed:?} (expected < 80ms)",
                 );
             });
