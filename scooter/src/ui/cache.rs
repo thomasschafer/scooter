@@ -1,6 +1,8 @@
 use lru::LruCache;
 use scooter_core::{search::MatchContent, utils::HighlightedLine};
 use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     num::NonZeroUsize,
     path::PathBuf,
     sync::{Mutex, OnceLock},
@@ -52,6 +54,37 @@ define_cache! {
 }
 
 define_cache! {
-    /// Cache of line diffs
-    diff_cache: (MatchContent, String) => SearchResultPreview
+    /// Cache of computed line diff tasks, keyed by hash with collision buckets.
+    diff_cache: u64 => Vec<DiffCacheRecord>
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiffCacheFullKey {
+    pub(crate) old: MatchContent,
+    pub(crate) replacement: String,
+}
+
+impl DiffCacheFullKey {
+    pub(crate) fn new(old: MatchContent, replacement: String) -> Self {
+        Self { old, replacement }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DiffTaskCacheEntry {
+    InProgress { simple_preview: SearchResultPreview },
+    Ready { preview: SearchResultPreview },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiffCacheRecord {
+    pub(crate) full_key: DiffCacheFullKey,
+    pub(crate) entry: DiffTaskCacheEntry,
+}
+
+pub(crate) fn diff_cache_hash(old: &MatchContent, replacement: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    old.hash(&mut hasher);
+    replacement.hash(&mut hasher);
+    hasher.finish()
 }
