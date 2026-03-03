@@ -527,8 +527,8 @@ impl FileSearcher {
 }
 
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "gif", "jpg", "jpeg", "ico", "svg", "pdf", "exe", "dll", "so", "bin", "class", "jar",
-    "zip", "gz", "bz2", "xz", "7z", "tar",
+    "png", "gif", "jpg", "jpeg", "ico", "pdf", "exe", "dll", "so", "bin", "class", "jar", "zip",
+    "gz", "bz2", "xz", "7z", "tar",
 ];
 
 fn is_likely_binary(path: &Path) -> bool {
@@ -1284,7 +1284,6 @@ mod tests {
                 "library.dll",
                 "photo.jpg",
                 "icon.ico",
-                "vector.svg",
                 "compressed.gz",
                 "backup.7z",
                 "java.class",
@@ -1299,6 +1298,7 @@ mod tests {
                 "readme.md",
                 "style.css",
                 "page.html",
+                "vector.svg",
                 "source.c",
                 "header.h",
                 "makefile",
