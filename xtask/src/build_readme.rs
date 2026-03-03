@@ -68,7 +68,7 @@ fn generate_contents_table(content: &str) -> anyhow::Result<String> {
     let lines: Vec<&str> = content.lines().collect();
 
     // First pass: collect headings and generate TOC
-    for line in lines.iter() {
+    for line in &lines {
         if line.starts_with("```") || line.starts_with("~~~") {
             in_code_block = !in_code_block;
             continue;
