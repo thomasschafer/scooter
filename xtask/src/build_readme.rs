@@ -68,7 +68,7 @@ fn generate_contents_table(content: &str) -> anyhow::Result<String> {
     let lines: Vec<&str> = content.lines().collect();
 
     // First pass: collect headings and generate TOC
-    for (i, line) in lines.iter().enumerate() {
+    for line in lines.iter() {
         if line.starts_with("```") || line.starts_with("~~~") {
             in_code_block = !in_code_block;
             continue;
@@ -99,11 +99,6 @@ fn generate_contents_table(content: &str) -> anyhow::Result<String> {
             let title = &line[3..];
             let anchor = create_anchor(title);
             writeln!(toc, "- [{title}](#{anchor})")?;
-        } else if let Some(title) = line.strip_prefix("### ")
-            && !in_config_section(content, &lines, i)
-        {
-            let anchor = create_anchor(title);
-            writeln!(toc, "  - [{title}](#{anchor})")?;
         }
     }
 
@@ -126,26 +121,6 @@ fn generate_contents_table(content: &str) -> anyhow::Result<String> {
     }
 
     Ok(result)
-}
-
-// Check if a heading is part of the Configuration Options section
-fn in_config_section(content: &str, lines: &[&str], current_idx: usize) -> bool {
-    let config_heading = "## Configuration options";
-    if !content.contains(config_heading) {
-        return false;
-    }
-
-    let mut i = current_idx;
-    while i > 0 {
-        i -= 1;
-        let line = lines[i];
-
-        if line.starts_with("## ") {
-            return line == config_heading;
-        }
-    }
-
-    false
 }
 
 fn create_anchor(title: &str) -> String {
