@@ -19,26 +19,11 @@ You can use custom themes for syntax highlighting (see [here](#syntax_highlighti
 <!-- TOC START -->
 - [Features](#features)
 - [Usage](#usage)
-  - [Files](#files)
-  - [Stdin](#stdin)
-  - [Search fields](#search-fields)
 - [Performance](#performance)
 - [Installation](#installation)
-  - [Homebrew](#homebrew)
-  - [Nix](#nix)
-  - [AUR](#aur)
-  - [Winget](#winget)
-  - [Scoop](#scoop)
-  - [NetBSD](#netbsd)
-  - [Prebuilt binaries](#prebuilt-binaries)
-  - [Cargo](#cargo)
-  - [Building from source](#building-from-source)
 - [Configuration options](#configuration-options)
 - [Editor configuration](#editor-configuration)
-  - [Helix](#helix)
-  - [Neovim](#neovim)
 - [Contributing](#contributing)
-  - [Development](#development)
 <!-- TOC END -->
 
 
