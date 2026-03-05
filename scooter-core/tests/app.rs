@@ -1,6 +1,6 @@
 use insta::assert_debug_snapshot;
 use scooter_core::{
-    app::{EventHandlingResult, InputSource},
+    app::{AppEvent, Event, EventHandlingResult, InputSource, InternalEvent},
     errors::AppError,
     fields::{FieldValue, SearchFieldValues, SearchFields},
     keyboard::KeyEvent,
@@ -16,6 +16,7 @@ use std::{
     mem,
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool, atomic::AtomicUsize},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
@@ -712,6 +713,160 @@ async fn test_handle_key_event_toggle_preview_wrapping() {
 
     assert!(matches!(result, EventHandlingResult::Rerender));
     assert_eq!(app.config.preview.wrap_text, !initial_wrap);
+}
+
+#[tokio::test]
+async fn test_toggle_escape_sequences_updates_preview_without_restarting_search() {
+    let mut app = App::new(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("foo", false),
+            replace: FieldValue::new(r"X\nY", false),
+            fixed_strings: FieldValue::new(true, false),
+            ..Default::default()
+        },
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let mut search_state = SearchState::new(sender, receiver, cancelled);
+    search_state.results.push(SearchResultWithReplacement {
+        search_result: SearchResult::new_line(
+            Some(PathBuf::from("file.txt")),
+            1,
+            "foo".to_string(),
+            LineEnding::Lf,
+            true,
+        ),
+        replacement: "stale replacement".to_string(),
+        replace_result: None,
+        preview_error: None,
+    });
+    search_state.set_search_completed_now();
+    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
+        focussed_section: FocussedSection::SearchResults,
+        search_state: Some(search_state),
+        search_debounce_timer: None,
+        preview_update_state: None,
+    });
+
+    assert!(app.search_has_completed());
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('e'),
+        ScooterKeyModifiers::ALT,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(app.run_config.interpret_escape_sequences);
+    assert!(app.search_has_completed());
+
+    let Screen::SearchFields(state) = &app.ui_state.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    let search_state = state
+        .search_state
+        .as_ref()
+        .expect("Expected existing search state");
+    assert_eq!(search_state.results.len(), 1);
+    assert_eq!(search_state.results[0].replacement, "X\nY");
+    assert!(state.preview_update_state.is_some());
+}
+
+#[tokio::test]
+async fn test_toggle_escape_sequences_without_search_state_only_toggles_flag() {
+    let mut app = App::new(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            search: FieldValue::new("foo", false),
+            replace: FieldValue::new(r"X\nY", false),
+            fixed_strings: FieldValue::new(true, false),
+            ..Default::default()
+        },
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState::default());
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('e'),
+        ScooterKeyModifiers::ALT,
+    ));
+
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(app.run_config.interpret_escape_sequences);
+    let Screen::SearchFields(state) = &app.ui_state.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    assert!(state.search_state.is_none());
+    assert!(state.preview_update_state.is_none());
+}
+
+#[tokio::test]
+async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
+    let mut app = App::new(
+        InputSource::Directory(current_dir().unwrap()),
+        &SearchFieldValues {
+            replace: FieldValue::new(r"X\nY", false),
+            fixed_strings: FieldValue::new(true, false),
+            ..Default::default()
+        },
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    // Typing in the search field should queue a debounced PerformSearch event.
+    let type_search = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('f'),
+        ScooterKeyModifiers::NONE,
+    ));
+    assert!(matches!(type_search, EventHandlingResult::Rerender));
+
+    let Screen::SearchFields(state) = &app.ui_state.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    assert!(state.search_debounce_timer.is_some());
+
+    // Toggle escape interpretation before the debounce fires.
+    let toggle = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('e'),
+        ScooterKeyModifiers::ALT,
+    ));
+    assert!(matches!(toggle, EventHandlingResult::Rerender));
+    assert!(app.run_config.interpret_escape_sequences);
+    assert_eq!(
+        app.searcher.as_ref().expect("Expected searcher").replace(),
+        "X\nY"
+    );
+
+    let Screen::SearchFields(state) = &app.ui_state.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    assert!(state.search_debounce_timer.is_some());
+
+    // Wait long enough for the queued debounce timer to emit its app event.
+    tokio::time::sleep(Duration::from_millis(330)).await;
+
+    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+        .await
+        .expect("Expected queued debounce event");
+    assert!(matches!(
+        queued,
+        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
+    ));
+
+    // Handling the queued event should keep replacement config aligned with the toggle.
+    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch));
+    assert!(matches!(handled, EventHandlingResult::Rerender));
+    assert_eq!(
+        app.searcher.as_ref().expect("Expected searcher").replace(),
+        "X\nY"
+    );
 }
 
 #[tokio::test]

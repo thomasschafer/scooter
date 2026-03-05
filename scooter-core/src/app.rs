@@ -45,6 +45,9 @@ use crate::{
     },
 };
 
+const SEARCH_DEBOUNCE_MS: u64 = 300;
+const PREVIEW_DEBOUNCE_MS: u64 = 300;
+
 #[derive(Debug, Clone)]
 pub enum InputSource {
     Directory(PathBuf),
@@ -1421,7 +1424,7 @@ impl<'a> App {
         key_code: KeyCode,
         key_modifiers: KeyModifiers,
     ) -> EventHandlingResult {
-        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+        let Screen::SearchFields(_) = self.ui_state.current_screen else {
             return EventHandlingResult::None;
         };
         if let FieldName::FixedStrings = self.search_fields.highlighted_field().name {
@@ -1429,67 +1432,103 @@ impl<'a> App {
             self.search_fields.search_mut().clear_error();
         }
 
-        search_fields_state.cancel_preview_updates();
-
         self.search_fields.highlighted_field_mut().handle_keys(
             key_code,
             key_modifiers,
             self.config.search.disable_prepopulated_fields,
         );
-        if let Some(search_config) = self.validate_fields().unwrap() {
-            self.searcher = Some(search_config);
-        } else {
-            return EventHandlingResult::Rerender;
+        if let FieldName::Replace = self.search_fields.highlighted_field().name {
+            return self.handle_replacement_config_change();
         }
+
+        self.cancel_preview_updates_on_search_fields();
         let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return EventHandlingResult::None;
         };
-        let file_searcher = self
-            .searcher
-            .as_ref()
-            .expect("Fields should have been parsed");
-
-        if let FieldName::Replace = self.search_fields.highlighted_field().name {
-            if let Some(ref mut state) = search_fields_state.search_state {
-                // Immediately update replacement on the selected result; remaining results update async.
-                let mut context = Self::replacement_context(
-                    &self.input_source,
-                    file_searcher,
-                    Arc::clone(&self.file_content_provider),
-                );
-                if let Some(highlighted) = state.primary_selected_field_mut() {
-                    let _ = apply_outcome(
-                        highlighted,
-                        context.replacement_for_search_result(&highlighted.search_result),
-                    );
-                }
-
-                // Debounce replacement requests
-                let sender = state.processing_sender.clone();
-                let cancelled = Arc::new(AtomicBool::new(false));
-                let cancelled_clone = cancelled.clone();
-                let handle = tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(300)).await;
-                    let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
-                        cancelled: cancelled_clone,
-                    });
-                });
-                // Note that cancel_preview_updates is called above, which cancels any existing preview updates
-                search_fields_state.preview_update_state =
-                    Some(PreviewUpdateStatus::new(handle, cancelled));
-            }
-        } else {
-            // Debounce search requests
-            if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-                timer.abort();
-            }
-            let event_sender = self.event_channels.sender.clone();
-            search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(300)).await;
-                let _ =
-                    event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
-            }));
+        // Cancel any queued search before validating so invalid edits can't
+        // later trigger a stale PerformSearch with the previous searcher.
+        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+            timer.abort();
         }
+        if !self.revalidate_and_store_searcher() {
+            return EventHandlingResult::Rerender;
+        }
+
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            return EventHandlingResult::None;
+        };
+        // Debounce search requests
+        let event_sender = self.event_channels.sender.clone();
+        search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+            let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
+        }));
+        EventHandlingResult::Rerender
+    }
+
+    fn cancel_preview_updates_on_search_fields(&mut self) {
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            return;
+        };
+        search_fields_state.cancel_preview_updates();
+    }
+
+    fn revalidate_and_store_searcher(&mut self) -> bool {
+        if let Some(search_config) = self.validate_fields().unwrap() {
+            self.searcher = Some(search_config);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn refresh_selected_and_schedule_preview_updates(&mut self) {
+        let Some(searcher) = self.searcher.as_ref() else {
+            panic!("Fields should have been parsed")
+        };
+        // Immediately update replacement on the selected result; remaining results update async.
+        let mut context = Self::replacement_context(
+            &self.input_source,
+            searcher,
+            Arc::clone(&self.file_content_provider),
+        );
+
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            return;
+        };
+        // Defensive cancel: this helper may be reused independently from
+        // `handle_replacement_config_change`, and `cancel_preview_updates` is idempotent.
+        search_fields_state.cancel_preview_updates();
+        let Some(state) = search_fields_state.search_state.as_mut() else {
+            return;
+        };
+        if let Some(highlighted) = state.primary_selected_field_mut() {
+            let _ = apply_outcome(
+                highlighted,
+                context.replacement_for_search_result(&highlighted.search_result),
+            );
+        }
+
+        // Debounce replacement requests.
+        let sender = state.processing_sender.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_clone = cancelled.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(PREVIEW_DEBOUNCE_MS)).await;
+            let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
+                cancelled: cancelled_clone,
+            });
+        });
+        search_fields_state.preview_update_state =
+            Some(PreviewUpdateStatus::new(handle, cancelled));
+    }
+
+    fn handle_replacement_config_change(&mut self) -> EventHandlingResult {
+        self.cancel_preview_updates_on_search_fields();
+        if !self.revalidate_and_store_searcher() {
+            return EventHandlingResult::Rerender;
+        }
+        self.refresh_selected_and_schedule_preview_updates();
         EventHandlingResult::Rerender
     }
 
@@ -1664,8 +1703,7 @@ impl<'a> App {
                             "Escape sequences",
                             self.run_config.interpret_escape_sequences,
                         );
-                        self.perform_search_background();
-                        EventHandlingResult::Rerender
+                        self.handle_replacement_config_change()
                     }
                     CommandSearchFields::SearchFocusFields(command) => {
                         if !matches!(
