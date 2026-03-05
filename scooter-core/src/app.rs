@@ -1442,6 +1442,14 @@ impl<'a> App {
         }
 
         self.cancel_preview_updates_on_search_fields();
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            return EventHandlingResult::None;
+        };
+        // Cancel any queued search before validating so invalid edits can't
+        // later trigger a stale PerformSearch with the previous searcher.
+        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
+            timer.abort();
+        }
         if !self.revalidate_and_store_searcher() {
             return EventHandlingResult::Rerender;
         }
@@ -1450,9 +1458,6 @@ impl<'a> App {
             return EventHandlingResult::None;
         };
         // Debounce search requests
-        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-            timer.abort();
-        }
         let event_sender = self.event_channels.sender.clone();
         search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;

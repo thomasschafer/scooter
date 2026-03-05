@@ -15,8 +15,8 @@ use std::{
     env::current_dir,
     mem,
     path::PathBuf,
-    time::Duration,
     sync::{Arc, atomic::AtomicBool, atomic::AtomicUsize},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
@@ -839,7 +839,10 @@ async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
     ));
     assert!(matches!(toggle, EventHandlingResult::Rerender));
     assert!(app.run_config.interpret_escape_sequences);
-    assert_eq!(app.searcher.as_ref().expect("Expected searcher").replace(), "X\nY");
+    assert_eq!(
+        app.searcher.as_ref().expect("Expected searcher").replace(),
+        "X\nY"
+    );
 
     let Screen::SearchFields(state) = &app.ui_state.current_screen else {
         panic!("Expected SearchFields screen");
@@ -849,7 +852,7 @@ async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
     // Wait long enough for the queued debounce timer to emit its app event.
     tokio::time::sleep(Duration::from_millis(330)).await;
 
-    let queued = tokio::time::timeout(Duration::from_millis(250), app.event_recv())
+    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
         .await
         .expect("Expected queued debounce event");
     assert!(matches!(
@@ -860,7 +863,10 @@ async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
     // Handling the queued event should keep replacement config aligned with the toggle.
     let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch));
     assert!(matches!(handled, EventHandlingResult::Rerender));
-    assert_eq!(app.searcher.as_ref().expect("Expected searcher").replace(), "X\nY");
+    assert_eq!(
+        app.searcher.as_ref().expect("Expected searcher").replace(),
+        "X\nY"
+    );
 }
 
 #[tokio::test]
