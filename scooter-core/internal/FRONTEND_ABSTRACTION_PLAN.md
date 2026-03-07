@@ -48,7 +48,7 @@ The current app is primarily driven through `handle_key_event()`. That works for
 
 `App` currently owns debouncing, background scheduling, timers, and internal async event flow. A plugin frontend should not need to know or care whether the implementation uses Tokio.
 
-This is the highest-priority coupling to remove. A nice view API alone is not enough if the frontend still needs to provide a Tokio-shaped environment.
+The important requirement is that the public integration API must not expose Tokio-specific mechanics. Internal Tokio usage is acceptable for now.
 
 ### 4. TUI viewport state leaks into core
 
@@ -113,11 +113,11 @@ The public view API should not expose internal widget models or TUI-specific sta
 - no plugin-specific rendering helpers in the core public API
 - no requirement that plugin frontends adopt terminal-style keymaps or viewport behavior
 
-## Phase 0: Runtime and effect decoupling
+## Phase 0: Effect decoupling and frontend-facing control flow
 
-**Goal:** remove the remaining Tokio/event-loop coupling from the public integration story before designing the final frontend API.
+**Goal:** remove async/event-loop coupling from the public integration story before designing the final frontend API.
 
-This phase comes first because a plugin-friendly view API is not enough if the frontend still has to participate in the current internal async orchestration model.
+This phase comes first because a plugin-friendly view API is not enough if the frontend still has to participate in the current internal event plumbing.
 
 ### 0.1 - Introduce a frontend-facing effect API
 
@@ -174,29 +174,7 @@ The exact split is flexible, but the outcome is not:
 - frontends can advance core state without owning an async `select!` loop
 - frontends can read all pending effects directly
 
-### 0.3 - Introduce an internal scheduling abstraction
-
-Core currently uses Tokio timers and tasks directly. That should no longer be the frontend contract.
-
-Introduce an internal scheduler/executor abstraction, for example:
-
-```rust
-pub trait AppRuntime: Send + Sync + 'static {
-    fn spawn(&self, job: AppJob);
-    fn schedule(&self, delay: Duration, job: AppJob);
-}
-```
-
-or an equivalent internal abstraction.
-
-The important part is the design boundary:
-
-- `App` can still use async/background work internally
-- frontends must not need to provide or understand Tokio-specific mechanics
-
-For the first implementation it is acceptable for `scooter-core` to ship a default Tokio-backed runtime implementation internally, as long as the public API no longer exposes Tokio/event-loop assumptions.
-
-### 0.4 - Keep `handle_key_event()` as a compatibility layer
+### 0.3 - Keep `handle_key_event()` as a compatibility layer
 
 The TUI should continue to use key handling for convenience.
 
@@ -289,6 +267,8 @@ pub enum AppAction {
 
 impl App {
     pub fn dispatch(&mut self, action: AppAction) -> anyhow::Result<Vec<AppEffect>>;
+    pub fn result(&self, id: SearchResultId) -> Option<SearchResultView>;
+    pub fn results(&self, range: Range<usize>) -> Vec<SearchResultView>;
 }
 ```
 
@@ -375,7 +355,8 @@ pub enum FieldKindView {
 
 pub struct SearchProgressView {
     pub status: SearchStatusView,
-    pub results: Vec<SearchResultView>,
+    pub result_count: usize,
+    pub ordered_result_ids: Vec<SearchResultId>,
     pub selection: SelectionView,
     pub preview_update: Option<PreviewUpdateView>,
 }
@@ -397,18 +378,6 @@ pub struct SelectionView {
     pub multiselect: bool,
 }
 
-pub struct SearchResultView {
-    pub id: SearchResultId,
-    pub path: Option<PathBuf>,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub included: bool,
-    pub match_text: String,
-    pub replacement_text: String,
-    pub preview_error: Option<String>,
-    pub replace_result: Option<ReplaceResultView>,
-}
-
 pub struct PerformingReplacementView {
     pub completed: usize,
     pub total: usize,
@@ -426,6 +395,7 @@ The exact shapes can change, but the principles should not:
 - public views are stable DTOs
 - they do not expose `TextField`, `CheckboxField`, `Screen`, `SearchState`, or `UIState`
 - they do not include TUI viewport state
+- top-level views stay cheap to construct even when result sets are large
 
 ### 2.2 - `App::view()` returns immutable snapshots
 
@@ -520,6 +490,26 @@ This keeps preview generation:
 If frontends need to target specific results for preview, inclusion toggling, or navigation, expose a stable `SearchResultId` instead of making them rely on internal vector positions as the only identity.
 
 Indices may still be used in views for display ordering, but the controller API should have a real ID type available.
+
+### 3.4 - Expose result access separately from `view()`
+
+Do not make `view()` clone the full rendered result payload on every call.
+
+Keep `AppView` lightweight and expose result access separately:
+
+```rust
+impl App {
+    pub fn result(&self, id: SearchResultId) -> Option<SearchResultView>;
+    pub fn results(&self, range: Range<usize>) -> Vec<SearchResultView>;
+}
+```
+
+This supports both kinds of frontend efficiently:
+
+- the TUI can fetch only the visible result window
+- plugins can fetch individual results or small ranges as needed
+
+`SearchProgressView` should carry ordering and selection, while `SearchResultView` remains a separate DTO fetched on demand.
 
 ## Phase 4: TUI migration
 
@@ -618,6 +608,12 @@ As the work proceeds:
 Syntax highlighting can remain in core for now if both the TUI and editor plugins benefit from reusing it.
 
 Revisit later if editor integrations want to defer entirely to editor-native highlighting.
+
+### Internal runtime abstraction
+
+Do not make a formal runtime/scheduler trait part of the active refactor.
+
+If internal Tokio usage later becomes a practical limitation for embedding, testing, or portability, introduce an internal runtime abstraction at that point.
 
 ### Config relevance per frontend
 
