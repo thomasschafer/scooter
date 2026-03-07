@@ -2,340 +2,653 @@
 
 ## Status
 
-Ready to begin Phase 1 — view state abstraction.
+Ready to begin Phase 0 — runtime and effect decoupling.
 
 ## Goal
 
-Make `scooter-core` a frontend-agnostic library with a clean public API. Since `scooter-core` is only consumed internally (the TUI and `scooter.hx`), breaking changes are fine — just update both consumers as part of the work. Frontends (the ratatui TUI, the `scooter.hx` Helix plugin, future editor plugins) should only need to implement their UI layer — no reimplementing of search/replace state machines, selection logic, result management, or diff generation.
+Make `scooter-core` the single owner of Scooter's search/replace workflow, while exposing a clean, frontend-agnostic API that allows very thin frontends:
 
-### The problem today
+- the existing ratatui TUI
+- `scooter.hx` / Helix integration
+- future Neovim or other editor plugins
 
-`scooter.hx` (the Helix plugin, in a separate repo) contains its own `ScooterHx` struct that fully reimplements the search/replace lifecycle — states like `NotStarted`, `SearchInProgress`, `SearchComplete`, `PerformingReplacement`, `ReplacementComplete` — because scooter-core's `App` was too opaque to use directly. All of that logic already exists in `scooter-core`; it just isn't accessible to frontends.
+Frontends should render UI, translate user input into core actions, and handle a small set of typed side effects. They should not reimplement:
 
-After this work, `scooter.hx` should be able to drop its reimplemented state machine entirely and wrap the `scooter-core` API in a thin FFI layer. No Helix- or Steel-specific code belongs in this repo.
+- search/replace state machines
+- selection logic
+- replacement preview generation
+- search result management
+- background task orchestration
+- file I/O coordination
 
----
+Breaking changes inside `scooter-core` are acceptable for this work. Update all internal consumers together.
 
-## Current state
+## What the repo already gets right
 
-### What's working well
-- Core business logic (search, replace, diff) is correct and well-tested
-- `App` orchestrates all operations cleanly
-- Keyboard abstraction (`KeyEvent`, `KeyCode`, `KeyModifiers`) exists and is reusable
+- `scooter-core` already owns the real application state machine
+- search, replace, diff, validation, and file processing logic are already centralized
+- the `scooter` crate is already mostly a frontend: terminal setup, event ingestion, and ratatui rendering
+- keyboard abstraction already exists and can remain as a TUI convenience layer
 
-### Current problems
+This means the refactor should not move "more logic into core" in a vague sense. Most of the logic is already there. The real work is to expose the right public API and remove the remaining TUI-shaped coupling.
 
-1. **`App` leaks internal state** — `current_screen`, `search_fields`, `searcher`, `popup`, `ui_state` etc. are all `pub`, forcing frontends to understand internals
-2. **No view abstraction** — frontends pattern match on `Screen`, `SearchState`, `Selected` directly
-3. **Operations only reachable via key events** — there's no way to e.g. call `start_search(params)` directly; everything goes through `handle_key_event()`, which is TUI-centric and useless to a plugin that manages its own UI state
-4. **UI state in core** — `num_displayed`, `last_render`, `view_offset` live in core but are frontend concerns
-5. **Async event loop coupling** — frontends must drive `event_recv()` + `handle_internal_event()` in a tokio select loop; doesn't fit frontends that don't own the event loop
+## Problems to solve
 
----
+### 1. Internal state is the API
 
-## Architecture vision
+Today frontends can only do useful work by understanding internal types such as `Screen`, `SearchState`, `SearchFields`, `Selected`, and `UIState`.
 
-### scooter-core exposes:
+That is the main structural problem. It makes the TUI easy to write, but it prevents plugins from using `App` as a clean controller.
 
-**Lifecycle operations** (directly callable, not gated behind key events):
-- `app.start_search(params)` — begin a search with the given configuration
-- `app.cancel_search()` — cancel any in-progress search
-- `app.start_replace()` — begin replacement on current results
-- `app.cancel_replace()` — cancel any in-progress replacement
-- `app.reset()` — return to initial state
+### 2. The public control surface is too TUI-shaped
 
-**Selection:**
-- `app.toggle_inclusion(idx)` — toggle a single result in/out
-- `app.toggle_all()` — toggle all results
+The current app is primarily driven through `handle_key_event()`. That works for the TUI, but plugin frontends need to drive Scooter with explicit operations or frontend-neutral actions, not terminal keybindings.
 
-**View:**
-- `app.view() -> AppView<'_>` — immutable snapshot of all state needed to render
-- `app.poll_background_events() -> bool` — drain pending internal events; returns `true` if state changed
+### 3. Runtime coupling is still embedded in core
 
-**Key event handling (TUI convenience):**
-- `app.handle_key_event(KeyEvent) -> EventHandlingResult` — retained for the TUI, which drives everything via key events
+`App` currently owns debouncing, background scheduling, timers, and internal async event flow. A plugin frontend should not need to know or care whether the implementation uses Tokio.
 
-### Frontends are responsible for:
-- Their own input handling (translating native events to scooter operations or `KeyEvent`)
-- Rendering using their own UI framework, based on `app.view()`
-- Driving background event processing: either polling `event_recv()` in an async select loop (TUI), or calling `poll_background_events()` on each frame (plugin frontends)
-- Handling `EventHandlingResult::Exit`, `LaunchEditor`, `ExitAndReplace` in a frontend-appropriate way
+This is the highest-priority coupling to remove. A nice view API alone is not enough if the frontend still needs to provide a Tokio-shaped environment.
 
-### What frontends never touch:
-- `Screen`, `SearchState`, `SearchFields`, `Selected`, `Searcher`, `UIState` — all `pub(crate)`
-- Search/replace orchestration, background task management, diff generation, file I/O
+### 4. TUI viewport state leaks into core
 
----
+`view_offset` and `num_displayed` are currently tied to ratatui rendering behavior. Those are frontend viewport concerns, not domain state.
 
-## Phase 1: View state abstraction
+Core should own logical selection, not screen scroll position.
 
-**Goal:** Hide internal state behind immutable view snapshots, and expose direct operation methods.
+### 5. Side effects are not modeled clearly enough
 
-### 1.1 — `App` constructor
+Things like opening an editor, exiting with replacement results, showing a toast, or requesting rerender are currently expressed through ad hoc event channels and `EventHandlingResult`.
+
+Plugin frontends need a typed side-effect surface they can consume directly.
+
+## Architecture target
+
+`scooter-core` should expose three stable surfaces:
+
+### 1. A controller API
+
+`App` remains the stateful controller for a Scooter session.
+
+It should expose:
+
+- construction from explicit session init data
+- frontend-neutral actions or direct operation methods
+- background progress polling / effect draining
+- immutable view snapshots
+
+### 2. A typed effect API
+
+Core should emit typed effects for frontend-specific behavior.
+
+Examples:
+
+- open a file at a line
+- return stdin replacement payload
+- return replacement stats
+- show a toast or message
+- request rerender
+
+Frontends consume effects and decide what to do with them.
+
+### 3. A stable view API
+
+Frontends should render from immutable DTO-style view structs.
+
+The public view API should expose:
+
+- screen/state summary
+- field values and validation state
+- results and selection state
+- replacement progress
+- final results state
+- popup/toast/message state
+
+The public view API should not expose internal widget models or TUI-specific state.
+
+## Non-goals
+
+- no Helix-specific or Steel-specific code in this repo
+- no ratatui types in `scooter-core`
+- no plugin-specific rendering helpers in the core public API
+- no requirement that plugin frontends adopt terminal-style keymaps or viewport behavior
+
+## Phase 0: Runtime and effect decoupling
+
+**Goal:** remove the remaining Tokio/event-loop coupling from the public integration story before designing the final frontend API.
+
+This phase comes first because a plugin-friendly view API is not enough if the frontend still has to participate in the current internal async orchestration model.
+
+### 0.1 - Introduce a frontend-facing effect API
+
+Create a typed effect surface for side effects that frontends must handle explicitly.
 
 ```rust
-impl App {
-    pub fn new(config: Config, directory: PathBuf) -> Self;
+pub enum AppEffect {
+    RequestRender,
+    OpenLocation {
+        path: PathBuf,
+        line: usize,
+    },
+    ExitWithStats(ReplaceState),
+    ExitAndReplaceStdin(ExitAndReplaceState),
+    ShowToast {
+        message: String,
+    },
 }
 ```
 
-`Config` is already public. `directory` is the root path to search under. All other startup behaviour (headless mode, immediate search, etc.) moves out of `App` and into `AppRunConfig`, which is passed separately to the TUI runner rather than stored in `App`.
+The exact names can change, but the shape should be explicit and typed.
 
-### 1.2 — Expose direct operation methods on `App`
+Important rules:
 
-Make these callable without going through `handle_key_event()`. `handle_key_event` is retained for the TUI but should internally delegate to these same methods — so both paths share logic and stay consistent.
+- effects are frontend-facing
+- effects are drained from `App`
+- effects replace the need for frontends to understand internal event plumbing
+
+### 0.2 - Replace boolean polling with effect draining
+
+Do not use a frontend API like `poll_background_events() -> bool`.
+
+That loses too much information and forces frontends to separately reconstruct what happened.
+
+Instead expose something like:
 
 ```rust
 impl App {
-    /// Start a search with the given parameters.
-    pub fn start_search(&mut self, params: SearchParams) -> Result<(), SearchError>;
+    pub fn pump(&mut self) -> Vec<AppEffect>;
+}
+```
 
-    /// Cancel any in-progress search.
-    pub fn cancel_search(&mut self);
+or:
 
-    /// Start replacement on the current search results.
-    pub fn start_replace(&mut self);
+```rust
+impl App {
+    pub fn drain_effects(&mut self) -> Vec<AppEffect>;
+    pub fn poll(&mut self);
+}
+```
 
-    /// Cancel any in-progress replacement.
-    pub fn cancel_replace(&mut self);
+The exact split is flexible, but the outcome is not:
 
-    /// Toggle inclusion of a result by index.
-    pub fn toggle_inclusion(&mut self, idx: usize);
+- frontends can advance core state without owning an async `select!` loop
+- frontends can read all pending effects directly
 
-    /// Toggle inclusion of all results.
-    pub fn toggle_all(&mut self);
+### 0.3 - Introduce an internal scheduling abstraction
 
-    /// Reset to initial state.
-    pub fn reset(&mut self);
+Core currently uses Tokio timers and tasks directly. That should no longer be the frontend contract.
+
+Introduce an internal scheduler/executor abstraction, for example:
+
+```rust
+pub trait AppRuntime: Send + Sync + 'static {
+    fn spawn(&self, job: AppJob);
+    fn schedule(&self, delay: Duration, job: AppJob);
+}
+```
+
+or an equivalent internal abstraction.
+
+The important part is the design boundary:
+
+- `App` can still use async/background work internally
+- frontends must not need to provide or understand Tokio-specific mechanics
+
+For the first implementation it is acceptable for `scooter-core` to ship a default Tokio-backed runtime implementation internally, as long as the public API no longer exposes Tokio/event-loop assumptions.
+
+### 0.4 - Keep `handle_key_event()` as a compatibility layer
+
+The TUI should continue to use key handling for convenience.
+
+But `handle_key_event()` becomes a thin adapter:
+
+- translate key input into frontend-neutral actions
+- dispatch through the same controller API plugins use
+
+That keeps behavior unified and prevents divergence between TUI and plugin flows.
+
+## Phase 1: Stable controller API
+
+**Goal:** make `App` directly usable by non-TUI frontends without exposing internal state structs.
+
+### 1.1 - Replace the narrow constructor proposal with explicit session init data
+
+Do not reduce construction to `Config + directory`.
+
+That would lose existing capabilities:
+
+- stdin input mode
+- initial/prepopulated field values
+- immediate search / immediate replace behavior
+- other session-scoped options
+
+Instead introduce a single initialization struct:
+
+```rust
+pub struct AppInit<'a> {
+    pub config: Config,
+    pub input_source: InputSource,
+    pub initial_fields: SearchFieldValues<'a>,
+    pub session: SessionOptions,
 }
 
-pub struct SearchParams {
-    pub search: String,
-    pub replace: String,
-    pub fixed_strings: bool,
-    pub match_whole_word: bool,
-    pub match_case: bool,
-    pub include_files: String,
-    pub exclude_files: String,
+pub struct SessionOptions {
     pub include_hidden: bool,
+    pub include_git_folders: bool,
+    pub advanced_regex: bool,
     pub multiline: bool,
+    pub interpret_escape_sequences: bool,
+    pub immediate_search: bool,
+    pub immediate_replace: bool,
+    pub print_results: bool,
+    pub print_on_exit: bool,
+}
+
+impl App {
+    pub fn new(init: AppInit<'_>) -> anyhow::Result<Self>;
 }
 ```
 
-### 1.3 — Create view types in `scooter-core/src/view.rs`
+Names can change, but construction should remain explicit and complete.
+
+### 1.2 - Expose frontend-neutral actions
+
+Do not stop at a tiny set of direct methods like `start_search()` and `toggle_all()`.
+
+That would still force plugin frontends to reimplement selection and navigation behavior.
+
+Use one of these two designs:
+
+- a public `AppAction` enum plus `dispatch(action)`
+- a rich set of direct methods that fully covers the workflow
+
+The preferred direction is an action enum because it keeps the surface coherent and easy to extend.
+
+Example:
 
 ```rust
-pub struct AppView<'a> {
-    pub screen: ScreenView<'a>,
-    pub popup: Option<PopupView<'a>>,
-    pub config: &'a Config,
-    pub input_source: &'a InputSource,
+pub enum AppAction {
+    StartSearch,
+    CancelSearch,
+    StartReplace,
+    CancelReplace,
+    Reset,
+    SetField {
+        field: SearchFieldId,
+        value: FieldUpdate,
+    },
+    FocusSection(FocusTarget),
+    MoveSelection(SelectionMotion),
+    ToggleSelectionInclusion,
+    ToggleAllInclusion,
+    ToggleMultiselect,
+    FlipMultiselectDirection,
+    OpenSelected,
+    DismissPopup,
 }
 
-pub enum PopupView<'a> {
-    Error(&'a [AppError]),
-    Help(&'a [(String, String)]),   // (keybinding, description) pairs
-    Text { title: &'a str, body: &'a str },
+impl App {
+    pub fn dispatch(&mut self, action: AppAction) -> anyhow::Result<Vec<AppEffect>>;
+}
+```
+
+This lets:
+
+- plugins call explicit actions
+- the TUI map keybindings to the same actions
+
+If you keep some direct methods as ergonomic helpers, they should delegate to `dispatch`.
+
+### 1.3 - Define field identifiers and updates explicitly
+
+Plugins should not need access to internal `SearchFields` or widget implementations.
+
+Expose stable IDs and updates instead:
+
+```rust
+pub enum SearchFieldId {
+    Search,
+    Replace,
+    FixedStrings,
+    MatchWholeWord,
+    MatchCase,
+    IncludeFiles,
+    ExcludeFiles,
 }
 
-pub enum ScreenView<'a> {
-    SearchFields(SearchFieldsView<'a>),
-    PerformingReplacement(PerformingReplacementView<'a>),
-    Results(ResultsView<'a>),
+pub enum FieldUpdate {
+    SetText(String),
+    InsertText(String),
+    SetChecked(bool),
+    Toggle,
+}
+```
+
+That gives frontends a clean way to control state without depending on terminal-editing internals.
+
+## Phase 2: Stable view API
+
+**Goal:** frontends render from immutable snapshots and never inspect internal app structs directly.
+
+### 2.1 - Add `scooter-core/src/view.rs`
+
+Create DTO-style public view structs.
+
+These are snapshots of renderable state, not references to internal field widgets.
+
+```rust
+pub struct AppView {
+    pub screen: ScreenView,
+    pub popup: Option<PopupView>,
+    pub toast: Option<ToastView>,
 }
 
-pub struct SearchFieldsView<'a> {
-    pub search: &'a TextField,
-    pub replace: &'a TextField,
-    pub fixed_strings: &'a CheckboxField,
-    pub whole_word: &'a CheckboxField,
-    pub match_case: &'a CheckboxField,
-    pub include_files: &'a TextField,
-    pub exclude_files: &'a TextField,
-    pub highlighted_idx: usize,
-    pub focussed_section: FocussedSection,
-    pub search_results: Option<SearchResultsView<'a>>,  // present once search triggered
+pub enum ScreenView {
+    Search(SearchScreenView),
+    PerformingReplacement(PerformingReplacementView),
+    Results(ResultsView),
 }
 
-pub struct SearchResultsView<'a> {
-    pub results: &'a [SearchResultWithReplacement],
-    pub primary_selected_idx: usize,
-    pub selection: SelectionView<'a>,   // opaque; exposes is_selected(idx), is_primary(idx)
-    pub view_offset: usize,
-    pub search_started: Instant,
-    pub search_completed: Option<Instant>,
+pub struct SearchScreenView {
+    pub fields: Vec<FieldView>,
+    pub focus: FocusView,
+    pub search: Option<SearchProgressView>,
 }
 
-pub struct SelectionView<'a> { /* opaque */ }
-impl SelectionView<'_> {
-    pub fn is_selected(&self, idx: usize) -> bool;
-    pub fn is_primary(&self, idx: usize) -> bool;
+pub struct FieldView {
+    pub id: SearchFieldId,
+    pub kind: FieldKindView,
+    pub label: String,
+    pub disabled: bool,
+    pub error: Option<FieldErrorView>,
 }
 
-pub struct PerformingReplacementView<'a> {
-    pub num_completed: usize,
+pub enum FieldKindView {
+    Text {
+        text: String,
+        cursor_column: usize,
+    },
+    Checkbox {
+        checked: bool,
+    },
+}
+
+pub struct SearchProgressView {
+    pub status: SearchStatusView,
+    pub results: Vec<SearchResultView>,
+    pub selection: SelectionView,
+    pub preview_update: Option<PreviewUpdateView>,
+}
+
+pub enum SearchStatusView {
+    NotStarted,
+    InProgress {
+        started_at: Instant,
+    },
+    Complete {
+        started_at: Instant,
+        completed_at: Instant,
+    },
+}
+
+pub struct SelectionView {
+    pub primary_index: Option<usize>,
+    pub selected_indices: Vec<usize>,
+    pub multiselect: bool,
+}
+
+pub struct SearchResultView {
+    pub id: SearchResultId,
+    pub path: Option<PathBuf>,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub included: bool,
+    pub match_text: String,
+    pub replacement_text: String,
+    pub preview_error: Option<String>,
+    pub replace_result: Option<ReplaceResultView>,
+}
+
+pub struct PerformingReplacementView {
+    pub completed: usize,
     pub total: usize,
-    pub started_at: Instant,
 }
 
-pub struct ResultsView<'a> {
+pub struct ResultsView {
     pub num_successes: usize,
     pub num_ignored: usize,
-    pub errors: &'a [SearchResultWithReplacement],
-    pub scroll_offset: usize,
+    pub errors: Vec<ReplacementErrorView>,
 }
 ```
 
-### 1.4 — Add view accessor and background event poll to `App`
+The exact shapes can change, but the principles should not:
+
+- public views are stable DTOs
+- they do not expose `TextField`, `CheckboxField`, `Screen`, `SearchState`, or `UIState`
+- they do not include TUI viewport state
+
+### 2.2 - `App::view()` returns immutable snapshots
+
+Expose:
 
 ```rust
 impl App {
-    /// Immutable snapshot of all state needed to render.
-    pub fn view(&self) -> AppView<'_>;
-
-    /// Drain all pending background events synchronously.
-    /// Returns true if any state changed (caller should rerender).
-    /// For frontends that don't own an async event loop.
-    pub fn poll_background_events(&mut self) -> bool;
+    pub fn view(&self) -> AppView;
 }
 ```
 
-### 1.5 — Lock down internal types
+Returning owned DTOs is preferable here.
 
-Make `pub(crate)`:
+It avoids lifetime-heavy public APIs and makes FFI or editor-plugin bridges easier.
 
-```rust
-pub(crate) enum Screen { ... }
-pub(crate) struct SearchFieldsScreenState { ... }
-pub(crate) struct SearchState { ... }
-pub(crate) struct SearchFields { ... }
-pub(crate) enum Selected { ... }
-pub(crate) struct Searcher { ... }
-pub(crate) struct UIState { ... }
-pub(crate) enum Popup { ... }
+### 2.3 - Remove viewport state from core
 
-// App fields — all private, accessed via view() or operation methods
-pub struct App {
-    config: Config,
-    current_screen: Screen,
-    search_fields: SearchFields,
-    searcher: Option<Searcher>,
-    input_source: InputSource,
-    run_config: AppRunConfig,
-    event_channels: EventChannels,
-    ui_state: UIState,
-    popup: Option<Popup>,
-}
+Remove TUI viewport concerns from core state:
 
-// These remain pub — needed by frontends directly
-pub struct TextField { ... }
-pub struct CheckboxField { ... }
-pub enum FocussedSection { ... }
-pub enum InputSource { ... }
-pub enum EventHandlingResult { ... }
-pub struct SearchResultWithReplacement { ... }  // see 1.5 for public API
+- `num_displayed`
+- `view_offset`
 
-// AppRunConfig moves out of App — TUI-specific startup options live here, not in core
-pub(crate) struct AppRunConfig { ... }  // or moved entirely to scooter crate
-```
+These belong in each frontend.
 
-### 1.6 — `SearchResultWithReplacement` public API
+Core should still provide enough logical selection data for a frontend to compute its own viewport.
 
-This type is the primary data returned to frontends, so its fields need to be accessible. Expose at minimum:
+### 2.4 - Keep editing widget internals private
+
+`TextField`, `CheckboxField`, `SearchFields`, `Selected`, `SearchState`, `Screen`, `Popup`, and `UIState` should become internal implementation details unless a type is genuinely needed as a stable frontend-facing concept.
+
+In particular:
+
+- `TextField` should not be part of the public view API
+- `CheckboxField` should not be part of the public view API
+- `SearchFields` should not be public
+- `Screen` should not be public
+
+## Phase 3: Preview and result APIs
+
+**Goal:** expose search results and replacement previews in a frontend-neutral way without putting app-context-dependent behavior on plain result values.
+
+### 3.1 - Do not put preview generation on `SearchResultWithReplacement`
+
+Avoid a public API like:
 
 ```rust
 impl SearchResultWithReplacement {
-    pub fn display_path(&self) -> &str;
-    pub fn absolute_path(&self) -> &Path;
-    pub fn line_number(&self) -> usize;
-    pub fn line_text(&self) -> &str;
-    pub fn replacement_text(&self) -> &str;
-    pub fn is_included(&self) -> bool;
-    pub fn replace_result(&self) -> Option<&ReplaceResult>;  // error/success after replacement
-
-    /// Build a diff preview for rendering (highlighted before/after lines).
-    /// `context_lines` controls how many surrounding lines to include.
     pub fn build_preview(&self, context_lines: usize) -> Vec<PreviewLine>;
 }
 ```
 
-`build_preview` moves the diff logic that `scooter.hx` currently reimplicates into core as a first-class public method.
+That method would be misleading because preview generation depends on app-owned context:
 
-### 1.7 — Remove UI state from core
+- current search configuration
+- current input source
+- file content provider
+- replacement caching
+- advanced-regex haystack behavior
 
-- Remove `num_displayed` from `SearchState` — purely a frontend concern, computed from viewport height
-- Keep `view_offset` in core for now (affects keyboard nav logic), exposed via `SearchResultsView`
+Instead preview generation should remain app/controller-owned.
 
-### 1.8 — Update TUI frontend
+### 3.2 - Expose preview generation through `App`
 
-Replace all direct field accesses (`app.current_screen`, `app.search_fields`, `app.popup`, etc.) in `scooter/src/ui/` with `app.view()`.
+Use an API like:
 
----
+```rust
+pub struct PreviewOptions {
+    pub context_lines: usize,
+}
 
-## Phase 2: Documentation and examples
+pub struct PreviewView {
+    pub lines: Vec<PreviewLineView>,
+}
 
-**Goal:** Make it trivial to implement a new frontend without reading scooter-core internals.
+impl App {
+    pub fn preview_for(
+        &self,
+        result_id: SearchResultId,
+        options: PreviewOptions,
+    ) -> anyhow::Result<PreviewView>;
+}
+```
 
-### 2.1 — `scooter-core/FRONTEND_GUIDE.md`
-- Architecture overview
-- What `App` manages vs what the frontend is responsible for
-- Two integration patterns:
-  - **Async loop** (TUI): `tokio::select!` over input + `app.event_recv()`
-  - **Poll on frame** (plugin): call `app.poll_background_events()` before rendering
-- View rendering reference — what each view type contains and when it appears
-- Operation reference — `start_search`, `toggle_inclusion`, etc.
+This keeps preview generation:
 
-### 2.2 — `examples/minimal_frontend.rs`
-- Bare-bones non-TUI frontend (no ratatui)
-- Uses direct operation methods (`start_search`, `toggle_inclusion`, `start_replace`)
-- Uses `poll_background_events()` rather than an async select loop
-- Useful reference for future plugin authors
+- consistent across frontends
+- correctly tied to the current app/session context
+- reusable by both TUI and plugins
 
-### 2.3 — API documentation
-- All public items in scooter-core have doc comments
-- Key types have examples
-- Clear frontend/core responsibility boundary documented
+### 3.3 - Give results stable frontend-facing IDs
 
----
+If frontends need to target specific results for preview, inclusion toggling, or navigation, expose a stable `SearchResultId` instead of making them rely on internal vector positions as the only identity.
+
+Indices may still be used in views for display ordering, but the controller API should have a real ID type available.
+
+## Phase 4: TUI migration
+
+**Goal:** migrate the ratatui frontend to the new controller/view/effect surfaces and verify the design before external plugin adoption.
+
+### 4.1 - TUI input path
+
+Keep:
+
+- crossterm event ingestion
+- terminal setup and teardown
+- keybinding config
+
+Change:
+
+- translate key events to `AppAction`
+- dispatch through the same controller API plugins use
+- drain `AppEffect`s rather than reaching into internal core state/events
+
+### 4.2 - TUI rendering path
+
+Replace direct reads of app internals with `app.view()`.
+
+The ratatui renderer should only consume public view structs.
+
+### 4.3 - TUI viewport ownership
+
+Move scroll position and page sizing fully into the `scooter` crate.
+
+The TUI should compute:
+
+- how many results fit
+- which slice is visible
+- how the viewport tracks the selected result
+
+That logic should no longer mutate core state during render.
+
+## Phase 5: Documentation and examples
+
+**Goal:** make frontend implementation straightforward without reading `scooter-core` internals.
+
+### 5.1 - Add `scooter-core/FRONTEND_GUIDE.md`
+
+Document:
+
+- architecture overview
+- what `App` owns
+- what a frontend owns
+- action dispatch
+- effect handling
+- view rendering
+- preview generation
+
+Include two integration patterns:
+
+- TUI/event-driven frontend
+- plugin/frame-polled frontend
+
+### 5.2 - Add `examples/minimal_frontend.rs`
+
+Create a tiny non-ratatui example that:
+
+- constructs `App`
+- dispatches actions directly
+- pumps/drains effects
+- renders basic output from `AppView`
+
+This should be the canonical "thin frontend" example.
+
+### 5.3 - Add API docs to all public frontend-facing items
+
+Document:
+
+- `AppInit`
+- `SessionOptions`
+- `AppAction`
+- `AppEffect`
+- `AppView`
+- preview APIs
+- result IDs / field IDs
+
+## Cleanup rules during the refactor
+
+As the work proceeds:
+
+- remove any public exposure that exists only for the TUI's current implementation
+- do not preserve public API just because it is already there
+- prefer small, stable public DTOs over references to internal structs
+- prefer one coherent action/effect model over multiple partially overlapping entry points
+- keep ratatui-specific concerns in `scooter`, not `scooter-core`
 
 ## Deferred / future
 
-### Rendering utilities
+### Syntax highlighting ownership
 
-Syntax highlighting (`read_lines_range_highlighted()`, syntect) currently lives in scooter-core. This is fine for now since both the TUI and `scooter.hx` use it. Revisit if editor plugins want to use their own highlighting instead.
+Syntax highlighting can remain in core for now if both the TUI and editor plugins benefit from reusing it.
 
-### Config
+Revisit later if editor integrations want to defer entirely to editor-native highlighting.
 
-Which config is relevant per frontend type — documented here for reference, not action yet:
+### Config relevance per frontend
 
-| Config field | TUI | Editor plugin |
-|---|---|---|
-| `editor_open` | ✅ | ❌ (the editor handles this) |
-| `search` | ✅ | ✅ |
-| `keys` | ✅ | ❌ (editor manages keybindings) |
-| `preview.syntax_highlighting` | ✅ | ✅ or defer to editor |
-| `preview.syntax_highlighting_theme` | ✅ | ❌ (use editor's theme) |
-| `preview.wrap_text` | ✅ | ✅ |
-| `style.true_color` | ✅ | ❌ (editor handles this) |
+Not every config field applies equally to every frontend.
 
-Frontends can safely ignore irrelevant config fields — they don't affect core logic.
+That is fine.
 
-### Field state cleanup
+Examples:
 
-Review `TextField`, `CheckboxField`, `SearchFields` to confirm there's no rendering logic mixed into them. Expected to be clean already but worth verifying.
+- `editor_open` is relevant to the terminal app, but likely irrelevant to an editor plugin
+- keybinding config is relevant to the TUI, but not to editor-native bindings
+- preview and search behavior may be shared
 
----
+The frontend guide should document which config areas are commonly relevant, but this does not need to block the abstraction work.
 
 ## Success criteria
 
-After this work, a frontend needs only to:
+After this work, a new frontend should only need to:
 
-1. Call `App::new()` to create an instance
-2. Either:
-   - Call `app.start_search(params)` / `app.toggle_inclusion(idx)` / etc. directly (plugin-style), or
-   - Translate input to `KeyEvent` and call `app.handle_key_event()` (TUI-style)
-3. Call `app.poll_background_events()` each frame, or drive `app.event_recv()` in an async loop
-4. Call `app.view()` and render the result using their own UI framework
-5. Handle `EventHandlingResult::Exit` and any frontend-specific events (`LaunchEditor`, `ExitAndReplace`)
+1. Construct `App` from explicit init data
+2. Translate frontend input into `AppAction` values, or call equivalent direct helpers
+3. Advance the app and drain `AppEffect`s without owning Scooter's internal async model
+4. Render from `app.view()` only
+5. Request previews through the public preview API
+6. Handle frontend-specific effects such as open-location or exit behavior
 
-It should never need to reimplement search/replace state machines, selection logic, diff generation, or file I/O.
+It should not need to:
+
+- inspect `Screen`, `SearchState`, `SearchFields`, `Selected`, or `UIState`
+- participate in a Tokio `select!` loop
+- manage replacement preview logic itself
+- implement its own search/replace lifecycle
+- own core selection semantics
+- know anything about ratatui
