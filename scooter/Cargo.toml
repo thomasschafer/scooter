@@ -31,7 +31,7 @@ simple-log = "2.4.0"
 two-face = { version = "0.5.1", default-features = false, features = [
   "syntect-default-onig",
 ] }
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.50.0", features = ["full"] }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.0"
 
