@@ -43,7 +43,7 @@ steel-core = { version = "0.8.2", features = [
 ], optional = true }
 steel-derive = { version = "0.8.2", optional = true }
 two-face = { version = "0.5.1", default-features = false, features = ["syntect-default-onig"] }
-tempfile = "3.24.0"
+tempfile = "3.27.0"
 termini = "1.0.0"
 tokio = { version = "1.50.0", features = ["full"] }
 toml = "1.0.6"
