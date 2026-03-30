@@ -32,7 +32,7 @@ two-face = { version = "0.5.1", default-features = false, features = [
   "syntect-default-onig",
 ] }
 tokio = { version = "1.50.0", features = ["full"] }
-unicode-segmentation = "1.12.0"
+unicode-segmentation = "1.13.2"
 unicode-width = "0.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
