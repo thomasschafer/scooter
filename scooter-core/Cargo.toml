@@ -35,7 +35,7 @@ lru = "0.16.3"
 rayon = "1.11.0"
 regex = "1.12.3"
 serde = "1.0.228"
-similar = "2.7.0"
+similar = "3.0.0"
 simple-log = "2.4.0"
 steel-core = { version = "0.8.2", features = [
   "dylibs",
