@@ -412,9 +412,9 @@ fn render_num_results(
     let left_content_1 = format!("Results: {num_results}");
     let left_content_2 = if is_complete {
         if is_search_empty {
-        " [Search is empty]"
-        }else{
-        " [Search complete]"
+            " [Search is empty]"
+        } else {
+            " [Search complete]"
         }
     } else {
         " [Still searching...]"
@@ -433,8 +433,8 @@ fn render_num_results(
     let accessory_colour = if is_complete {
         if is_search_empty {
             Color::Red
-        }else{
-        Color::Green
+        } else {
+            Color::Green
         }
     } else {
         Color::Blue
