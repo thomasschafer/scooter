@@ -267,6 +267,7 @@ fn render_search_results(
     frame: &mut Frame<'_>,
     input_source: &InputSource,
     is_complete: bool,
+    is_search_empty: bool,
     search_state: &mut SearchState,
     time_taken: Duration,
     area: Rect,
@@ -288,11 +289,11 @@ fn render_search_results(
     .areas(area);
 
     let num_results = search_state.results.len();
-
     render_num_results(
         frame,
         num_results_area,
         num_results,
+        is_search_empty,
         is_complete,
         time_taken,
         preview_update_status,
@@ -403,13 +404,18 @@ fn render_num_results(
     frame: &mut Frame<'_>,
     area: Rect,
     num_results: usize,
+    is_search_empty: bool,
     is_complete: bool,
     time_taken: Duration,
     num_replacements_updates_in_progress: Option<(usize, usize)>,
 ) {
     let left_content_1 = format!("Results: {num_results}");
     let left_content_2 = if is_complete {
+        if is_search_empty {
+        " [Search is empty]"
+        }else{
         " [Search complete]"
+        }
     } else {
         " [Still searching...]"
     };
@@ -419,9 +425,17 @@ fn render_num_results(
         left_content_1.len() + left_content_2.len() + mid_content.len() + right_content.len(),
     );
     let spacers_each_side = " ".repeat(num_total_spacers / 2);
-
-    let accessory_colour = if is_complete {
+    let time_colour = if is_complete {
         Color::Green
+    } else {
+        Color::Blue
+    };
+    let accessory_colour = if is_complete {
+        if is_search_empty {
+            Color::Red
+        }else{
+        Color::Green
+        }
     } else {
         Color::Blue
     };
@@ -433,7 +447,7 @@ fn render_num_results(
             Span::raw(spacers_each_side.clone()),
             Span::raw(mid_content).fg(Color::Blue),
             Span::raw(spacers_each_side),
-            Span::raw(right_content).fg(accessory_colour),
+            Span::raw(right_content).fg(time_colour),
         ]),
         area,
     );
@@ -1843,6 +1857,7 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     frame,
                     &app.input_source,
                     is_complete,
+                    app.search_fields.search().text().is_empty(),
                     state,
                     elapsed,
                     results,
