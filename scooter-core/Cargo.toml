@@ -45,7 +45,7 @@ steel-derive = { version = "0.8.2", optional = true }
 two-face = { version = "0.5.1", default-features = false, features = ["syntect-default-onig"] }
 tempfile = "3.27.0"
 termini = "1.0.0"
-tokio = { version = "1.51.1", features = ["full"] }
+tokio = { version = "1.52.1", features = ["full"] }
 toml = "1.1.2"
 unicode-width = "0.2.0"
 
