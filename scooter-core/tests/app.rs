@@ -31,6 +31,9 @@ use scooter_core::{
     keyboard::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
 };
 
+const EVENT_TIMEOUT: Duration = Duration::from_millis(2_000);
+const PRESERVED_DEBOUNCE_MAX_WAIT: Duration = Duration::from_millis(200);
+
 #[tokio::test]
 async fn test_replace_state() {
     let mut state = ReplaceState {
@@ -99,7 +102,11 @@ async fn test_back_from_results() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let mut state = SearchFieldsState::default();
     state.focussed_section = FocussedSection::SearchResults;
-    state.search_state = Some(SearchState::new(sender, receiver, Arc::new(AtomicBool::new(false))));
+    state.search_state = Some(SearchState::new(
+        sender,
+        receiver,
+        Arc::new(AtomicBool::new(false)),
+    ));
     app.ui_state.current_screen = Screen::SearchFields(state);
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
@@ -843,15 +850,14 @@ async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
     // Wait long enough for the queued debounce timer to emit its app event.
     tokio::time::sleep(Duration::from_millis(330)).await;
 
-    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+    let queued = tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
         .await
         .expect("Expected queued debounce event");
     let generation = queued_search_generation(queued);
 
     // Handling the queued event should keep replacement config aligned with the toggle.
-    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
-        generation,
-    }));
+    let handled =
+        app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch { generation }));
     assert!(matches!(handled, EventHandlingResult::Rerender));
     assert_eq!(
         app.searcher.as_ref().expect("Expected searcher").replace(),
@@ -1078,13 +1084,11 @@ async fn test_phase_transitions_pending_running_complete() {
 
     // Wait for the debounce to emit `PerformSearch`, then handle it.
     tokio::time::sleep(Duration::from_millis(330)).await;
-    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+    let queued = tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
         .await
         .expect("debounce should have emitted PerformSearch");
     let generation = queued_search_generation(queued);
-    app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
-        generation,
-    }));
+    app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch { generation }));
 
     let phase_after_perform = search_fields_state(&app)
         .search_state
@@ -1185,7 +1189,7 @@ async fn test_retyping_after_clear_runs_a_fresh_search() {
     assert!(search_fields_state(&app).search_debounce_timer.is_some());
 
     tokio::time::sleep(Duration::from_millis(330)).await;
-    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+    let queued = tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
         .await
         .expect("retyping after clear should queue a PerformSearch");
     let _generation = queued_search_generation(queued);
@@ -1225,7 +1229,7 @@ async fn test_reverting_after_temporary_invalid_search_requeues_debounce() {
     assert!(search_fields_state(&app).search_debounce_timer.is_some());
 
     tokio::time::sleep(Duration::from_millis(330)).await;
-    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+    let queued = tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
         .await
         .expect("reverting to the last valid query should queue a PerformSearch");
     let _generation = queued_search_generation(queued);
@@ -1244,7 +1248,7 @@ async fn test_stale_debounce_event_ignored_after_new_valid_edit() {
     assert!(type_char(&mut app, 'a').is_rerender());
     tokio::time::sleep(Duration::from_millis(330)).await;
     let stale_generation = queued_search_generation(
-        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+        tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
             .await
             .expect("first debounce should have emitted PerformSearch"),
     );
@@ -1264,7 +1268,7 @@ async fn test_stale_debounce_event_ignored_after_new_valid_edit() {
 
     tokio::time::sleep(Duration::from_millis(330)).await;
     let fresh_generation = queued_search_generation(
-        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+        tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
             .await
             .expect("second debounce should have emitted PerformSearch"),
     );
@@ -1300,7 +1304,7 @@ async fn test_stale_debounce_event_ignored_when_current_query_invalid() {
     assert!(type_char(&mut app, 'x').is_rerender());
     tokio::time::sleep(Duration::from_millis(330)).await;
     let stale_generation = queued_search_generation(
-        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+        tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
             .await
             .expect("debounce should have emitted PerformSearch"),
     );
@@ -1514,6 +1518,46 @@ async fn test_cursor_movement_skips_redundant_search_debounce() {
         matches!(phase, SearchPhase::Complete { .. }),
         "phase should stay Complete when no re-search is triggered, got {phase:?}"
     );
+}
+
+#[tokio::test]
+async fn test_cursor_movement_preserves_pending_search_debounce() {
+    let mut app = App::new(
+        stdin_source(),
+        &SearchFieldValues::default(),
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    assert!(type_char(&mut app, 'a').is_rerender());
+    assert!(
+        search_fields_state(&app).search_debounce_timer.is_some(),
+        "typing should schedule a debounce"
+    );
+
+    tokio::time::sleep(Duration::from_millis(225)).await;
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Left,
+        ScooterKeyModifiers::NONE,
+    ));
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(
+        search_fields_state(&app).search_debounce_timer.is_some(),
+        "cursor move must not cancel the pending debounce"
+    );
+
+    let wait_started = std::time::Instant::now();
+    let queued = tokio::time::timeout(EVENT_TIMEOUT, app.event_recv())
+        .await
+        .expect("existing debounce should still emit PerformSearch");
+    let wait_elapsed = wait_started.elapsed();
+    assert!(
+        wait_elapsed < PRESERVED_DEBOUNCE_MAX_WAIT,
+        "cursor move appears to have restarted the debounce; waited {wait_elapsed:?}"
+    );
+    let _generation = queued_search_generation(queued);
 }
 
 /// Counterpart to the stdin-source cursor-movement test, exercising

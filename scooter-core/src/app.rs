@@ -534,6 +534,15 @@ impl SearchFieldsState {
         self.pending_search_generation = None;
     }
 
+    /// Cancel both async refresh paths owned by this state: any pending
+    /// preview-replacement update and any pending debounced search. Does
+    /// *not* signal an in-flight search task to stop — that's
+    /// `App::cancel_search` / `SearchState::cancel`.
+    pub fn cancel_pending_async_work(&mut self) {
+        self.cancel_preview_updates();
+        self.abort_search_debounce();
+    }
+
     pub fn next_search_generation(&mut self) -> u64 {
         let generation = self.next_search_generation;
         self.next_search_generation = self.next_search_generation.wrapping_add(1);
@@ -1052,7 +1061,8 @@ impl<'a> App {
     fn handle_app_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
         match app_event {
             AppEvent::PerformSearch { generation } => {
-                let Screen::SearchFields(search_fields_state) = &mut self.ui_state.current_screen else {
+                let Screen::SearchFields(search_fields_state) = &mut self.ui_state.current_screen
+                else {
                     return EventHandlingResult::None;
                 };
                 if search_fields_state.pending_search_generation != Some(generation) {
@@ -1097,8 +1107,7 @@ impl<'a> App {
         self.cancel_replacement();
 
         if let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen {
-            search_fields_state.cancel_preview_updates();
-            search_fields_state.abort_search_debounce();
+            search_fields_state.cancel_pending_async_work();
         }
     }
 
@@ -1210,14 +1219,10 @@ impl<'a> App {
             return;
         }
 
-        {
-            let search_fields_state = self
-                .ui_state
-                .current_screen
-                .unwrap_search_fields_state_mut();
-            search_fields_state.cancel_preview_updates();
-            search_fields_state.abort_search_debounce();
-        }
+        self.ui_state
+            .current_screen
+            .unwrap_search_fields_state_mut()
+            .cancel_pending_async_work();
 
         let Some(search_config) = self.validate_fields().unwrap() else {
             self.invalidate_search_state_and_key();
@@ -1240,8 +1245,7 @@ impl<'a> App {
             );
             return;
         };
-        search_fields_state.cancel_preview_updates();
-        search_fields_state.abort_search_debounce();
+        search_fields_state.cancel_pending_async_work();
 
         // Empty searches are short-circuited upstream (`enter_chars_into_field`
         // clears state and returns early); any remaining path that reaches
@@ -1615,25 +1619,24 @@ impl<'a> App {
             return self.handle_replacement_config_change();
         }
 
-        {
-            let sfs = self
-                .ui_state
-                .current_screen
-                .unwrap_search_fields_state_mut();
-            sfs.cancel_preview_updates();
-            sfs.abort_search_debounce();
-        }
-
         // Empty search: cancel any in-flight work, drop results, and skip the
         // debounce entirely. Rendering the "Search is empty" banner from live
         // text (see view.rs) means this produces no transient "Still
         // searching…" flash.
         if self.search_fields.search().text().is_empty() {
+            self.ui_state
+                .current_screen
+                .unwrap_search_fields_state_mut()
+                .cancel_pending_async_work();
             self.clear_search_state_and_key();
             return EventHandlingResult::Rerender;
         }
 
         if !self.revalidate_and_store_searcher() {
+            self.ui_state
+                .current_screen
+                .unwrap_search_fields_state_mut()
+                .cancel_pending_async_work();
             self.invalidate_search_state_and_key();
             return EventHandlingResult::Rerender;
         }
@@ -1651,6 +1654,7 @@ impl<'a> App {
         if sfs.last_scheduled_key.as_deref() == Some(&key) {
             return EventHandlingResult::Rerender;
         }
+        sfs.cancel_pending_async_work();
 
         // Existing results are now stale w.r.t. the user's current query;
         // keep them visible (intentional — no flicker) but flip the phase so
@@ -1665,9 +1669,9 @@ impl<'a> App {
         sfs.last_scheduled_key = Some(Box::new(key));
         sfs.pending_search_generation = Some(generation);
         sfs.search_debounce_timer = Some(spawn_debounced(SEARCH_DEBOUNCE, move || {
-            let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch {
-                generation,
-            })));
+            let _ = event_sender.send(Event::Internal(InternalEvent::App(
+                AppEvent::PerformSearch { generation },
+            )));
         }));
         EventHandlingResult::Rerender
     }

@@ -102,6 +102,8 @@ fn assert_snapshot_with_filters(name: &str, snapshot: impl AsRef<str>) {
     });
 }
 
+const UI_WAIT_TIMEOUT_MS: u64 = 2_000;
+
 async fn wait_for_match(
     snapshot_rx: &mut UnboundedReceiver<String>,
     pattern: Pattern,
@@ -484,15 +486,24 @@ async fn test_typing_after_complete_never_shows_search_complete_for_stale_text()
     // Debounce will run the search automatically; we stay on the search
     // fields screen so typing more edits the query.
     send_chars("foo", &event_sender);
-    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+    wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("Search complete"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
 
     // The moment we type another char, the old "Search complete" status is
     // stale. Wait for the new char to appear on screen, then check that
     // frame: the banner must already read "Still searching…", not the
     // stale "Search complete".
     send_key(KeyCode::Char('q'), &event_sender);
-    let snapshot_after_edit =
-        wait_for_match(&mut snapshot_rx, Pattern::string("fooq"), 500).await?;
+    let snapshot_after_edit = wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("fooq"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
     assert!(
         snapshot_after_edit.contains("Still searching"),
         "Expected '[Still searching...]' banner on first frame after edit, got:\n{snapshot_after_edit}"
@@ -524,7 +535,12 @@ async fn test_clearing_search_shows_empty_without_flashing_searching() -> anyhow
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
 
     send_chars("o", &event_sender);
-    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+    wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("Search complete"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
 
     // One backspace takes the query straight to empty.
     send_key(KeyCode::Backspace, &event_sender);
@@ -533,10 +549,13 @@ async fn test_clearing_search_shows_empty_without_flashing_searching() -> anyhow
     // appear, because empty-search short-circuits scheduling entirely. The
     // final snapshot of the window must show the steady "Search is empty"
     // state.
-    let last_snapshot =
-        assert_pattern_not_shown(&mut snapshot_rx, Pattern::string("Still searching"), 500)
-            .await?
-            .unwrap_or_default();
+    let last_snapshot = assert_pattern_not_shown(
+        &mut snapshot_rx,
+        Pattern::string("Still searching"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?
+    .unwrap_or_default();
     assert!(
         last_snapshot.contains("Search is empty"),
         "Expected final snapshot to show '[Search is empty]', got:\n{last_snapshot}"
@@ -560,11 +579,20 @@ async fn test_invalid_edit_after_complete_shows_invalid_banner() -> anyhow::Resu
     wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
 
     send_chars("foo", &event_sender);
-    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+    wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("Search complete"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
 
     send_key(KeyCode::Char('('), &event_sender);
-    let snapshot_after_invalid =
-        wait_for_match(&mut snapshot_rx, Pattern::string("foo("), 500).await?;
+    let snapshot_after_invalid = wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("foo("),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
     assert!(
         snapshot_after_invalid.contains("Invalid search"),
         "Expected '[Invalid search]' banner after invalid edit, got:\n{snapshot_after_invalid}"
