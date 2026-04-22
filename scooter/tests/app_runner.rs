@@ -434,6 +434,117 @@ async fn test_search_current_dir() -> anyhow::Result<()> {
     shutdown(event_sender, run_handle).await
 }
 
+/// Consume all snapshots emitted within `duration_ms` and bail if any match
+/// `forbidden`. Returns the final snapshot seen (if any) so callers can
+/// assert on the steady-state without racing against renderer quiescence.
+async fn assert_pattern_not_shown(
+    snapshot_rx: &mut UnboundedReceiver<String>,
+    forbidden: Pattern,
+    duration_ms: u64,
+) -> anyhow::Result<Option<String>> {
+    let duration = Duration::from_millis(duration_ms);
+    let start = Instant::now();
+    let mut last_snapshot = None;
+    while start.elapsed() <= duration {
+        tokio::select! {
+            snapshot = snapshot_rx.recv() => {
+                match snapshot {
+                    Some(s) if forbidden.is_match(&s) => {
+                        bail!(
+                            "Forbidden pattern {:?} appeared in frame within {duration_ms}ms:\n{s}",
+                            forbidden.as_str().escape_debug(),
+                        );
+                    }
+                    Some(s) => { last_snapshot = Some(s); }
+                    None => break,
+                }
+            }
+            () = sleep(duration.saturating_sub(start.elapsed())) => break,
+        }
+    }
+    Ok(last_snapshot)
+}
+
+/// Regression test: when the user types into the search field after a search
+/// has completed, the banner must flip to "Still searching…" on the next
+/// render. It must not transiently read "Search complete" against the new
+/// (unsearched) query.
+#[tokio::test]
+#[serial]
+async fn test_typing_after_complete_never_shows_search_complete_for_stale_text()
+-> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => text!("one foo", "two foo", "no match here"),
+    );
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    // Debounce will run the search automatically; we stay on the search
+    // fields screen so typing more edits the query.
+    send_chars("foo", &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+
+    // The moment we type another char, the old "Search complete" status is
+    // stale. Wait for the new char to appear on screen, then check that
+    // frame: the banner must already read "Still searching…", not the
+    // stale "Search complete".
+    send_key(KeyCode::Char('q'), &event_sender);
+    let snapshot_after_edit =
+        wait_for_match(&mut snapshot_rx, Pattern::string("fooq"), 500).await?;
+    assert!(
+        snapshot_after_edit.contains("Still searching"),
+        "Expected '[Still searching...]' banner on first frame after edit, got:\n{snapshot_after_edit}"
+    );
+    assert!(
+        !snapshot_after_edit.contains("Search complete"),
+        "Banner still shows '[Search complete]' against stale text:\n{snapshot_after_edit}"
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
+/// Regression test: clearing the search must flip to "Search is empty"
+/// immediately. It must not transiently show "Still searching…" while the
+/// (now redundant) debounce would have fired.
+///
+/// Single-char search used deliberately: one backspace takes us straight to
+/// empty, so any "Still searching…" seen afterwards can only be the old bug
+/// (empty-search spawning a redundant search task through the debounce).
+#[tokio::test]
+#[serial]
+async fn test_clearing_search_shows_empty_without_flashing_searching() -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => text!("one o", "two o"),
+    );
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    send_chars("o", &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+
+    // One backspace takes the query straight to empty.
+    send_key(KeyCode::Backspace, &event_sender);
+
+    // Well past the old debounce window: no "Still searching…" flash should
+    // appear, because empty-search short-circuits scheduling entirely. The
+    // final snapshot of the window must show the steady "Search is empty"
+    // state.
+    let last_snapshot =
+        assert_pattern_not_shown(&mut snapshot_rx, Pattern::string("Still searching"), 500)
+            .await?
+            .unwrap_or_default();
+    assert!(
+        last_snapshot.contains("Search is empty"),
+        "Expected final snapshot to show '[Search is empty]', got:\n{last_snapshot}"
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
 #[tokio::test]
 #[serial]
 async fn test_error_when_search_text_is_empty() -> anyhow::Result<()> {

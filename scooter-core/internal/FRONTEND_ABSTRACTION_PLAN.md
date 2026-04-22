@@ -88,8 +88,7 @@ pub struct SearchResultsView<'a> {
     pub primary_selected_idx: usize,
     pub selected_indices: SelectedIndices<'a>,  // Helper for is_selected()
     pub view_offset: usize,  // TODO: Consider computed visible_window() approach
-    pub search_started: Instant,
-    pub search_completed: Option<Instant>,
+    pub phase: SearchPhase,  // Pending / Running { started } / Complete { started, completed }
     pub replacements_in_progress: Option<(usize, usize)>,
 }
 

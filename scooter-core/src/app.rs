@@ -45,8 +45,20 @@ use crate::{
     },
 };
 
-const SEARCH_DEBOUNCE_MS: u64 = 300;
-const PREVIEW_DEBOUNCE_MS: u64 = 300;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(300);
+const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Spawn a task that sleeps for `delay` and then runs `on_fire`. Used to
+/// debounce both search and preview-replacement refreshes.
+fn spawn_debounced<F>(delay: Duration, on_fire: F) -> JoinHandle<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        on_fire();
+    })
+}
 
 #[derive(Debug, Clone)]
 pub enum InputSource {
@@ -145,6 +157,41 @@ enum Selected {
     Multi(MultiSelected),
 }
 
+/// Lifecycle of a single search, modelled explicitly so the view and the
+/// event handlers can't disagree about what's currently happening.
+///
+/// Transitions: `Pending` → `Running` → `Complete`. `Pending` models the
+/// window between a user edit and the debounced search actually starting;
+/// `Running` is an in-flight search; `Complete` is terminal.
+#[derive(Clone, Copy, Debug)]
+pub enum SearchPhase {
+    Pending,
+    Running {
+        started: Instant,
+    },
+    Complete {
+        started: Instant,
+        completed: Instant,
+    },
+}
+
+impl SearchPhase {
+    pub fn is_complete(self) -> bool {
+        matches!(self, SearchPhase::Complete { .. })
+    }
+
+    /// Wall-clock time for the search this phase describes. `None` for
+    /// `Pending` — the debounce hasn't fired yet, so there's no meaningful
+    /// elapsed time to report.
+    pub fn elapsed(self) -> Option<Duration> {
+        match self {
+            SearchPhase::Pending => None,
+            SearchPhase::Running { started } => Some(started.elapsed()),
+            SearchPhase::Complete { started, completed } => Some(completed.duration_since(started)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SearchState {
     pub results: Vec<SearchResultWithReplacement>,
@@ -158,8 +205,7 @@ pub struct SearchState {
     processing_sender: UnboundedSender<BackgroundProcessingEvent>,
 
     pub last_render: Instant,
-    pub search_started: Instant,
-    pub search_completed: Option<Instant>,
+    pub phase: SearchPhase,
     pub cancelled: Arc<AtomicBool>,
 }
 
@@ -177,8 +223,9 @@ impl SearchState {
             processing_sender,
             processing_receiver,
             last_render: Instant::now(),
-            search_started: Instant::now(),
-            search_completed: None,
+            phase: SearchPhase::Running {
+                started: Instant::now(),
+            },
             cancelled,
         }
     }
@@ -341,8 +388,26 @@ impl SearchState {
         }
     }
 
-    pub fn set_search_completed_now(&mut self) {
-        self.search_completed = Some(Instant::now());
+    /// Transition `Running → Complete`. No-op from any other phase — the
+    /// search this completion is for has been superseded.
+    pub fn set_complete_now(&mut self) {
+        if let SearchPhase::Running { started } = self.phase {
+            self.phase = SearchPhase::Complete {
+                started,
+                completed: Instant::now(),
+            };
+        }
+    }
+
+    pub fn set_pending(&mut self) {
+        self.phase = SearchPhase::Pending;
+    }
+
+    /// Signal the background search task for this state to stop. The task
+    /// polls this flag and terminates at the next opportunity; any batches
+    /// it had already queued are filtered out in `add_search_results`.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 }
 
@@ -374,12 +439,45 @@ impl PreviewUpdateStatus {
     }
 }
 
+/// Snapshot of every input that affects *search* results (not replacement).
+/// Used to skip scheduling debounced searches when the inputs haven't changed
+/// since we last scheduled — cursor movements and idempotent toggles don't
+/// need to re-run a search.
+///
+/// Deliberately excludes `replacement_text` (only affects preview) and
+/// `interpret_escape_sequences` (only affects replacement interpretation).
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct SearchKey {
+    search_text: String,
+    fixed_strings: bool,
+    advanced_regex: bool,
+    match_whole_word: bool,
+    match_case: bool,
+    multiline: bool,
+    dir: Option<DirSearchKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirSearchKey {
+    include_globs: String,
+    exclude_globs: String,
+    include_hidden: bool,
+    include_git_folders: bool,
+    directory: PathBuf,
+}
+
 #[derive(Debug)]
 pub struct SearchFieldsState {
     pub focussed_section: FocussedSection,
     pub search_state: Option<SearchState>, // Becomes Some when search begins
     pub search_debounce_timer: Option<JoinHandle<()>>,
     pub preview_update_state: Option<PreviewUpdateStatus>,
+    /// Key of the most recently scheduled/run search. Cleared whenever
+    /// `search_state` is cleared (e.g. on empty text) so that re-typing the
+    /// same query runs the search again. Boxed to keep the `Screen` enum
+    /// compact.
+    pub last_scheduled_key: Option<Box<SearchKey>>,
 }
 
 impl Default for SearchFieldsState {
@@ -389,6 +487,7 @@ impl Default for SearchFieldsState {
             search_state: None,
             search_debounce_timer: None,
             preview_update_state: None,
+            last_scheduled_key: None,
         }
     }
 }
@@ -412,6 +511,12 @@ impl SearchFieldsState {
                 .store(true, Ordering::Relaxed);
         }
         self.preview_update_state = None;
+    }
+
+    pub fn abort_search_debounce(&mut self) {
+        if let Some(timer) = self.search_debounce_timer.take() {
+            timer.abort();
+        }
     }
 }
 
@@ -938,11 +1043,11 @@ impl<'a> App {
 
     fn cancel_search(&mut self) {
         if let Screen::SearchFields(SearchFieldsState {
-            search_state: Some(SearchState { cancelled, .. }),
+            search_state: Some(state),
             ..
-        }) = &mut self.ui_state.current_screen
+        }) = &self.ui_state.current_screen
         {
-            cancelled.store(true, Ordering::Relaxed);
+            state.cancel();
         }
     }
 
@@ -960,6 +1065,7 @@ impl<'a> App {
 
         if let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen {
             search_fields_state.cancel_preview_updates();
+            search_fields_state.abort_search_debounce();
         }
     }
 
@@ -1078,6 +1184,7 @@ impl<'a> App {
     fn perform_search_already_validated(&mut self) {
         self.cancel_search();
         self.file_content_provider.clear();
+        let key = self.current_search_key();
         let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             log::warn!(
                 "Called perform_search_unwrap on screen {}",
@@ -1086,12 +1193,15 @@ impl<'a> App {
             return;
         };
         search_fields_state.cancel_preview_updates();
-        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-            timer.abort();
-        }
+        search_fields_state.abort_search_debounce();
 
+        // Empty searches are short-circuited upstream (`enter_chars_into_field`
+        // clears state and returns early); any remaining path that reaches
+        // here with empty text should produce no search and no state.
         if self.search_fields.search().text().is_empty() {
             search_fields_state.search_state = None;
+            search_fields_state.last_scheduled_key = None;
+            return;
         }
 
         let (background_processing_sender, background_processing_receiver) =
@@ -1100,7 +1210,7 @@ impl<'a> App {
         let search_state = SearchState::new(
             background_processing_sender.clone(),
             background_processing_receiver,
-            cancelled.clone(),
+            Arc::clone(&cancelled),
         );
 
         let strategy = match &self.searcher {
@@ -1123,12 +1233,13 @@ impl<'a> App {
 
         Self::spawn_search_task(
             strategy,
-            background_processing_sender.clone(),
+            background_processing_sender,
             self.event_channels.sender.clone(),
             cancelled,
         );
 
         search_fields_state.search_state = Some(search_state);
+        search_fields_state.last_scheduled_key = Some(Box::new(key));
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -1317,8 +1428,9 @@ impl<'a> App {
                     ..
                 }) = &mut self.ui_state.current_screen
                 {
-                    state.set_search_completed_now();
-                    if self.run_config.immediate_replace
+                    state.set_complete_now();
+                    if state.phase.is_complete()
+                        && self.run_config.immediate_replace
                         && *focussed_section == FocussedSection::SearchResults
                     {
                         self.perform_replacement();
@@ -1349,6 +1461,20 @@ impl<'a> App {
     where
         I: IntoIterator<Item = SearchResult>,
     {
+        // Skip stale batches. When the user edits the search, we flip the
+        // current state's cancelled flag — any batches the superseded task
+        // had already queued must not be appended, and must not be run
+        // through the new searcher (which would match against unrelated
+        // positions and emit bogus previews).
+        if let Screen::SearchFields(SearchFieldsState {
+            search_state: Some(state),
+            ..
+        }) = &self.ui_state.current_screen
+            && state.cancelled.load(Ordering::Relaxed)
+        {
+            return EventHandlingResult::None;
+        }
+
         let mut rerender = false;
         let searcher = self
             .searcher
@@ -1441,36 +1567,67 @@ impl<'a> App {
             return self.handle_replacement_config_change();
         }
 
-        self.cancel_preview_updates_on_search_fields();
-        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
-            return EventHandlingResult::None;
-        };
-        // Cancel any queued search before validating so invalid edits can't
-        // later trigger a stale PerformSearch with the previous searcher.
-        if let Some(timer) = search_fields_state.search_debounce_timer.take() {
-            timer.abort();
+        {
+            let sfs = self
+                .ui_state
+                .current_screen
+                .unwrap_search_fields_state_mut();
+            sfs.cancel_preview_updates();
+            sfs.abort_search_debounce();
         }
+
+        // Empty search: cancel any in-flight work, drop results, and skip the
+        // debounce entirely. Rendering the "Search is empty" banner from live
+        // text (see view.rs) means this produces no transient "Still
+        // searching…" flash.
+        if self.search_fields.search().text().is_empty() {
+            self.clear_search_state_and_key();
+            return EventHandlingResult::Rerender;
+        }
+
         if !self.revalidate_and_store_searcher() {
             return EventHandlingResult::Rerender;
         }
 
-        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
-            return EventHandlingResult::None;
-        };
-        // Debounce search requests
+        // If every search-relevant input is identical to what we last
+        // scheduled (e.g. cursor keys, or a keystroke that didn't change
+        // any text/checkbox/glob), the previous search is still current —
+        // skip scheduling another.
+        let key = self.current_search_key();
         let event_sender = self.event_channels.sender.clone();
-        search_fields_state.search_debounce_timer = Some(tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+        let sfs = self
+            .ui_state
+            .current_screen
+            .unwrap_search_fields_state_mut();
+        if sfs.last_scheduled_key.as_deref() == Some(&key) {
+            return EventHandlingResult::Rerender;
+        }
+
+        // Existing results are now stale w.r.t. the user's current query;
+        // keep them visible (intentional — no flicker) but flip the phase so
+        // the view shows "Still searching…" rather than "Search complete".
+        // Cancelling also stops any in-flight batches from being appended
+        // — see `add_search_results`.
+        if let Some(state) = sfs.search_state.as_mut() {
+            state.cancel();
+            state.set_pending();
+        }
+        sfs.last_scheduled_key = Some(Box::new(key));
+        sfs.search_debounce_timer = Some(spawn_debounced(SEARCH_DEBOUNCE, move || {
             let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
         }));
         EventHandlingResult::Rerender
     }
 
-    fn cancel_preview_updates_on_search_fields(&mut self) {
+    /// Drop the current search state, cancel any in-flight search, and clear
+    /// the last-scheduled key so that re-typing the same query runs again.
+    fn clear_search_state_and_key(&mut self) {
+        self.cancel_search();
         let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
             return;
         };
-        search_fields_state.cancel_preview_updates();
+        search_fields_state.search_state = None;
+        search_fields_state.last_scheduled_key = None;
     }
 
     fn revalidate_and_store_searcher(&mut self) -> bool {
@@ -1509,12 +1666,10 @@ impl<'a> App {
             );
         }
 
-        // Debounce replacement requests.
         let sender = state.processing_sender.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let cancelled_clone = cancelled.clone();
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(PREVIEW_DEBOUNCE_MS)).await;
+        let cancelled_clone = Arc::clone(&cancelled);
+        let handle = spawn_debounced(PREVIEW_DEBOUNCE, move || {
             let _ = sender.send(BackgroundProcessingEvent::UpdateAllReplacements {
                 cancelled: cancelled_clone,
             });
@@ -1524,7 +1679,10 @@ impl<'a> App {
     }
 
     fn handle_replacement_config_change(&mut self) -> EventHandlingResult {
-        self.cancel_preview_updates_on_search_fields();
+        self.ui_state
+            .current_screen
+            .unwrap_search_fields_state_mut()
+            .cancel_preview_updates();
         if !self.revalidate_and_store_searcher() {
             return EventHandlingResult::Rerender;
         }
@@ -1787,6 +1945,28 @@ impl<'a> App {
             }
         };
         Left(event)
+    }
+
+    pub fn current_search_key(&self) -> SearchKey {
+        let dir = match &self.input_source {
+            InputSource::Directory(directory) => Some(DirSearchKey {
+                include_globs: self.search_fields.include_files().text().to_owned(),
+                exclude_globs: self.search_fields.exclude_files().text().to_owned(),
+                include_hidden: self.run_config.include_hidden,
+                include_git_folders: self.run_config.include_git_folders,
+                directory: directory.clone(),
+            }),
+            InputSource::Stdin(_) => None,
+        };
+        SearchKey {
+            search_text: self.search_fields.search().text().to_owned(),
+            fixed_strings: self.search_fields.fixed_strings().checked,
+            advanced_regex: self.run_config.advanced_regex,
+            match_whole_word: self.search_fields.whole_word().checked,
+            match_case: self.search_fields.match_case().checked,
+            multiline: self.run_config.multiline,
+            dir,
+        }
     }
 
     pub fn validate_fields(&mut self) -> anyhow::Result<Option<Searcher>> {
@@ -2222,14 +2402,13 @@ impl<'a> App {
     pub fn search_has_completed(&self) -> bool {
         if let Screen::SearchFields(SearchFieldsState {
             search_state: Some(state),
-            search_debounce_timer,
             ..
         }) = &self.ui_state.current_screen
         {
-            state.search_completed.is_some()
-                && search_debounce_timer
-                    .as_ref()
-                    .is_none_or(tokio::task::JoinHandle::is_finished)
+            // `Complete` already implies the debounce has fired (state only
+            // transitions out of `Pending` when `perform_search_already_validated`
+            // runs), so no separate debounce-timer check is needed.
+            state.phase.is_complete()
         } else {
             false
         }
@@ -2407,8 +2586,9 @@ mod tests {
             processing_sender,
             cancelled: Arc::new(AtomicBool::new(false)),
             last_render: Instant::now(),
-            search_started: Instant::now(),
-            search_completed: None,
+            phase: SearchPhase::Running {
+                started: Instant::now(),
+            },
         }
     }
 
