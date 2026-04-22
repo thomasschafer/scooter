@@ -88,9 +88,17 @@ pub struct SearchResultsView<'a> {
     pub primary_selected_idx: usize,
     pub selected_indices: SelectedIndices<'a>,  // Helper for is_selected()
     pub view_offset: usize,  // TODO: Consider computed visible_window() approach
-    pub search_started: Instant,
-    pub search_completed: Option<Instant>,
+    pub phase: SearchPhase,
     pub replacements_in_progress: Option<(usize, usize)>,
+}
+
+// View-facing search status used to render the banner truthfully even when
+// stale results remain visible.
+pub enum SearchPhase {
+    Pending,
+    Invalid,
+    Running { started: Instant },
+    Complete { started: Instant, completed: Instant },
 }
 
 // Helper to check if index is selected without exposing internal Selected enum

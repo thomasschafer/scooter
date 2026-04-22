@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
 };
 use scooter_core::{
-    app::{App, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
+    app::{App, Event, FocussedSection, InputSource, Popup, Screen, SearchPhase, SearchState},
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
@@ -258,17 +258,19 @@ fn display_duration(duration: Duration) -> String {
     format!("{seconds}.{milliseconds:03}s")
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::fn_params_excessive_bools
-)]
+#[derive(Clone, Copy)]
+enum BannerStatus {
+    Empty,
+    Invalid,
+    InProgress,
+    Complete,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_search_results(
     frame: &mut Frame<'_>,
     input_source: &InputSource,
-    is_complete: bool,
     search_state: &mut SearchState,
-    time_taken: Duration,
     area: Rect,
     theme: Option<&Theme>,
     true_colour: bool,
@@ -288,13 +290,17 @@ fn render_search_results(
     .areas(area);
 
     let num_results = search_state.results.len();
-
+    let status = match search_state.phase {
+        SearchPhase::Invalid => BannerStatus::Invalid,
+        _ if search_state.phase.is_complete() => BannerStatus::Complete,
+        _ => BannerStatus::InProgress,
+    };
     render_num_results(
         frame,
         num_results_area,
         num_results,
-        is_complete,
-        time_taken,
+        status,
+        search_state.phase.elapsed(),
         preview_update_status,
     );
 
@@ -399,31 +405,49 @@ fn render_search_results(
     }
 }
 
+fn render_empty_search_banner(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    num_replacements_updates_in_progress: Option<(usize, usize)>,
+) {
+    let [num_results_area, _] =
+        Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(area);
+    render_num_results(
+        frame,
+        num_results_area,
+        0,
+        BannerStatus::Empty,
+        None,
+        num_replacements_updates_in_progress,
+    );
+}
+
 fn render_num_results(
     frame: &mut Frame<'_>,
     area: Rect,
     num_results: usize,
-    is_complete: bool,
-    time_taken: Duration,
+    status: BannerStatus,
+    time_taken: Option<Duration>,
     num_replacements_updates_in_progress: Option<(usize, usize)>,
 ) {
     let left_content_1 = format!("Results: {num_results}");
-    let left_content_2 = if is_complete {
-        " [Search complete]"
-    } else {
-        " [Still searching...]"
+    let (left_content_2, accessory_colour) = match status {
+        BannerStatus::Empty => (" [Search is empty]", Color::Red),
+        BannerStatus::Invalid => (" [Invalid search]", Color::Red),
+        BannerStatus::InProgress => (" [Still searching...]", Color::Blue),
+        BannerStatus::Complete => (" [Search complete]", Color::Green),
     };
     let mid_content = preview_update_status(num_replacements_updates_in_progress);
-    let right_content = format!(" [Time taken: {}]", display_duration(time_taken));
+    let right_content = time_taken
+        .map(|t| format!(" [Time taken: {}]", display_duration(t)))
+        .unwrap_or_default();
     let num_total_spacers = (area.width as usize).saturating_sub(
         left_content_1.len() + left_content_2.len() + mid_content.len() + right_content.len(),
     );
     let spacers_each_side = " ".repeat(num_total_spacers / 2);
-
-    let accessory_colour = if is_complete {
-        Color::Green
-    } else {
-        Color::Blue
+    let time_colour = match status {
+        BannerStatus::Complete => Color::Green,
+        BannerStatus::Empty | BannerStatus::Invalid | BannerStatus::InProgress => Color::Blue,
     };
 
     frame.render_widget(
@@ -433,7 +457,7 @@ fn render_num_results(
             Span::raw(spacers_each_side.clone()),
             Span::raw(mid_content).fg(Color::Blue),
             Span::raw(spacers_each_side),
-            Span::raw(right_content).fg(accessory_colour),
+            Span::raw(right_content).fg(time_colour),
         ]),
         area,
     );
@@ -1833,18 +1857,15 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
             );
 
             let replacements_in_progress = search_fields_state.replacements_in_progress();
+            let search_is_empty = app.search_fields.search().text().is_empty();
             if let Some(state) = &mut search_fields_state.search_state {
-                let (is_complete, elapsed) = if let Some(completed) = state.search_completed {
-                    (true, completed.duration_since(state.search_started))
-                } else {
-                    (false, state.search_started.elapsed())
-                };
+                // Invariant held by `enter_chars_into_field` /
+                // `perform_search_already_validated`: whenever `search_state`
+                // is `Some`, the search text is non-empty.
                 render_search_results(
                     frame,
                     &app.input_source,
-                    is_complete,
                     state,
-                    elapsed,
                     results,
                     app.config.get_theme(),
                     app.config.style.true_color,
@@ -1853,6 +1874,8 @@ pub fn render(app: &mut App, frame: &mut Frame<'_>) {
                     replacements_in_progress,
                     app.config.preview.wrap_text,
                 );
+            } else if search_is_empty {
+                render_empty_search_banner(frame, results, replacements_in_progress);
             }
         }
         Screen::PerformingReplacement(state) => {
