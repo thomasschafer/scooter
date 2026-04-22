@@ -17,7 +17,7 @@ use std::{
     env::current_dir,
     mem,
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool, atomic::AtomicUsize},
+    sync::{Arc, atomic::AtomicBool, atomic::AtomicUsize, atomic::Ordering},
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -1211,6 +1211,49 @@ async fn test_retyping_after_clear_runs_a_fresh_search() {
 }
 
 #[tokio::test]
+async fn test_reverting_after_temporary_invalid_search_requeues_debounce() {
+    let mut app = App::new(
+        stdin_source(),
+        &SearchFieldValues::default(),
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    assert!(type_char(&mut app, 'a').is_rerender());
+    assert!(type_char(&mut app, 'b').is_rerender());
+    assert!(type_char(&mut app, 'c').is_rerender());
+    assert!(search_fields_state(&app).search_debounce_timer.is_some());
+
+    assert!(type_char(&mut app, '(').is_rerender());
+    let state_after_invalid = search_fields_state(&app);
+    assert!(
+        state_after_invalid.search_debounce_timer.is_none(),
+        "invalid search should abort the pending debounce"
+    );
+    assert!(
+        state_after_invalid.last_scheduled_key.is_none(),
+        "invalid search should clear the last scheduled key so reverting can requeue"
+    );
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Backspace,
+        ScooterKeyModifiers::NONE,
+    ));
+    assert!(matches!(result, EventHandlingResult::Rerender));
+    assert!(search_fields_state(&app).search_debounce_timer.is_some());
+
+    tokio::time::sleep(Duration::from_millis(330)).await;
+    let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+        .await
+        .expect("reverting to the last valid query should queue a PerformSearch");
+    assert!(matches!(
+        queued,
+        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
+    ));
+}
+
+#[tokio::test]
 async fn test_stale_results_preserved_while_pending() {
     let started = std::time::Instant::now();
     let results = vec![dummy_result(), dummy_result(), dummy_result()];
@@ -1415,6 +1458,70 @@ async fn test_changing_replacement_does_not_schedule_search_debounce() {
     assert!(
         state.preview_update_state.is_some(),
         "editing the replace field should schedule a preview-replacement debounce"
+    );
+}
+
+#[tokio::test]
+async fn test_back_to_fields_keeps_search_running_until_completion() {
+    let started = std::time::Instant::now();
+    let mut app = build_test_app_with_phase(
+        stdin_source(),
+        "foo",
+        SearchPhase::Running { started },
+        vec![dummy_result()],
+    );
+    let Screen::SearchFields(state) = &mut app.ui_state.current_screen else {
+        panic!("Expected SearchFields screen");
+    };
+    state.focussed_section = FocussedSection::SearchResults;
+
+    let result = app.handle_key_event(KeyEvent::new(
+        ScooterKeyCode::Char('o'),
+        ScooterKeyModifiers::CONTROL,
+    ));
+    assert!(matches!(result, EventHandlingResult::Rerender));
+
+    let state_after_back = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("search state should be preserved");
+    assert!(
+        !state_after_back.cancelled.load(Ordering::Relaxed),
+        "BackToFields should not cancel the active search"
+    );
+    assert_eq!(
+        search_fields_state(&app).focussed_section,
+        FocussedSection::SearchFields
+    );
+
+    app.handle_background_processing_event(BackgroundProcessingEvent::AddSearchResult(
+        SearchResult::new_line(
+            Some(PathBuf::from("late.txt")),
+            2,
+            "late foo".to_owned(),
+            LineEnding::Lf,
+            true,
+        ),
+    ));
+    let state_after_result = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("search state should still exist");
+    assert_eq!(
+        state_after_result.results.len(),
+        2,
+        "results should still append after moving focus back to fields"
+    );
+
+    app.handle_background_processing_event(BackgroundProcessingEvent::SearchCompleted);
+    let phase_after_complete = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("search state should still exist")
+        .phase;
+    assert!(
+        matches!(phase_after_complete, SearchPhase::Complete { .. }),
+        "search should still complete truthfully after BackToFields, got {phase_after_complete:?}"
     );
 }
 

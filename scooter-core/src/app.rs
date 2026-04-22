@@ -1586,6 +1586,13 @@ impl<'a> App {
         }
 
         if !self.revalidate_and_store_searcher() {
+            // The debounce we just aborted won't be rescheduled for this
+            // key; without clearing, reverting to the last valid query
+            // would compare equal and be incorrectly deduped.
+            self.ui_state
+                .current_screen
+                .unwrap_search_fields_state_mut()
+                .last_scheduled_key = None;
             return EventHandlingResult::Rerender;
         }
 
@@ -1717,7 +1724,6 @@ impl<'a> App {
                 EventHandlingResult::Rerender
             }
             CommandSearchFocusResults::BackToFields => {
-                self.cancel_search();
                 let search_fields_state = self
                     .ui_state
                     .current_screen
