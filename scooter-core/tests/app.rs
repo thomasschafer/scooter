@@ -97,17 +97,10 @@ async fn test_back_from_results() {
     )
     .unwrap();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
-        focussed_section: FocussedSection::SearchResults,
-        search_state: Some(SearchState::new(
-            sender,
-            receiver,
-            Arc::new(AtomicBool::new(false)),
-        )),
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key: None,
-    });
+    let mut state = SearchFieldsState::default();
+    state.focussed_section = FocussedSection::SearchResults;
+    state.search_state = Some(SearchState::new(sender, receiver, Arc::new(AtomicBool::new(false))));
+    app.ui_state.current_screen = Screen::SearchFields(state);
     app.search_fields = SearchFields::with_values(
         &SearchFieldValues {
             search: FieldValue::new("foo", false),
@@ -263,13 +256,10 @@ async fn test_help_popup_on_search_fields() {
 async fn test_help_popup_on_search_results() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let cancelled = Arc::new(AtomicBool::new(false));
-    let initial_screen = Screen::SearchFields(SearchFieldsState {
-        focussed_section: FocussedSection::SearchResults,
-        search_state: Some(SearchState::new(sender, receiver, cancelled)),
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key: None,
-    });
+    let mut state = SearchFieldsState::default();
+    state.focussed_section = FocussedSection::SearchResults;
+    state.search_state = Some(SearchState::new(sender, receiver, cancelled));
+    let initial_screen = Screen::SearchFields(state);
     test_help_popup_on_screen(initial_screen);
 }
 
@@ -330,13 +320,10 @@ async fn test_keymaps_search_complete() {
     let (sender, receiver) = mpsc::unbounded_channel();
     let mut search_state = SearchState::new(sender, receiver, cancelled);
     search_state.set_complete_now();
-    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
-        search_state: Some(search_state),
-        focussed_section: FocussedSection::SearchResults,
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key: None,
-    });
+    let mut state = SearchFieldsState::default();
+    state.search_state = Some(search_state);
+    state.focussed_section = FocussedSection::SearchResults;
+    app.ui_state.current_screen = Screen::SearchFields(state);
 
     assert_debug_snapshot!("search_complete_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_complete_all_keymaps", app.keymaps_all());
@@ -355,13 +342,10 @@ async fn test_keymaps_search_progressing() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = mpsc::unbounded_channel();
     let search_state = SearchState::new(sender, receiver, cancelled);
-    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
-        search_state: Some(search_state),
-        focussed_section: FocussedSection::SearchResults,
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key: None,
-    });
+    let mut state = SearchFieldsState::default();
+    state.search_state = Some(search_state);
+    state.focussed_section = FocussedSection::SearchResults;
+    app.ui_state.current_screen = Screen::SearchFields(state);
 
     assert_debug_snapshot!("search_progressing_compact_keymaps", app.keymaps_compact());
     assert_debug_snapshot!("search_progressing_all_keymaps", app.keymaps_all());
@@ -755,13 +739,10 @@ async fn test_toggle_escape_sequences_updates_preview_without_restarting_search(
         preview_error: None,
     });
     search_state.set_complete_now();
-    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
-        focussed_section: FocussedSection::SearchResults,
-        search_state: Some(search_state),
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key: None,
-    });
+    let mut state = SearchFieldsState::default();
+    state.focussed_section = FocussedSection::SearchResults;
+    state.search_state = Some(search_state);
+    app.ui_state.current_screen = Screen::SearchFields(state);
 
     assert!(app.search_has_completed());
 
@@ -865,13 +846,12 @@ async fn test_toggle_escape_sequences_keeps_pending_debounced_search() {
     let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
         .await
         .expect("Expected queued debounce event");
-    assert!(matches!(
-        queued,
-        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
-    ));
+    let generation = queued_search_generation(queued);
 
     // Handling the queued event should keep replacement config aligned with the toggle.
-    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch));
+    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
+        generation,
+    }));
     assert!(matches!(handled, EventHandlingResult::Rerender));
     assert_eq!(
         app.searcher.as_ref().expect("Expected searcher").replace(),
@@ -1002,13 +982,11 @@ fn build_test_app_with_phase(
     } else {
         Some(Box::new(app.current_search_key()))
     };
-    app.ui_state.current_screen = Screen::SearchFields(SearchFieldsState {
-        focussed_section: FocussedSection::SearchFields,
-        search_state: Some(state),
-        search_debounce_timer: None,
-        preview_update_state: None,
-        last_scheduled_key,
-    });
+    let mut search_fields_state = SearchFieldsState::default();
+    search_fields_state.focussed_section = FocussedSection::SearchFields;
+    search_fields_state.search_state = Some(state);
+    search_fields_state.last_scheduled_key = last_scheduled_key;
+    app.ui_state.current_screen = Screen::SearchFields(search_fields_state);
     app
 }
 
@@ -1027,6 +1005,13 @@ fn type_char(app: &mut App, c: char) -> EventHandlingResult {
         ScooterKeyCode::Char(c),
         ScooterKeyModifiers::NONE,
     ))
+}
+
+fn queued_search_generation(event: Event) -> u64 {
+    match event {
+        Event::Internal(InternalEvent::App(AppEvent::PerformSearch { generation })) => generation,
+        other => panic!("Expected queued PerformSearch event, got {other:?}"),
+    }
 }
 
 fn dummy_result() -> SearchResultWithReplacement {
@@ -1096,11 +1081,10 @@ async fn test_phase_transitions_pending_running_complete() {
     let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
         .await
         .expect("debounce should have emitted PerformSearch");
-    assert!(matches!(
-        queued,
-        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
-    ));
-    app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch));
+    let generation = queued_search_generation(queued);
+    app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
+        generation,
+    }));
 
     let phase_after_perform = search_fields_state(&app)
         .search_state
@@ -1204,10 +1188,7 @@ async fn test_retyping_after_clear_runs_a_fresh_search() {
     let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
         .await
         .expect("retyping after clear should queue a PerformSearch");
-    assert!(matches!(
-        queued,
-        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
-    ));
+    let _generation = queued_search_generation(queued);
 }
 
 #[tokio::test]
@@ -1247,10 +1228,107 @@ async fn test_reverting_after_temporary_invalid_search_requeues_debounce() {
     let queued = tokio::time::timeout(Duration::from_millis(500), app.event_recv())
         .await
         .expect("reverting to the last valid query should queue a PerformSearch");
-    assert!(matches!(
-        queued,
-        Event::Internal(InternalEvent::App(AppEvent::PerformSearch))
-    ));
+    let _generation = queued_search_generation(queued);
+}
+
+#[tokio::test]
+async fn test_stale_debounce_event_ignored_after_new_valid_edit() {
+    let mut app = App::new(
+        stdin_source(),
+        &SearchFieldValues::default(),
+        AppRunConfig::default(),
+        Config::default(),
+    )
+    .unwrap();
+
+    assert!(type_char(&mut app, 'a').is_rerender());
+    tokio::time::sleep(Duration::from_millis(330)).await;
+    let stale_generation = queued_search_generation(
+        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+            .await
+            .expect("first debounce should have emitted PerformSearch"),
+    );
+
+    assert!(type_char(&mut app, 'b').is_rerender());
+    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
+        generation: stale_generation,
+    }));
+    assert!(
+        matches!(handled, EventHandlingResult::None),
+        "stale debounce event should be ignored after a newer valid edit"
+    );
+    assert!(
+        search_fields_state(&app).search_state.is_none(),
+        "stale event must not start a search early"
+    );
+
+    tokio::time::sleep(Duration::from_millis(330)).await;
+    let fresh_generation = queued_search_generation(
+        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+            .await
+            .expect("second debounce should have emitted PerformSearch"),
+    );
+    assert_ne!(stale_generation, fresh_generation);
+    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
+        generation: fresh_generation,
+    }));
+    assert!(matches!(handled, EventHandlingResult::Rerender));
+    let phase = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("fresh event should start a search")
+        .phase;
+    assert!(
+        matches!(phase, SearchPhase::Running { .. }),
+        "fresh debounce event should start the current search, got {phase:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_stale_debounce_event_ignored_when_current_query_invalid() {
+    let started = std::time::Instant::now();
+    let mut app = build_test_app_with_phase(
+        stdin_source(),
+        "foo",
+        SearchPhase::Complete {
+            started,
+            completed: started,
+        },
+        vec![dummy_result()],
+    );
+
+    assert!(type_char(&mut app, 'x').is_rerender());
+    tokio::time::sleep(Duration::from_millis(330)).await;
+    let stale_generation = queued_search_generation(
+        tokio::time::timeout(Duration::from_millis(500), app.event_recv())
+            .await
+            .expect("debounce should have emitted PerformSearch"),
+    );
+
+    assert!(type_char(&mut app, '(').is_rerender());
+    let phase_after_invalid = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("stale results should remain visible")
+        .phase;
+    assert!(
+        matches!(phase_after_invalid, SearchPhase::Invalid),
+        "invalid edit should transition to Invalid, got {phase_after_invalid:?}"
+    );
+
+    let handled = app.handle_internal_event(InternalEvent::App(AppEvent::PerformSearch {
+        generation: stale_generation,
+    }));
+    assert!(
+        matches!(handled, EventHandlingResult::None),
+        "stale debounce event should be ignored once the current query is invalid"
+    );
+    let phase_after_drop = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("stale results should still be visible")
+        .phase;
+    assert!(matches!(phase_after_drop, SearchPhase::Invalid));
 }
 
 #[tokio::test]
@@ -1323,6 +1401,53 @@ async fn test_cancelled_state_drops_incoming_search_results() {
         state.results.len(),
         2,
         "late batch from the cancelled search must not be appended"
+    );
+}
+
+#[tokio::test]
+async fn test_invalid_edit_cancels_running_search_and_drops_late_results() {
+    let started = std::time::Instant::now();
+    let initial = vec![dummy_result(), dummy_result()];
+    let mut app = build_test_app_with_phase(
+        stdin_source(),
+        "foo",
+        SearchPhase::Running { started },
+        initial,
+    );
+
+    assert!(type_char(&mut app, '(').is_rerender());
+    let state_after_invalid = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("stale results should remain visible");
+    assert!(
+        state_after_invalid.cancelled.load(Ordering::Relaxed),
+        "invalid edit should cancel the in-flight search"
+    );
+    assert!(
+        matches!(state_after_invalid.phase, SearchPhase::Invalid),
+        "invalid edit should transition to Invalid, got {:?}",
+        state_after_invalid.phase
+    );
+
+    app.handle_background_processing_event(BackgroundProcessingEvent::AddSearchResult(
+        SearchResult::new_line(
+            Some(PathBuf::from("late.txt")),
+            1,
+            "late foo".to_owned(),
+            LineEnding::Lf,
+            true,
+        ),
+    ));
+
+    let state_after_late_batch = search_fields_state(&app)
+        .search_state
+        .as_ref()
+        .expect("state should still exist");
+    assert_eq!(
+        state_after_late_batch.results.len(),
+        2,
+        "late batch from the invalidated search must not be appended"
     );
 }
 

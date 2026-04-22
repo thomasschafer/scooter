@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Cell, Clear, List, ListItem, Padding, Paragraph, Row, Table, Wrap},
 };
 use scooter_core::{
-    app::{App, Event, FocussedSection, InputSource, Popup, Screen, SearchState},
+    app::{App, Event, FocussedSection, InputSource, Popup, Screen, SearchPhase, SearchState},
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
@@ -261,6 +261,7 @@ fn display_duration(duration: Duration) -> String {
 #[derive(Clone, Copy)]
 enum BannerStatus {
     Empty,
+    Invalid,
     InProgress,
     Complete,
 }
@@ -289,10 +290,10 @@ fn render_search_results(
     .areas(area);
 
     let num_results = search_state.results.len();
-    let status = if search_state.phase.is_complete() {
-        BannerStatus::Complete
-    } else {
-        BannerStatus::InProgress
+    let status = match search_state.phase {
+        SearchPhase::Invalid => BannerStatus::Invalid,
+        _ if search_state.phase.is_complete() => BannerStatus::Complete,
+        _ => BannerStatus::InProgress,
     };
     render_num_results(
         frame,
@@ -432,6 +433,7 @@ fn render_num_results(
     let left_content_1 = format!("Results: {num_results}");
     let (left_content_2, accessory_colour) = match status {
         BannerStatus::Empty => (" [Search is empty]", Color::Red),
+        BannerStatus::Invalid => (" [Invalid search]", Color::Red),
         BannerStatus::InProgress => (" [Still searching...]", Color::Blue),
         BannerStatus::Complete => (" [Search complete]", Color::Green),
     };
@@ -445,7 +447,7 @@ fn render_num_results(
     let spacers_each_side = " ".repeat(num_total_spacers / 2);
     let time_colour = match status {
         BannerStatus::Complete => Color::Green,
-        BannerStatus::Empty | BannerStatus::InProgress => Color::Blue,
+        BannerStatus::Empty | BannerStatus::Invalid | BannerStatus::InProgress => Color::Blue,
     };
 
     frame.render_widget(

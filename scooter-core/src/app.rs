@@ -107,7 +107,7 @@ pub enum BackgroundProcessingEvent {
 
 #[derive(Debug)]
 pub enum AppEvent {
-    PerformSearch,
+    PerformSearch { generation: u64 },
     DismissToast { generation: u64 },
 }
 
@@ -160,12 +160,15 @@ enum Selected {
 /// Lifecycle of a single search, modelled explicitly so the view and the
 /// event handlers can't disagree about what's currently happening.
 ///
-/// Transitions: `Pending` → `Running` → `Complete`. `Pending` models the
-/// window between a user edit and the debounced search actually starting;
-/// `Running` is an in-flight search; `Complete` is terminal.
+/// Typical transitions: `Pending` → `Running` → `Complete`. `Pending` models
+/// the window between a user edit and the debounced search actually starting;
+/// `Invalid` means the current inputs no longer describe a runnable search but
+/// stale results may still be visible; `Running` is an in-flight search;
+/// `Complete` is terminal.
 #[derive(Clone, Copy, Debug)]
 pub enum SearchPhase {
     Pending,
+    Invalid,
     Running {
         started: Instant,
     },
@@ -185,7 +188,7 @@ impl SearchPhase {
     /// elapsed time to report.
     pub fn elapsed(self) -> Option<Duration> {
         match self {
-            SearchPhase::Pending => None,
+            SearchPhase::Pending | SearchPhase::Invalid => None,
             SearchPhase::Running { started } => Some(started.elapsed()),
             SearchPhase::Complete { started, completed } => Some(completed.duration_since(started)),
         }
@@ -403,6 +406,10 @@ impl SearchState {
         self.phase = SearchPhase::Pending;
     }
 
+    pub fn set_invalid(&mut self) {
+        self.phase = SearchPhase::Invalid;
+    }
+
     /// Signal the background search task for this state to stop. The task
     /// polls this flag and terminates at the next opportunity; any batches
     /// it had already queued are filtered out in `add_search_results`.
@@ -478,6 +485,11 @@ pub struct SearchFieldsState {
     /// same query runs the search again. Boxed to keep the `Screen` enum
     /// compact.
     pub last_scheduled_key: Option<Box<SearchKey>>,
+    /// Monotonic counter for debounced search requests so queued internal
+    /// events can be identified as stale after later edits.
+    next_search_generation: u64,
+    /// Generation of the currently pending debounced search, if any.
+    pending_search_generation: Option<u64>,
 }
 
 impl Default for SearchFieldsState {
@@ -488,6 +500,8 @@ impl Default for SearchFieldsState {
             search_debounce_timer: None,
             preview_update_state: None,
             last_scheduled_key: None,
+            next_search_generation: 0,
+            pending_search_generation: None,
         }
     }
 }
@@ -517,6 +531,13 @@ impl SearchFieldsState {
         if let Some(timer) = self.search_debounce_timer.take() {
             timer.abort();
         }
+        self.pending_search_generation = None;
+    }
+
+    pub fn next_search_generation(&mut self) -> u64 {
+        let generation = self.next_search_generation;
+        self.next_search_generation = self.next_search_generation.wrapping_add(1);
+        generation
     }
 }
 
@@ -1030,7 +1051,19 @@ impl<'a> App {
     #[allow(clippy::needless_pass_by_value)]
     fn handle_app_event(&mut self, app_event: AppEvent) -> EventHandlingResult {
         match app_event {
-            AppEvent::PerformSearch => {
+            AppEvent::PerformSearch { generation } => {
+                let Screen::SearchFields(search_fields_state) = &mut self.ui_state.current_screen else {
+                    return EventHandlingResult::None;
+                };
+                if search_fields_state.pending_search_generation != Some(generation) {
+                    return EventHandlingResult::None;
+                }
+                search_fields_state.pending_search_generation = None;
+                let Some(search_config) = self.validate_fields().unwrap() else {
+                    self.invalidate_search_state_and_key();
+                    return EventHandlingResult::Rerender;
+                };
+                self.searcher = Some(search_config);
                 self.perform_search_already_validated();
                 EventHandlingResult::Rerender
             }
@@ -1172,7 +1205,22 @@ impl<'a> App {
             return;
         }
 
+        if self.search_fields.search().text().is_empty() {
+            self.clear_search_state_and_key();
+            return;
+        }
+
+        {
+            let search_fields_state = self
+                .ui_state
+                .current_screen
+                .unwrap_search_fields_state_mut();
+            search_fields_state.cancel_preview_updates();
+            search_fields_state.abort_search_debounce();
+        }
+
         let Some(search_config) = self.validate_fields().unwrap() else {
+            self.invalidate_search_state_and_key();
             return;
         };
         self.searcher = Some(search_config);
@@ -1586,13 +1634,7 @@ impl<'a> App {
         }
 
         if !self.revalidate_and_store_searcher() {
-            // The debounce we just aborted won't be rescheduled for this
-            // key; without clearing, reverting to the last valid query
-            // would compare equal and be incorrectly deduped.
-            self.ui_state
-                .current_screen
-                .unwrap_search_fields_state_mut()
-                .last_scheduled_key = None;
+            self.invalidate_search_state_and_key();
             return EventHandlingResult::Rerender;
         }
 
@@ -1619,9 +1661,13 @@ impl<'a> App {
             state.cancel();
             state.set_pending();
         }
+        let generation = sfs.next_search_generation();
         sfs.last_scheduled_key = Some(Box::new(key));
+        sfs.pending_search_generation = Some(generation);
         sfs.search_debounce_timer = Some(spawn_debounced(SEARCH_DEBOUNCE, move || {
-            let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch)));
+            let _ = event_sender.send(Event::Internal(InternalEvent::App(AppEvent::PerformSearch {
+                generation,
+            })));
         }));
         EventHandlingResult::Rerender
     }
@@ -1635,6 +1681,22 @@ impl<'a> App {
         };
         search_fields_state.search_state = None;
         search_fields_state.last_scheduled_key = None;
+        search_fields_state.pending_search_generation = None;
+    }
+
+    /// Mark the current results as stale because the search inputs are invalid.
+    /// We keep the results visible to avoid flicker, but cancel any in-flight
+    /// work and surface an explicit non-complete phase.
+    fn invalidate_search_state_and_key(&mut self) {
+        self.cancel_search();
+        let Screen::SearchFields(ref mut search_fields_state) = self.ui_state.current_screen else {
+            return;
+        };
+        if let Some(state) = search_fields_state.search_state.as_mut() {
+            state.set_invalid();
+        }
+        search_fields_state.last_scheduled_key = None;
+        search_fields_state.pending_search_generation = None;
     }
 
     fn revalidate_and_store_searcher(&mut self) -> bool {

@@ -545,6 +545,38 @@ async fn test_clearing_search_shows_empty_without_flashing_searching() -> anyhow
     shutdown(event_sender, run_handle).await
 }
 
+/// Regression test: once the current query becomes invalid, the banner must
+/// stop claiming the previous search is complete. Stale results may remain
+/// visible, but the status for the current inputs must read "Invalid search".
+#[tokio::test]
+#[serial]
+async fn test_invalid_edit_after_complete_shows_invalid_banner() -> anyhow::Result<()> {
+    let temp_dir = create_test_files!(
+        "file1.txt" => text!("one foo", "two foo"),
+    );
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner(Some(temp_dir.path()), false)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    send_chars("foo", &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1500).await?;
+
+    send_key(KeyCode::Char('('), &event_sender);
+    let snapshot_after_invalid =
+        wait_for_match(&mut snapshot_rx, Pattern::string("foo("), 500).await?;
+    assert!(
+        snapshot_after_invalid.contains("Invalid search"),
+        "Expected '[Invalid search]' banner after invalid edit, got:\n{snapshot_after_invalid}"
+    );
+    assert!(
+        !snapshot_after_invalid.contains("Search complete"),
+        "Banner still shows '[Search complete]' after invalid edit:\n{snapshot_after_invalid}"
+    );
+
+    shutdown(event_sender, run_handle).await
+}
+
 #[tokio::test]
 #[serial]
 async fn test_error_when_search_text_is_empty() -> anyhow::Result<()> {
