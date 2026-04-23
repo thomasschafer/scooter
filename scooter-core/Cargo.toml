@@ -1,6 +1,6 @@
 [package]
 name = "scooter-core"
-version = "0.3.2"
+version = "0.3.3"
 edition.workspace = true
 authors = ["thomasschafer97@gmail.com"]
 license = "MIT"
@@ -42,7 +42,9 @@ steel-core = { version = "0.8.2", features = [
   "sync",
 ], optional = true }
 steel-derive = { version = "0.8.2", optional = true }
-two-face = { version = "0.5.1", default-features = false, features = ["syntect-default-onig"] }
+two-face = { version = "0.5.1", default-features = false, features = [
+  "syntect-default-onig",
+] }
 tempfile = "3.27.0"
 termini = "1.0.0"
 tokio = { version = "1.52.1", features = ["full"] }
