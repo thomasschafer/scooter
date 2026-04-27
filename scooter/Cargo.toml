@@ -23,7 +23,7 @@ futures = "0.3.32"
 ignore = "0.4.25"
 itertools = "0.14.0"
 log = "0.4.29"
-lru = "0.17.0"
+lru = "0.18.0"
 paste = "1.0"
 ratatui = { version = "0.30.0", features = ["unstable-rendered-line-info"] }
 regex = "1.12.3"
