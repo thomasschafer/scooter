@@ -47,7 +47,7 @@ two-face = { version = "0.5.1", default-features = false, features = [
 ] }
 tempfile = "3.27.0"
 termini = "1.0.0"
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.2", features = ["full"] }
 toml = "1.1.2"
 unicode-width = "0.2.0"
 
