@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -62,7 +62,7 @@ jobs:
     timeout-minutes: 15
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -86,13 +86,13 @@ jobs:
     timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Nix
-      uses: DeterminateSystems/nix-installer-action@v19
+      uses: DeterminateSystems/nix-installer-action@v22
 
     - name: Nix cache
-      uses: DeterminateSystems/magic-nix-cache-action@v13
+      uses: DeterminateSystems/magic-nix-cache-action@v14
 
     - name: Run tests (small test files)
       run: nix run .#end-to-end-test
