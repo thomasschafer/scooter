@@ -114,6 +114,7 @@ jobs:
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Required to create the release tag and draft GitHub release.
     permissions:
       contents: write
     steps:
@@ -137,14 +138,12 @@ jobs:
             --generate-notes \
             --draft  # Make it draft until binaries are uploaded
 
-  build-and-upload:
+  build-release-assets:
     needs: [prepare-release, validate-crates-io]
     if: needs.prepare-release.outputs.should_release == 'true'
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -211,6 +210,8 @@ jobs:
         openssl dgst -r -sha256 -out "$ARCHIVE.sha256" "$ARCHIVE"
         openssl dgst -r -sha512 -out "$ARCHIVE.sha512" "$ARCHIVE"
 
+        mkdir -p "$GITHUB_WORKSPACE/release-assets"
+        cp "$ARCHIVE" "$ARCHIVE.sha256" "$ARCHIVE.sha512" "$GITHUB_WORKSPACE/release-assets/"
         echo "ASSET=$ARCHIVE" >> $GITHUB_ENV
 
     - name: Verify binary
@@ -228,23 +229,44 @@ jobs:
             ./${{ env.BINARY_NAME }} --version ;;
         esac
 
-    - name: Upload to release
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GH_REPO: ${{ github.repository }}
-      run: |
-        for file in target/${{ matrix.target }}/release/${{ env.ASSET }}*; do
-          gh release upload "v${{ needs.prepare-release.outputs.version }}" "$file" --clobber
-        done
+    - name: Store release assets
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: release-${{ matrix.target }}
+        path: release-assets/
+        if-no-files-found: error
 
-  publish:
-    needs: [prepare-release, create-release, build-and-upload]
+  upload-release-assets:
+    needs: [prepare-release, create-release, build-release-assets]
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Required only while attaching binaries to the draft GitHub release.
     permissions:
       contents: write
+    steps:
+    - name: Download release assets
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        pattern: release-*
+        path: release-assets
+        merge-multiple: true
+
+    - name: Upload assets to release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+        VERSION: ${{ needs.prepare-release.outputs.version }}
+      run: |
+        for file in release-assets/*; do
+          gh release upload "v${VERSION}" "$file" --clobber
+        done
+
+  publish-crate:
+    needs: [prepare-release, upload-release-assets]
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -263,14 +285,25 @@ jobs:
           cd scooter
           cargo publish
 
+  finalize-release:
+    needs: [prepare-release, publish-crate]
+    if: needs.prepare-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Required only while publishing the draft GitHub release.
+    permissions:
+      contents: write
+    steps:
       - name: Publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
-          gh release edit "v${{ needs.prepare-release.outputs.version }}" --draft=false
+          gh release edit "v${VERSION}" --draft=false
 
   publish-to-winget:
-    needs: [prepare-release, publish]
+    needs: [prepare-release, finalize-release]
     if: needs.prepare-release.outputs.should_release == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
@@ -281,7 +314,7 @@ jobs:
           persist-credentials: false
 
       - name: Publish to WinGet
-        uses: vedantmgoyal9/winget-releaser@v2
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: thomasschafer.scooter
           version: ${{ needs.prepare-release.outputs.version }}
