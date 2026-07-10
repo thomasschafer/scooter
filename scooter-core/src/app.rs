@@ -635,6 +635,12 @@ impl EventChannels {
     pub async fn recv(&mut self) -> Option<Event> {
         self.receiver.recv().await
     }
+
+    /// Non-blocking receive, for callers that pump events from a synchronous
+    /// context (e.g. the Helix plugin) rather than awaiting inside a runtime.
+    pub fn try_recv(&mut self) -> Option<Event> {
+        self.receiver.try_recv().ok()
+    }
 }
 
 impl Default for EventChannels {
