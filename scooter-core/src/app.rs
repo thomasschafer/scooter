@@ -1809,9 +1809,10 @@ impl<'a> App {
                     .current_screen
                     .unwrap_search_fields_state_mut();
                 if let Some(ref mut search_in_progress_state) = search_fields_state.search_state {
-                    let selected = search_in_progress_state
-                        .primary_selected_field_mut()
-                        .expect("Expected to find selected field");
+                    let Some(selected) = search_in_progress_state.primary_selected_field_mut()
+                    else {
+                        return EventHandlingResult::None;
+                    };
                     if let Some(ref path) = selected.search_result.path {
                         self.event_channels
                             .sender
@@ -2736,6 +2737,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![] as Vec<bool>
         );
+    }
+
+    #[test]
+    fn test_open_in_editor_with_no_results() {
+        let mut app = App::new(
+            InputSource::Directory(std::env::current_dir().unwrap()),
+            &SearchFieldValues::default(),
+            AppRunConfig::default(),
+            Config::default(),
+        )
+        .unwrap();
+        let search_fields_state = app.ui_state.current_screen.unwrap_search_fields_state_mut();
+        search_fields_state.focussed_section = FocussedSection::SearchResults;
+        search_fields_state.search_state = Some(build_test_search_state(0));
+
+        assert!(matches!(
+            app.handle_command_search_results(CommandSearchFocusResults::OpenInEditor),
+            EventHandlingResult::None
+        ));
+        assert!(app.event_channels.try_recv().is_none());
     }
 
     fn success_result() -> SearchResultWithReplacement {
