@@ -10,6 +10,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # ratatui-core 0.1.2 made Terminal::clear() query the backend's cursor
+      # position even for Viewport::Fullscreen, which we call on every TUI
+      # startup (Tui::init). That hangs/times out on non-interactive
+      # terminals (our e2e tests, and CI), breaking the "Test" workflow.
+      # Known upstream bug: https://github.com/ratatui/ratatui/issues/2640
+      # Remove this once that's fixed and a new patch release is out.
+      - dependency-name: "ratatui"
 
   - package-ecosystem: "github-actions"
     directory: "/"
