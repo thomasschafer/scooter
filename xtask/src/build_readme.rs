@@ -183,7 +183,7 @@ fn process_struct(
                     };
 
                     #[allow(clippy::format_push_string)]
-                    docs.push_str(&format!("### `[{toml_path}]` section\n\n",));
+                    docs.push_str(&format!("### `[{toml_path}]` section\n\n"));
 
                     if !field_doc.is_empty() {
                         docs.push_str(&field_doc);
@@ -193,7 +193,7 @@ fn process_struct(
                     process_struct(docs, nested_struct, all_structs, &toml_path);
                 } else {
                     #[allow(clippy::format_push_string)]
-                    docs.push_str(&format!("#### `{field_name}`\n\n",));
+                    docs.push_str(&format!("#### `{field_name}`\n\n"));
                     docs.push_str(&field_doc);
                     docs.push_str("\n\n");
                 }

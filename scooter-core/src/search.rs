@@ -359,8 +359,7 @@ impl FileSearcher {
 
     fn build_walker(&self) -> ignore::WalkParallel {
         let num_threads = thread::available_parallelism()
-            .map(NonZero::get)
-            .unwrap_or(4)
+            .map_or(4, NonZero::get)
             .min(12);
 
         WalkBuilder::new(&self.dir_config.root_dir)
