@@ -104,8 +104,7 @@ pub fn spawn_replace_included<T: Fn(SearchResultWithReplacement) + Send + Sync +
         let path_groups = group_results(included);
 
         let num_threads = thread::available_parallelism()
-            .map(NonZero::get)
-            .unwrap_or(4)
+            .map_or(4, NonZero::get)
             .min(12);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -4080,16 +4079,11 @@ mod tests {
             let reader = BufReader::new(file);
 
             let mut byte_start = 0;
-            let mut current_line = 1;
 
             // Skip to start_line and track byte position
-            for line_result in reader.lines() {
-                if current_line >= start_line {
-                    break;
-                }
+            for line_result in reader.lines().take(start_line.saturating_sub(1)) {
                 let line = line_result.expect("Failed to read line");
                 byte_start += line.len() + 1; // +1 for newline
-                current_line += 1;
             }
 
             // Build expected content from lines

@@ -3994,7 +3994,7 @@ test_with_both_regex_modes!(
         send_key(KeyCode::Enter, &event_sender); // Jump to search results
         send_key(KeyCode::Enter, &event_sender); // Try to begin replacement
 
-        let timeout = Duration::from_millis(3000);
+        let timeout = Duration::from_secs(3);
         let result = tokio::time::timeout(timeout, async {
             // State enum to prevent pressing key twice
             #[derive(PartialEq, Eq)]
@@ -4420,7 +4420,7 @@ async fn test_tui_multiline_advanced_regex_lookaround_replacement() -> anyhow::R
 
     send_key(KeyCode::Enter, &event_sender); // Jump to search results
     send_key(KeyCode::Enter, &event_sender);
-    let timeout = Duration::from_millis(3000);
+    let timeout = Duration::from_secs(3);
     let result = tokio::time::timeout(timeout, async {
         #[derive(PartialEq, Eq)]
         enum WaitingFor {

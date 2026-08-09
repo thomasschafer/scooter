@@ -31,7 +31,7 @@ use scooter_core::{
     keyboard::{KeyCode as ScooterKeyCode, KeyModifiers as ScooterKeyModifiers},
 };
 
-const EVENT_TIMEOUT: Duration = Duration::from_millis(2_000);
+const EVENT_TIMEOUT: Duration = Duration::from_secs(2);
 const PRESERVED_DEBOUNCE_MAX_WAIT: Duration = Duration::from_millis(200);
 
 #[tokio::test]
