@@ -98,10 +98,10 @@ jobs:
         persist-credentials: false
 
     - name: Install Nix
-      uses: DeterminateSystems/nix-installer-action@v22
+      uses: DeterminateSystems/nix-installer-action@v23
 
     - name: Nix cache
-      uses: DeterminateSystems/magic-nix-cache-action@v14
+      uses: DeterminateSystems/magic-nix-cache-action@v15
 
     - name: Run tests (small test files)
       run: nix run .#end-to-end-test
