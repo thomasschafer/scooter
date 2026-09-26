@@ -15,7 +15,10 @@ use two_face::re_exports::syntect::{
     parsing::SyntaxSet,
 };
 
-use crate::line_reader::{BufReadExt, LinesSplitEndings};
+use crate::{
+    encoding::LineDecoder,
+    line_reader::{BufReadExt, LinesSplitEndings},
+};
 
 pub fn relative_path(base: &Path, target: &Path) -> String {
     match target.strip_prefix(base) {
@@ -73,6 +76,18 @@ pub fn surrounding_line_window<R>(
 where
     R: BufReadExt,
 {
+    decoded_line_window(reader, start, end, LineDecoder::new(None))
+}
+
+fn decoded_line_window<R>(
+    reader: R,
+    start: usize,
+    end: usize,
+    mut decoder: LineDecoder,
+) -> impl Iterator<Item = (usize, String)>
+where
+    R: BufReadExt,
+{
     assert!(
         start <= end,
         "Expected start <= end, found start={start}, end={end}"
@@ -85,7 +100,7 @@ where
         .take(end - start + 1)
         .map(move |(idx, line_result)| {
             let line = match line_result {
-                Ok((content, _ending)) => String::from_utf8_lossy(&content).into_owned(),
+                Ok((content, _ending)) => decoder.decode(content),
                 Err(e) => {
                     log::error!("Error reading line {idx}: {e}");
                     String::new()
@@ -103,7 +118,12 @@ pub fn read_lines_range(
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
-    Ok(surrounding_line_window(reader, start, end))
+    Ok(decoded_line_window(
+        reader,
+        start,
+        end,
+        LineDecoder::new(Some(path)),
+    ))
 }
 
 /// Returns the largest range centred on `centre` that is both within `min_bound` and `max_bound`,
@@ -240,6 +260,7 @@ pub type HighlightedLine = Vec<(Option<Style>, String)>;
 
 struct HighlightedLinesIterator<'a> {
     lines: LinesSplitEndings<BufReader<File>>,
+    decoder: LineDecoder,
     highlighter: HighlightLines<'a>,
     syntax_set: &'a SyntaxSet,
     current_idx: usize,
@@ -284,6 +305,7 @@ impl<'a> HighlightedLinesIterator<'a> {
 
         Ok(Self {
             lines,
+            decoder: LineDecoder::new(Some(path)),
             highlighter: HighlightLines::new(syntax, theme),
             syntax_set,
             current_idx: if full_highlighting { 0 } else { start_idx },
@@ -315,8 +337,7 @@ impl Iterator for HighlightedLinesIterator<'_> {
 
             match self.lines.next() {
                 Some(Ok((content, _ending))) => {
-                    // Convert to UTF-8 lossy, which replaces invalid sequences with the � character
-                    let line = String::from_utf8_lossy(&content).into_owned();
+                    let line = self.decoder.decode(content);
 
                     let highlighted_res = self.highlighter.highlight_line(&line, self.syntax_set);
                     if let Err(ref e) = highlighted_res {

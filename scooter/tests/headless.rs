@@ -1577,6 +1577,178 @@ test_with_both_regex_modes_and_fixed_strings!(
 );
 
 test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_encodings,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                // Latin-1 / Windows-1252, where "é" is the single byte 0xE9
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                    b"d\xe9j\xe0 mini",
+                    b"nothing here",
+                ),
+                "utf8.txt" => text!(
+                    "mini était",
+                    "déjà mini",
+                ),
+                // Mostly UTF-8, with a stray invalid byte on one line
+                "mixed.txt" => binary!(
+                    "mini été".as_bytes(),
+                    b"mini \xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "mini",
+                replacement_text: "maxi",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = DirConfig {
+                directory: temp_dir.path().to_path_buf(),
+                include_globs: Some(""),
+                exclude_globs: Some(""),
+                include_hidden: false,
+                include_git_folders: false,
+            };
+
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned());
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"maxi \xe9tait",
+                    b"d\xe9j\xe0 maxi",
+                    b"nothing here",
+                ),
+                "utf8.txt" => text!(
+                    "maxi était",
+                    "déjà maxi",
+                ),
+                "mixed.txt" => binary!(
+                    "maxi été".as_bytes(),
+                    b"maxi \xff",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_non_ascii_search,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                    b"caf\xe9",
+                ),
+                // Valid UTF-8 lines are still treated as UTF-8 in line mode, even when other
+                // lines of the file aren't
+                "mixed.txt" => binary!(
+                    "été".as_bytes(),
+                    b"\xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "é",
+                replacement_text: "è",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = DirConfig {
+                directory: temp_dir.path().to_path_buf(),
+                include_globs: Some(""),
+                exclude_globs: Some(""),
+                include_hidden: false,
+                include_git_folders: false,
+            };
+
+            let result = run_headless(search_config, dir_config);
+            // In multiline mode the mixed file is decoded as a whole using the detected legacy
+            // encoding, so the UTF-8 "é" isn't matched
+            let expected = if multiline {
+                "Success: 1 file updated\n"
+            } else {
+                "Success: 2 files updated\n"
+            };
+            assert_eq!(result.unwrap(), expected);
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"mini \xe8tait",
+                    b"caf\xe8",
+                ),
+                "mixed.txt" => binary!(
+                    if multiline { "été" } else { "ètè" }.as_bytes(),
+                    b"\xff",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_unrepresentable_replacement,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "mini",
+                replacement_text: "世界",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = DirConfig {
+                directory: temp_dir.path().to_path_buf(),
+                include_globs: Some(""),
+                exclude_globs: Some(""),
+                include_hidden: false,
+                include_git_folders: false,
+            };
+
+            // The replacement can't be represented in Windows-1252, so the file must be left
+            // untouched rather than corrupted
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 0 files updated\n".to_owned());
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
     test_headless_binary_detection,
     |advanced_regex, fixed_strings| async move {
         let temp_dir = create_test_files!(
@@ -1634,7 +1806,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             &temp_dir,
             "contains_binary.txt" => binary!(
                 b"Some content REPLACED in a file",
-                b"with \xFF invalid PATTERN UTF-8",
+                b"with \xFF invalid REPLACED UTF-8",
                 b"and some REPLACED valid UTF-8 too.",
             ),
             "text.txt" => text!(

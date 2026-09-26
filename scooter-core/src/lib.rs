@@ -2,6 +2,7 @@ pub mod app;
 pub mod commands;
 pub mod config;
 pub mod diff;
+pub mod encoding;
 pub mod errors;
 pub mod fields;
 pub mod file_content;

@@ -13,6 +13,7 @@ use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 
 use crate::{
+    encoding,
     line_reader::{BufReadExt, LineEnding},
     replace::{self, ReplaceResult},
 };
@@ -571,17 +572,18 @@ pub fn search_file(
     file.seek(SeekFrom::Start(0))?;
 
     if multiline {
-        let content = std::fs::read_to_string(path).with_context(|| {
+        let content = encoding::read_to_string(path).with_context(|| {
             format!(
-                "Failed to read file as UTF-8 for multiline search: {}",
+                "Failed to read file for multiline search: {}",
                 path.display()
             )
         })?;
-        return Ok(search_multiline(&content, search, Some(path)));
+        return Ok(search_multiline(&content.text, search, Some(path)));
     }
 
     // Line-by-line search for non-multiline mode
     let reader = BufReader::with_capacity(16384, file);
+    let legacy_decoder = encoding::LegacyLineDecoder::new(path);
     let mut results = Vec::new();
 
     let mut read_errors = 0;
@@ -607,9 +609,15 @@ pub fn search_file(
             }
         };
 
-        if let Ok(line_content) = String::from_utf8(line_bytes)
-            && contains_search(&line_content, search)
-        {
+        let line_content = match String::from_utf8(line_bytes) {
+            Ok(line_content) => line_content,
+            // Lines that aren't UTF-8 are decoded using the detected encoding of the file
+            Err(e) => match legacy_decoder.decode(e.as_bytes()) {
+                Some(decoded) => decoded.text,
+                None => continue,
+            },
+        };
+        if contains_search(&line_content, search) {
             let result = SearchResult::new_line(
                 Some(path.to_path_buf()),
                 line_number,
