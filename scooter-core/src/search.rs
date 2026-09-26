@@ -621,11 +621,17 @@ pub fn search_file(
             }
         };
 
-        let line = decoder.decode_line(line_bytes);
-        if line.kind == LineKind::Opaque {
-            continue;
-        }
-        let line_content = line.text;
+        // UTF-8 lines are handled inline, as this is the hottest loop when searching
+        let line_content = match String::from_utf8(line_bytes) {
+            Ok(line_content) => line_content,
+            Err(e) => {
+                let line = decoder.decode_line(e.into_bytes());
+                if line.kind == LineKind::Opaque {
+                    continue;
+                }
+                line.text
+            }
+        };
         if contains_search(&line_content, search) {
             let result = SearchResult::new_line(
                 Some(path.to_path_buf()),
