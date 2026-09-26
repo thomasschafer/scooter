@@ -27,7 +27,7 @@ use std::{
 use anyhow::Context;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use content_inspector::inspect;
-use encoding_rs::{Encoding, UTF_8};
+use encoding_rs::{DecoderResult, EncoderResult, Encoding, UTF_8};
 
 use crate::{
     line_index::{LineIndex, newline_positions},
@@ -99,11 +99,70 @@ fn decode_strict(bytes: &[u8], encoding: &'static Encoding) -> Option<String> {
     if !encoding.is_ascii_compatible() {
         return None;
     }
-    let text = encoding
-        .decode_without_bom_handling_and_without_replacement(bytes)?
-        .into_owned();
+    let text = decode_without_replacement(bytes, encoding)?;
     // Single-byte encodings map each byte to a distinct character, so always round-trip
-    (encoding.is_single_byte() || encode(&text, encoding).ok()? == bytes).then_some(text)
+    (encoding.is_single_byte() || encodes_to(&text, encoding, bytes)).then_some(text)
+}
+
+/// Maximum size of the buffers used when decoding and encoding large inputs. `encoding_rs`'s
+/// convenience methods instead allocate and initialise a buffer for the largest possible output,
+/// which for large files uses far more memory than needed, but are faster for small inputs.
+const MAX_CODING_BUFFER_LEN: usize = 64 * 1024;
+
+/// Decodes `bytes` with `encoding`, returning `None` if they are malformed
+fn decode_without_replacement(bytes: &[u8], encoding: &'static Encoding) -> Option<String> {
+    if bytes.len() <= MAX_CODING_BUFFER_LEN {
+        return encoding
+            .decode_without_bom_handling_and_without_replacement(bytes)
+            .map(Cow::into_owned);
+    }
+    let mut decoder = encoding.new_decoder_without_bom_handling();
+    let buffer_len = decoder
+        .max_utf8_buffer_length_without_replacement(bytes.len())?
+        .clamp(16, MAX_CODING_BUFFER_LEN);
+    let mut buffer = String::from_utf8(vec![0; buffer_len]).expect("NUL bytes are valid UTF-8");
+    let mut text = String::with_capacity(bytes.len());
+    let mut remaining = bytes;
+    loop {
+        let (result, read, written) =
+            decoder.decode_to_str_without_replacement(remaining, &mut buffer, true);
+        text.push_str(&buffer[..written]);
+        remaining = &remaining[read..];
+        match result {
+            DecoderResult::InputEmpty => return Some(text),
+            DecoderResult::OutputFull => {}
+            DecoderResult::Malformed(..) => return None,
+        }
+    }
+}
+
+/// Whether encoding `text` with `encoding` produces exactly `expected`
+fn encodes_to(text: &str, encoding: &'static Encoding, expected: &[u8]) -> bool {
+    if text.len() <= MAX_CODING_BUFFER_LEN {
+        let (bytes, _, had_unmappable_chars) = encoding.encode(text);
+        return !had_unmappable_chars && *bytes == *expected;
+    }
+    let mut encoder = encoding.new_encoder();
+    let Some(buffer_len) = encoder.max_buffer_length_from_utf8_without_replacement(text.len())
+    else {
+        return false;
+    };
+    let mut buffer = vec![0; buffer_len.clamp(16, MAX_CODING_BUFFER_LEN)];
+    let (mut remaining_text, mut remaining_expected) = (text, expected);
+    loop {
+        let (result, read, written) =
+            encoder.encode_from_utf8_without_replacement(remaining_text, &mut buffer, true);
+        let Some(rest) = remaining_expected.strip_prefix(&buffer[..written]) else {
+            return false;
+        };
+        remaining_expected = rest;
+        remaining_text = &remaining_text[read..];
+        match result {
+            EncoderResult::InputEmpty => return remaining_expected.is_empty(),
+            EncoderResult::OutputFull => {}
+            EncoderResult::Unmappable(_) => return false,
+        }
+    }
 }
 
 /// Decodes `bytes` with `encoding` (or UTF-8 if there is none), replacing invalid sequences with �
@@ -120,6 +179,7 @@ fn decode_lossy(bytes: &[u8], encoding: Option<&'static Encoding>) -> String {
 pub struct FileDecoder<P: AsRef<Path>> {
     path: P,
     legacy_encoding: OnceCell<Option<&'static Encoding>>,
+    has_utf8_lines: OnceCell<bool>,
 }
 
 impl<P: AsRef<Path>> FileDecoder<P> {
@@ -127,7 +187,25 @@ impl<P: AsRef<Path>> FileDecoder<P> {
         Self {
             path,
             legacy_encoding: OnceCell::new(),
+            has_utf8_lines: OnceCell::new(),
         }
+    }
+
+    /// The encoding used when inserting non-ASCII text into lines of the file that are entirely
+    /// ASCII, assuming that the file isn't valid UTF-8 (see [`default_encoding`]). Reads the file
+    /// the first time it's needed.
+    pub fn default_encoding(&self) -> io::Result<&'static Encoding> {
+        let Some(legacy_encoding) = self.legacy_encoding() else {
+            return Ok(UTF_8);
+        };
+        let has_utf8_lines = if let Some(&has_utf8_lines) = self.has_utf8_lines.get() {
+            has_utf8_lines
+        } else {
+            let file = File::open(self.path.as_ref())?;
+            let has_utf8_lines = contains_utf8_line(BufReader::new(file))?;
+            *self.has_utf8_lines.get_or_init(|| has_utf8_lines)
+        };
+        Ok(default_encoding(Some(legacy_encoding), has_utf8_lines))
     }
 
     /// The detected legacy encoding of the file, or `None` if it has no supported encoding
@@ -254,6 +332,40 @@ fn split_lines(bytes: &[u8]) -> impl Iterator<Item = (&[u8], LineEnding)> {
     })
 }
 
+/// Whether `line` contains non-ASCII characters and is valid UTF-8. Content in a legacy encoding
+/// almost never forms valid multi-byte UTF-8 sequences, so this indicates that a file that isn't
+/// valid UTF-8 mixes UTF-8 with another encoding.
+fn is_non_ascii_utf8(line: &[u8]) -> bool {
+    !line.is_ascii() && std::str::from_utf8(line).is_ok()
+}
+
+/// Whether any line read from `reader` contains non-ASCII characters and is valid UTF-8
+fn contains_utf8_line(mut reader: impl BufRead) -> io::Result<bool> {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(false);
+        }
+        if is_non_ascii_utf8(&line) {
+            return Ok(true);
+        }
+    }
+}
+
+/// The encoding used when inserting non-ASCII text into lines that are entirely ASCII, for a file
+/// that isn't valid UTF-8. This is the file's legacy encoding, unless the file also contains UTF-8
+/// lines, consistent with the rest of the file.
+fn default_encoding(
+    legacy_encoding: Option<&'static Encoding>,
+    has_utf8_lines: bool,
+) -> &'static Encoding {
+    match legacy_encoding {
+        Some(encoding) if !has_utf8_lines => encoding,
+        _ => UTF_8,
+    }
+}
+
 /// The contents of a file, decoded to UTF-8
 #[derive(Debug)]
 pub enum DecodedFile {
@@ -267,13 +379,24 @@ pub struct NonUtf8File {
     /// The contents of the file on disk
     original: Vec<u8>,
     text: String,
-    legacy_encoding: Option<&'static Encoding>,
-    /// Whether any line containing non-ASCII characters is valid UTF-8. If so, UTF-8 is used when
-    /// inserting non-ASCII text into lines that are entirely ASCII, rather than the legacy
-    /// encoding.
-    has_utf8_lines: bool,
-    /// Indices of the lines (from 0) that couldn't be decoded, in ascending order
-    opaque_lines: Vec<usize>,
+    lines: LineEncodings,
+}
+
+/// How the lines of a file that isn't valid UTF-8 are encoded
+#[derive(Debug)]
+enum LineEncodings {
+    /// Every line is either in the file's legacy encoding or entirely ASCII, and the whole file
+    /// round-trips through the legacy encoding
+    Uniform(&'static Encoding),
+    /// Lines are encoded individually (see [`decode_line`])
+    PerLine {
+        legacy_encoding: Option<&'static Encoding>,
+        /// Whether any line containing non-ASCII characters is valid UTF-8 (see
+        /// [`default_encoding`])
+        has_utf8_lines: bool,
+        /// Indices of the lines (from 0) that couldn't be decoded, in ascending order
+        opaque_lines: Vec<usize>,
+    },
 }
 
 /// Decodes the contents of a file. This never fails: lines that can't be decoded are opaque.
@@ -298,7 +421,7 @@ pub fn decode_text(bytes: Vec<u8>) -> Option<DecodedFile> {
         return None;
     }
     let file = NonUtf8File::decode(bytes);
-    file.legacy_encoding
+    file.legacy_encoding()
         .is_some()
         .then_some(DecodedFile::NonUtf8(file))
 }
@@ -326,7 +449,8 @@ pub struct ReplacedFile {
 }
 
 /// Error for a replacement that would modify an opaque line
-const OPAQUE_LINE_ERROR: &str = "Can't replace text in a line whose encoding isn't recognised";
+pub(crate) const OPAQUE_LINE_ERROR: &str =
+    "Can't replace text in a line whose encoding isn't recognised";
 
 /// Error for a replacement that would modify lines with different encodings
 const MIXED_ENCODINGS_ERROR: &str = "Can't replace text spanning lines with different encodings";
@@ -359,7 +483,7 @@ impl DecodedFile {
         let Self::NonUtf8(file) = self else {
             return;
         };
-        if file.opaque_lines.is_empty() {
+        if file.opaque_lines().is_empty() {
             return;
         }
         let text_index = LineIndex::new(&file.text);
@@ -393,17 +517,19 @@ impl DecodedFile {
 
         match self {
             Self::Utf8(text) => {
-                let mut bytes = Vec::with_capacity(text.len());
-                let mut pos = 0;
-                for Replacement { range, text: new } in replacements {
-                    bytes.extend_from_slice(&text.as_bytes()[pos..range.start]);
-                    bytes.extend_from_slice(new.as_bytes());
-                    pos = range.end;
-                }
-                bytes.extend_from_slice(&text.as_bytes()[pos..]);
+                let mut outcomes = vec![Ok(()); replacements.len()];
+                let mut new_text = String::with_capacity(text.len());
+                splice(
+                    &mut new_text,
+                    text,
+                    0..text.len(),
+                    replacements,
+                    &mut outcomes,
+                    UTF_8,
+                );
                 Ok(ReplacedFile {
-                    bytes,
-                    outcomes: vec![Ok(()); replacements.len()],
+                    bytes: new_text.into_bytes(),
+                    outcomes,
                 })
             }
             Self::NonUtf8(file) => file.apply_replacements(replacements),
@@ -418,11 +544,36 @@ fn touched_lines(text_index: &LineIndex<'_>, range: Range<usize>) -> RangeInclus
     (text_index.line_number_at(range.start) - 1)..=(text_index.line_number_at(range.end) - 1)
 }
 
+/// Appends `text[span]` to `output` with `replacements` applied, which must be sorted,
+/// non-overlapping and within `span`. Replacements containing characters that can't be represented
+/// in `encoding` aren't applied, and their corresponding entry in `outcomes` is set to an error.
+fn splice(
+    output: &mut String,
+    text: &str,
+    span: Range<usize>,
+    replacements: &[Replacement<'_>],
+    outcomes: &mut [Result<(), String>],
+    encoding: &'static Encoding,
+) {
+    let mut pos = span.start;
+    for (Replacement { range, text: new }, outcome) in replacements.iter().zip(outcomes) {
+        output.push_str(&text[pos..range.start]);
+        if can_encode(new, encoding) {
+            output.push_str(new);
+        } else {
+            *outcome = Err(unrepresentable_error(encoding));
+            output.push_str(&text[range.clone()]);
+        }
+        pos = range.end;
+    }
+    output.push_str(&text[pos..span.end]);
+}
+
 /// A set of replacements that modify overlapping lines, so must be applied together
 struct LineGroup {
     lines: RangeInclusive<usize>,
-    /// Indices of the replacements in the group
-    replacements: Vec<usize>,
+    /// Indices of the replacements in the group, which are consecutive as replacements are sorted
+    replacements: Range<usize>,
 }
 
 /// Groups sorted, non-overlapping replacements by the lines they modify
@@ -433,11 +584,11 @@ fn group_by_lines(text_index: &LineIndex<'_>, replacements: &[Replacement<'_>]) 
         match groups.last_mut() {
             Some(group) if lines.start() <= group.lines.end() => {
                 group.lines = *group.lines.start()..=*lines.end();
-                group.replacements.push(idx);
+                group.replacements.end = idx + 1;
             }
             _ => groups.push(LineGroup {
                 lines,
-                replacements: vec![idx],
+                replacements: idx..idx + 1,
             }),
         }
     }
@@ -452,44 +603,64 @@ impl NonUtf8File {
     }
 
     fn decode_with(original: Vec<u8>, legacy_encoding: Option<&'static Encoding>) -> Self {
-        let has_utf8_lines = split_lines(&original)
-            .any(|(line, _)| !line.is_ascii() && std::str::from_utf8(line).is_ok());
+        let has_utf8_lines = split_lines(&original).any(|(line, _)| is_non_ascii_utf8(line));
 
         // If every line decodes with the legacy encoding, decoding the whole file at once gives
         // the same text as decoding it line by line, and is much faster
-        let (text, opaque_lines) = if !has_utf8_lines
+        if !has_utf8_lines
             && let Some(encoding) = legacy_encoding
             && !original.contains(&0)
             && let Some(text) = decode_strict(&original, encoding)
         {
-            (text, vec![])
-        } else {
-            decode_lines(&original, legacy_encoding)
-        };
+            return Self {
+                original,
+                text,
+                lines: LineEncodings::Uniform(encoding),
+            };
+        }
 
+        let (text, opaque_lines) = decode_lines(&original, legacy_encoding);
         Self {
             original,
             text,
-            legacy_encoding,
-            has_utf8_lines,
-            opaque_lines,
+            lines: LineEncodings::PerLine {
+                legacy_encoding,
+                has_utf8_lines,
+                opaque_lines,
+            },
+        }
+    }
+
+    fn legacy_encoding(&self) -> Option<&'static Encoding> {
+        match self.lines {
+            LineEncodings::Uniform(encoding) => Some(encoding),
+            LineEncodings::PerLine {
+                legacy_encoding, ..
+            } => legacy_encoding,
+        }
+    }
+
+    fn opaque_lines(&self) -> &[usize] {
+        match &self.lines {
+            LineEncodings::Uniform(_) => &[],
+            LineEncodings::PerLine { opaque_lines, .. } => opaque_lines,
         }
     }
 
     fn touches_opaque_line(&self, lines: RangeInclusive<usize>) -> bool {
-        let first_candidate = self
-            .opaque_lines
-            .partition_point(|&idx| idx < *lines.start());
-        self.opaque_lines
+        let opaque_lines = self.opaque_lines();
+        let first_candidate = opaque_lines.partition_point(|&idx| idx < *lines.start());
+        opaque_lines
             .get(first_candidate)
             .is_some_and(|idx| lines.contains(idx))
     }
 
     fn apply_replacements(&self, replacements: &[Replacement<'_>]) -> anyhow::Result<ReplacedFile> {
-        let lines = FileLines::new(self)?;
         let mut outcomes = vec![Ok(()); replacements.len()];
+        let lines = FileLines::new(self)?;
         let mut bytes = Vec::with_capacity(self.original.len());
         let mut original_pos = 0;
+        let mut new_text = String::new();
 
         for group in group_by_lines(&lines.text_index, replacements) {
             let (first, last) = (*group.lines.start(), *group.lines.end());
@@ -497,11 +668,24 @@ impl NonUtf8File {
             bytes.extend_from_slice(&self.original[original_pos..original_range.start]);
             original_pos = original_range.end;
 
-            let encoding = match self.group_encoding(&lines, group.lines)? {
+            let group_encoding = match &self.lines {
+                // Every line is in this encoding or entirely ASCII, as verified when decoding
+                LineEncodings::Uniform(encoding) => Ok(*encoding),
+                LineEncodings::PerLine {
+                    legacy_encoding,
+                    has_utf8_lines,
+                    ..
+                } => group_encoding(
+                    &lines,
+                    group.lines,
+                    default_encoding(*legacy_encoding, *has_utf8_lines),
+                )?,
+            };
+            let encoding = match group_encoding {
                 Ok(encoding) => encoding,
                 Err(error) => {
-                    for idx in group.replacements {
-                        outcomes[idx] = Err(error.to_owned());
+                    for outcome in &mut outcomes[group.replacements] {
+                        *outcome = Err(error.to_owned());
                     }
                     bytes.extend_from_slice(&self.original[original_range]);
                     continue;
@@ -509,64 +693,21 @@ impl NonUtf8File {
             };
 
             let text_range = lines.text_span(first).start..lines.text_span(last).end;
-            let mut new_text = String::with_capacity(text_range.len());
-            let mut text_pos = text_range.start;
-            for idx in group.replacements {
-                let Replacement { range, text } = &replacements[idx];
-                new_text.push_str(&self.text[text_pos..range.start]);
-                if can_encode(text, encoding) {
-                    new_text.push_str(text);
-                } else {
-                    outcomes[idx] = Err(unrepresentable_error(encoding));
-                    new_text.push_str(&self.text[range.clone()]);
-                }
-                text_pos = range.end;
-            }
-            new_text.push_str(&self.text[text_pos..text_range.end]);
+            new_text.clear();
+            splice(
+                &mut new_text,
+                &self.text,
+                text_range,
+                &replacements[group.replacements.clone()],
+                &mut outcomes[group.replacements],
+                encoding,
+            );
             encode_into(&new_text, encoding, &mut bytes)
                 .context("Failed to encode lines that should be representable")?;
         }
         bytes.extend_from_slice(&self.original[original_pos..]);
 
         Ok(ReplacedFile { bytes, outcomes })
-    }
-
-    /// Determines the encoding to use when rewriting `line_indices`, or the reason they can't be
-    /// rewritten. Lines that are entirely ASCII are compatible with any encoding, so the other
-    /// lines must all share the same encoding.
-    ///
-    /// Returns an error (rather than `Ok(Err(..))`) if the decoded text of a line doesn't match
-    /// the original file, which should be impossible.
-    fn group_encoding(
-        &self,
-        lines: &FileLines<'_>,
-        line_indices: RangeInclusive<usize>,
-    ) -> anyhow::Result<Result<&'static Encoding, &'static str>> {
-        let mut group_encoding = None;
-        for idx in line_indices {
-            let (line, is_ascii) = lines.decode(idx)?;
-            let line_encoding = match line.kind {
-                LineKind::Opaque => return Ok(Err(OPAQUE_LINE_ERROR)),
-                LineKind::Utf8 if is_ascii => continue,
-                LineKind::Utf8 => UTF_8,
-                LineKind::Legacy(encoding) => encoding,
-            };
-            match group_encoding {
-                None => group_encoding = Some(line_encoding),
-                Some(encoding) if encoding == line_encoding => {}
-                Some(_) => return Ok(Err(MIXED_ENCODINGS_ERROR)),
-            }
-        }
-        Ok(Ok(group_encoding.unwrap_or_else(|| self.default_encoding())))
-    }
-
-    /// The encoding used when inserting text into lines that are entirely ASCII, consistent with
-    /// the rest of the file
-    fn default_encoding(&self) -> &'static Encoding {
-        match self.legacy_encoding {
-            Some(encoding) if !self.has_utf8_lines => encoding,
-            _ => UTF_8,
-        }
     }
 }
 
@@ -619,7 +760,7 @@ impl<'a> FileLines<'a> {
             &self.file.original[self.original_span(idx)],
             idx == self.original_newlines.len(),
         );
-        let line = decode_line(content.to_vec(), || self.file.legacy_encoding);
+        let line = decode_line(content.to_vec(), || self.file.legacy_encoding());
         let expected_ending = match ending {
             LineEnding::CrLf => "\r",
             LineEnding::Lf | LineEnding::None => "",
@@ -632,6 +773,36 @@ impl<'a> FileLines<'a> {
         );
         Ok((line, content.is_ascii()))
     }
+}
+
+/// Determines the encoding to use when rewriting `line_indices`, or the reason they can't be
+/// rewritten. Lines that are entirely ASCII are compatible with any encoding, so the other
+/// lines must all share the same encoding, and `ascii_line_encoding` is used if every line is
+/// entirely ASCII.
+///
+/// Returns an error (rather than `Ok(Err(..))`) if the decoded text of a line doesn't match
+/// the original file, which should be impossible.
+fn group_encoding(
+    lines: &FileLines<'_>,
+    line_indices: RangeInclusive<usize>,
+    ascii_line_encoding: &'static Encoding,
+) -> anyhow::Result<Result<&'static Encoding, &'static str>> {
+    let mut group_encoding = None;
+    for idx in line_indices {
+        let (line, is_ascii) = lines.decode(idx)?;
+        let line_encoding = match line.kind {
+            LineKind::Opaque => return Ok(Err(OPAQUE_LINE_ERROR)),
+            LineKind::Utf8 if is_ascii => continue,
+            LineKind::Utf8 => UTF_8,
+            LineKind::Legacy(encoding) => encoding,
+        };
+        match group_encoding {
+            None => group_encoding = Some(line_encoding),
+            Some(encoding) if encoding == line_encoding => {}
+            Some(_) => return Ok(Err(MIXED_ENCODINGS_ERROR)),
+        }
+    }
+    Ok(Ok(group_encoding.unwrap_or(ascii_line_encoding)))
 }
 
 /// Decodes `bytes` line by line (see [`decode_line`]), returning the text along with the indices
@@ -819,10 +990,10 @@ mod tests {
     fn test_decode_latin1() {
         let decoded = decode(b"mini \xe9tait\n".to_vec());
         assert_eq!(decoded.text(), "mini était\n");
-        let file = non_utf8(&decoded);
-        assert_eq!(file.legacy_encoding, Some(WINDOWS_1252));
-        assert!(!file.has_utf8_lines);
-        assert!(file.opaque_lines.is_empty());
+        assert!(matches!(
+            non_utf8(&decoded).lines,
+            LineEncodings::Uniform(encoding) if encoding == WINDOWS_1252
+        ));
     }
 
     #[test]
@@ -830,16 +1001,17 @@ mod tests {
         let original = "こんにちは、世界。これは日本語のテキストです。\n";
         let decoded = decode(shift_jis(original));
         assert_eq!(decoded.text(), original);
-        assert_eq!(non_utf8(&decoded).legacy_encoding, Some(SHIFT_JIS));
+        assert_eq!(non_utf8(&decoded).legacy_encoding(), Some(SHIFT_JIS));
     }
 
     #[test]
     fn test_decode_mixed() {
         let decoded = decode_as(b"caf\xc3\xa9\nd\xe9j\xe0 vu\r\nascii", WINDOWS_1252);
         assert_eq!(decoded.text(), "café\ndéjà vu\r\nascii");
-        let file = non_utf8(&decoded);
-        assert!(file.has_utf8_lines);
-        assert!(file.opaque_lines.is_empty());
+        assert!(matches!(
+            &non_utf8(&decoded).lines,
+            LineEncodings::PerLine { has_utf8_lines: true, opaque_lines, .. } if opaque_lines.is_empty()
+        ));
     }
 
     #[test]
@@ -849,7 +1021,7 @@ mod tests {
         bytes.extend(b"bad \x81\r\n");
         bytes.extend(shift_jis("日本語\n"));
         let decoded = decode_as(&bytes, SHIFT_JIS);
-        assert_eq!(non_utf8(&decoded).opaque_lines, [1]);
+        assert_eq!(non_utf8(&decoded).opaque_lines(), [1]);
         assert_eq!(
             decoded.text(),
             "これは日本語のテキストです。\nbad \u{FFFD}\r\n日本語\n"
@@ -862,7 +1034,7 @@ mod tests {
         // round-trip
         let bytes: Vec<u8> = (1..=255u8).collect();
         let decoded = decode(bytes.clone());
-        assert!(non_utf8(&decoded).opaque_lines.is_empty());
+        assert!(non_utf8(&decoded).opaque_lines().is_empty());
         assert_eq!(replace(&decoded, &[]).bytes, bytes);
     }
 
@@ -890,8 +1062,50 @@ mod tests {
             let file = non_utf8(&decoded);
             assert_eq!(
                 (decoded.text().to_owned(), vec![]),
-                decode_lines(&bytes, file.legacy_encoding),
+                decode_lines(&bytes, file.legacy_encoding()),
             );
+        }
+    }
+
+    #[test]
+    fn test_uniform_and_per_line_replacements_agree() {
+        let cases = [
+            (
+                b"mini \xe9tait\r\nascii mini\n\nd\xe9j\xe0 mini".to_vec(),
+                WINDOWS_1252,
+            ),
+            (
+                shift_jis("日本語 mini\r\nascii mini\n最後の行 mini\n"),
+                SHIFT_JIS,
+            ),
+        ];
+        for (bytes, encoding) in cases {
+            let uniform = decode_as(&bytes, encoding);
+            assert!(matches!(
+                non_utf8(&uniform).lines,
+                LineEncodings::Uniform(_)
+            ));
+            let (text, opaque_lines) = decode_lines(&bytes, Some(encoding));
+            let per_line = DecodedFile::NonUtf8(NonUtf8File {
+                original: bytes,
+                text,
+                lines: LineEncodings::PerLine {
+                    legacy_encoding: Some(encoding),
+                    has_utf8_lines: false,
+                    opaque_lines,
+                },
+            });
+            assert_eq!(uniform.text(), per_line.text());
+
+            let replacements = [
+                (nth_range(&uniform, "mini", 0), "été"),
+                (nth_range(&uniform, "mini\n", 0), "maxi"),
+                (nth_range(&uniform, "mini", 2), "世界"),
+            ];
+            let uniform_replaced = replace(&uniform, &replacements);
+            let per_line_replaced = replace(&per_line, &replacements);
+            assert_eq!(uniform_replaced.bytes, per_line_replaced.bytes);
+            assert_eq!(uniform_replaced.outcomes, per_line_replaced.outcomes);
         }
     }
 
@@ -964,6 +1178,30 @@ mod tests {
     }
 
     #[test]
+    fn test_file_decoder_default_encoding() {
+        let mut legacy_file = NamedTempFile::new().unwrap();
+        legacy_file
+            .write_all(b"ascii\nmini \xe9tait d\xe9j\xe0 vu\n")
+            .unwrap();
+        assert_eq!(
+            FileDecoder::new(legacy_file.path())
+                .default_encoding()
+                .unwrap(),
+            WINDOWS_1252
+        );
+
+        let mut mixed_file = NamedTempFile::new().unwrap();
+        mixed_file.write_all("ascii\ncafé\n".as_bytes()).unwrap();
+        mixed_file.write_all(b"mini \xe9tait\n").unwrap();
+        assert_eq!(
+            FileDecoder::new(mixed_file.path())
+                .default_encoding()
+                .unwrap(),
+            UTF_8
+        );
+    }
+
+    #[test]
     fn test_file_decoder_utf16() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"\xff\xfem\x00i\x00\n\x00").unwrap();
@@ -993,7 +1231,7 @@ mod tests {
     fn test_apply_replacements_mixed() {
         let bytes = b"caf\xc3\xa9 mini\nd\xe9j\xe0 mini\nascii mini\n\xff\x00 mini\n";
         let decoded = decode_as(bytes, WINDOWS_1252);
-        assert_eq!(non_utf8(&decoded).opaque_lines, [3]);
+        assert_eq!(non_utf8(&decoded).opaque_lines(), [3]);
         let replaced = replace(
             &decoded,
             &[
@@ -1214,6 +1452,38 @@ mod tests {
         ];
         decoded.retain_replaceable(&mut items, Clone::clone);
         assert_eq!(items, [a, c, insertion_before_c, end]);
+    }
+
+    #[test]
+    fn test_bounded_buffer_coding_matches_encoding_rs() {
+        // Large enough to span many buffers, with multi-byte characters crossing boundaries
+        let text = "日本語のテキスト、abc。\n".repeat(5_000);
+        for encoding in [SHIFT_JIS, encoding_rs::EUC_KR, encoding_rs::GBK] {
+            let (bytes, _, had_errors) = encoding.encode(&text);
+            if had_errors {
+                continue;
+            }
+            let expected = encoding
+                .decode_without_bom_handling_and_without_replacement(&bytes)
+                .unwrap();
+            assert_eq!(
+                decode_without_replacement(&bytes, encoding).as_deref(),
+                Some(expected.as_ref()),
+                "{}",
+                encoding.name()
+            );
+            assert!(encodes_to(&text, encoding, &bytes), "{}", encoding.name());
+
+            let mut different = bytes.to_vec();
+            *different.last_mut().unwrap() = b'x';
+            assert!(!encodes_to(&text, encoding, &different));
+            assert!(!encodes_to(&text, encoding, &bytes[..bytes.len() - 1]));
+        }
+
+        let mut malformed = shift_jis(&text);
+        malformed.insert(80_000, 0x81);
+        malformed.insert(80_001, b' ');
+        assert_eq!(decode_without_replacement(&malformed, SHIFT_JIS), None);
     }
 
     #[test]

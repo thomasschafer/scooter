@@ -23,7 +23,7 @@ use tokio::{
 use crate::{
     app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
-    encoding::{self, DecodedFile, Replacement},
+    encoding::{self, DecodedFile, LineKind, Replacement},
     file_content::FileContentProvider,
     line_index::LineIndex,
     line_reader::BufReadExt,
@@ -432,36 +432,74 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
     }
     let initial_results: Vec<_> = results.iter().map(|r| r.replace_result.clone()).collect();
 
+    let decoder = encoding::FileDecoder::new(file_path.as_path());
+
     // Stream the file on the assumption that it's UTF-8 (which is checked as it's read), so that
     // the whole file doesn't need to be read into memory in the common case
-    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, &file_path)?;
-    let streamed = (|| {
-        let mut input = encoding::Utf8ValidatingReader::new(File::open(&file_path)?);
-        let mut output = BufWriter::new(File::create(temp_output_file.path())?);
+    let streamed = rewrite_streaming(&file_path, |input, output| {
+        let mut input = encoding::Utf8ValidatingReader::new(input);
         match match_mode {
-            MatchMode::Line => replace_lines(&mut input, &mut output, results)?,
-            MatchMode::ByteRange => replace_byte_ranges(&mut input, &mut output, results)?,
+            MatchMode::Line => replace_lines(
+                &mut input,
+                output,
+                results,
+                &decoder,
+                AsciiLineEncoding::Utf8,
+            ),
+            MatchMode::ByteRange => replace_byte_ranges(&mut input, output, results),
         }
-        output.flush()?;
-        anyhow::Ok(())
-    })();
+    });
     match streamed {
-        Ok(()) => {
-            temp_output_file.persist(&file_path)?;
-            return Ok(());
-        }
-        Err(e) if encoding::is_invalid_utf8_error(&e) => drop(temp_output_file),
+        Ok(()) => return Ok(()),
+        Err(e) if encoding::is_invalid_utf8_error(&e) => {}
         Err(e) => return Err(e),
     }
 
     for (res, initial) in results.iter_mut().zip(initial_results) {
         res.replace_result = initial;
     }
-    replace_in_decoded_file(&file_path, results)
+    match match_mode {
+        // Lines are replaced independently, so the file can still be streamed
+        MatchMode::Line => rewrite_streaming(&file_path, |mut input, output| {
+            replace_lines(
+                &mut input,
+                output,
+                results,
+                &decoder,
+                AsciiLineEncoding::FileDefault,
+            )
+        }),
+        MatchMode::ByteRange => replace_in_decoded_file(&file_path, results),
+    }
+}
+
+/// Rewrites the file at `file_path` by streaming its contents through `rewrite` into a temporary
+/// file, which replaces the original if `rewrite` succeeds
+fn rewrite_streaming(
+    file_path: &Path,
+    rewrite: impl FnOnce(File, &mut BufWriter<File>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
+    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+    let mut output = BufWriter::new(File::create(temp_output_file.path())?);
+    rewrite(File::open(file_path)?, &mut output)?;
+    output.flush()?;
+    drop(output);
+    temp_output_file.persist(file_path)?;
+    Ok(())
 }
 
 const FILE_CHANGED_ERROR: &str = "File changed since last search";
+
+/// How to encode non-ASCII replacements on lines that are entirely ASCII
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AsciiLineEncoding {
+    /// As UTF-8, as the file is assumed to be valid UTF-8
+    Utf8,
+    /// Consistently with the rest of the file, which isn't valid UTF-8 (see
+    /// [`encoding::FileDecoder::default_encoding`])
+    FileDefault,
+}
 
 /// Line-mode replacement: replaces each line containing a match with its replacement, reading the
 /// original content from `input` and writing the updated content to `output`. Results that already
@@ -470,6 +508,8 @@ fn replace_lines(
     input: &mut impl Read,
     output: &mut impl Write,
     results: &mut [SearchResultWithReplacement],
+    decoder: &encoding::FileDecoder<&Path>,
+    ascii_line_encoding: AsciiLineEncoding,
 ) -> anyhow::Result<()> {
     let mut line_map: HashMap<usize, &mut SearchResultWithReplacement> = results
         .iter_mut()
@@ -486,12 +526,21 @@ fn replace_lines(
                 unreachable!("Line-mode must have Lines content")
             };
 
-            if line_bytes == content.as_bytes() {
-                line_bytes = res.replacement.as_bytes().to_vec();
-                res.replace_result = Some(ReplaceResult::Success);
-            } else {
-                res.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned()));
-            }
+            res.replace_result = Some(
+                match replace_line(
+                    &line_bytes,
+                    content,
+                    &res.replacement,
+                    decoder,
+                    ascii_line_encoding,
+                ) {
+                    Ok(replaced) => {
+                        line_bytes = replaced;
+                        ReplaceResult::Success
+                    }
+                    Err(e) => ReplaceResult::Error(e),
+                },
+            );
         }
 
         line_bytes.extend(line_ending.as_bytes());
@@ -499,6 +548,38 @@ fn replace_lines(
     }
 
     Ok(())
+}
+
+/// Returns the bytes that `line` (excluding its line ending) should be replaced with, provided that
+/// it still decodes to `expected`. The replacement is encoded in the same encoding as the line
+/// (see [`encoding`]).
+fn replace_line(
+    line: &[u8],
+    expected: &str,
+    replacement: &str,
+    decoder: &encoding::FileDecoder<&Path>,
+    ascii_line_encoding: AsciiLineEncoding,
+) -> Result<Vec<u8>, String> {
+    let line_encoding = if line == expected.as_bytes() {
+        if line.is_ascii() && !replacement.is_ascii() {
+            match ascii_line_encoding {
+                AsciiLineEncoding::Utf8 => encoding_rs::UTF_8,
+                AsciiLineEncoding::FileDefault => decoder
+                    .default_encoding()
+                    .map_err(|e| format!("Failed to determine the encoding of the file: {e}"))?,
+            }
+        } else {
+            encoding_rs::UTF_8
+        }
+    } else {
+        let decoded_line = decoder.decode_line(line.to_vec());
+        match decoded_line.kind {
+            LineKind::Legacy(encoding) if decoded_line.text == expected => encoding,
+            LineKind::Opaque => return Err(encoding::OPAQUE_LINE_ERROR.to_owned()),
+            LineKind::Utf8 | LineKind::Legacy(_) => return Err(FILE_CHANGED_ERROR.to_owned()),
+        }
+    };
+    encoding::encode(replacement, line_encoding).map_err(|e| e.to_string())
 }
 
 /// Byte-mode replacement: replaces the byte range of each result, reading the original content
@@ -570,15 +651,14 @@ fn replace_byte_ranges(
     Ok(())
 }
 
-/// Performs replacements in a file that isn't valid UTF-8, by decoding it (see [`encoding`]). The
-/// search results must have been computed against the decoded text.
+/// Performs byte-range replacements in a file that isn't valid UTF-8, by decoding it (see
+/// [`encoding`]). The search results must have been computed against the decoded text.
 fn replace_in_decoded_file(
     file_path: &Path,
     results: &mut [SearchResultWithReplacement],
 ) -> anyhow::Result<()> {
     let decoded = encoding::decode(fs::read(file_path)?);
     let text = decoded.text();
-    let text_index = LineIndex::new(text);
 
     // Locate each match in the decoded text, checking that it hasn't changed since the search
     let mut located = vec![];
@@ -586,27 +666,20 @@ fn replace_in_decoded_file(
         if res.replace_result.is_some() {
             continue;
         }
-        let range = match &res.search_result.content {
-            MatchContent::Line {
-                line_number,
-                content,
-                ..
-            } => (*line_number <= text_index.newline_count() + 1)
-                .then(|| {
-                    text_index.line_start_byte(*line_number)..text_index.line_end_byte(*line_number)
-                })
-                .filter(|range| text[range.clone()] == **content),
-            MatchContent::ByteRange {
-                byte_start,
-                byte_end,
-                content,
-                ..
-            } => Some(*byte_start..*byte_end)
-                .filter(|range| text.get(range.clone()) == Some(content.as_str())),
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            content,
+            ..
+        } = &res.search_result.content
+        else {
+            unreachable!("Line-mode results are replaced by streaming the file")
         };
-        match range {
-            Some(range) => located.push((idx, range)),
-            None => res.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned())),
+        let range = *byte_start..*byte_end;
+        if text.get(range.clone()) == Some(content.as_str()) {
+            located.push((idx, range));
+        } else {
+            res.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned()));
         }
     }
     located.sort_by_key(|(_, range)| range.start);
