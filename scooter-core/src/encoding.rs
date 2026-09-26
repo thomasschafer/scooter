@@ -27,7 +27,7 @@ use std::{
 use anyhow::Context;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use content_inspector::inspect;
-use encoding_rs::{EncoderResult, Encoding, UTF_8};
+use encoding_rs::{Encoding, UTF_8};
 
 use crate::{
     line_index::{LineIndex, newline_positions},
@@ -659,32 +659,17 @@ pub fn encode(text: &str, encoding: &'static Encoding) -> anyhow::Result<Vec<u8>
 }
 
 /// Appends `text` to `output`, encoded using `encoding`. Fails if `text` contains characters that
-/// can't be represented in that encoding, in which case `output` may contain part of the text.
+/// can't be represented in that encoding.
 fn encode_into(
     text: &str,
     encoding: &'static Encoding,
     output: &mut Vec<u8>,
 ) -> anyhow::Result<()> {
-    if encoding == UTF_8 {
-        output.extend_from_slice(text.as_bytes());
-        return Ok(());
-    }
-    let mut encoder = encoding.new_encoder();
-    let mut remaining = text;
-    loop {
-        let max_len = encoder
-            .max_buffer_length_from_utf8_without_replacement(remaining.len())
-            .context("Text is too long to encode")?;
-        output.reserve(max_len);
-        let (result, read) =
-            encoder.encode_from_utf8_to_vec_without_replacement(remaining, output, true);
-        remaining = &remaining[read..];
-        match result {
-            EncoderResult::InputEmpty => return Ok(()),
-            EncoderResult::OutputFull => {}
-            EncoderResult::Unmappable(_) => anyhow::bail!(unrepresentable_error(encoding)),
-        }
-    }
+    // This only allocates if the text needs converting, e.g. it isn't ASCII
+    let (bytes, _, had_unmappable_chars) = encoding.encode(text);
+    anyhow::ensure!(!had_unmappable_chars, unrepresentable_error(encoding));
+    output.extend_from_slice(&bytes);
+    Ok(())
 }
 
 /// Whether `text` can be represented in `encoding`
