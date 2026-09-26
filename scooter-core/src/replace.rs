@@ -440,10 +440,14 @@ fn replace_line_mode(
 
     // Assume the file is UTF-8, which is checked as the file is streamed
     let outcome = replace_lines(file_path, results, &legacy_decoder, false)?;
-    let temp_output_file = if !outcome.is_utf8 && outcome.non_ascii_replacement_in_ascii_line {
-        // The file isn't UTF-8, so non-ASCII replacements on ASCII lines must be encoded using
-        // the file's encoding rather than UTF-8 (which was assumed), so perform the replacement
-        // again. This is only needed in this rare case, so UTF-8 files are only read once.
+    let temp_output_file = if !outcome.is_utf8
+        && outcome.non_ascii_replacement_in_ascii_line
+        && !encoding::contains_non_ascii_utf8_line(BufReader::new(File::open(file_path)?))?
+    {
+        // The file is in a legacy encoding (i.e. isn't UTF-8, or a mix of UTF-8 and another
+        // encoding), so non-ASCII replacements on ASCII lines must be encoded using the file's
+        // encoding rather than UTF-8 (which was assumed), so perform the replacement again. This
+        // is only needed in this rare case, so UTF-8 files are only read once.
         for res in results.iter_mut() {
             res.replace_result = None;
         }
@@ -455,6 +459,9 @@ fn replace_line_mode(
     temp_output_file.persist(file_path)?;
     Ok(())
 }
+
+const FILE_CHANGED_ERROR: &str = "File changed since last search";
+const UNDETECTED_ENCODING_ERROR: &str = "Couldn't detect the file's encoding";
 
 struct ReplaceLinesOutcome {
     temp_output_file: NamedTempFile,
@@ -499,36 +506,35 @@ fn replace_lines(
                 };
 
                 let line_encoding = if line_bytes == content.as_bytes() {
-                    if line_bytes.is_ascii() && !res.replacement.is_ascii() {
-                        non_ascii_replacement_in_ascii_line = true;
-                        if is_legacy_file {
-                            legacy_decoder.encoding()
-                        } else {
-                            Some(encoding_rs::UTF_8)
-                        }
+                    let is_non_ascii_replacement_in_ascii_line =
+                        line_bytes.is_ascii() && !res.replacement.is_ascii();
+                    non_ascii_replacement_in_ascii_line |= is_non_ascii_replacement_in_ascii_line;
+                    if is_legacy_file && is_non_ascii_replacement_in_ascii_line {
+                        legacy_decoder.encoding().ok_or(UNDETECTED_ENCODING_ERROR)
                     } else {
-                        Some(encoding_rs::UTF_8)
+                        Ok(encoding_rs::UTF_8)
                     }
                 } else if std::str::from_utf8(&line_bytes).is_err() {
-                    legacy_decoder
-                        .decode(&line_bytes)
-                        .filter(|decoded| decoded.text == *content)
-                        .map(|decoded| decoded.encoding)
+                    match legacy_decoder.decode(&line_bytes) {
+                        Some(decoded) if decoded.text == *content => Ok(decoded.encoding),
+                        None if legacy_decoder.encoding().is_none() => {
+                            Err(UNDETECTED_ENCODING_ERROR)
+                        }
+                        Some(_) | None => Err(FILE_CHANGED_ERROR),
+                    }
                 } else {
-                    None
+                    Err(FILE_CHANGED_ERROR)
                 };
 
                 let replace_result = match line_encoding {
-                    Some(line_encoding) => {
-                        match encoding::encode(&res.replacement, line_encoding) {
-                            Ok(replacement) => {
-                                line_bytes = replacement;
-                                ReplaceResult::Success
-                            }
-                            Err(e) => ReplaceResult::Error(e.to_string()),
+                    Ok(line_encoding) => match encoding::encode(&res.replacement, line_encoding) {
+                        Ok(replacement) => {
+                            line_bytes = replacement;
+                            ReplaceResult::Success
                         }
-                    }
-                    None => ReplaceResult::Error("File changed since last search".to_owned()),
+                        Err(e) => ReplaceResult::Error(e.to_string()),
+                    },
+                    Err(e) => ReplaceResult::Error(e.to_owned()),
                 };
                 res.replace_result = Some(replace_result);
             }
@@ -1988,13 +1994,19 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_in_file_non_utf8_lines() {
+    fn test_replace_in_file_mixed_encoding_lines() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("mixed.txt");
         // UTF-8 line followed by Windows-1252 lines
         std::fs::write(
             &file_path,
-            ["mini été\n".as_bytes(), b"mini \xe9tait\n", b"autre mini\n"].concat(),
+            [
+                "mini été\n".as_bytes(),
+                b"mini \xe9tait\n",
+                b"autre mini\n",
+                b"mini \xe9t\xe9\n",
+            ]
+            .concat(),
         )
         .unwrap();
         let path = file_path.to_str().unwrap();
@@ -2018,13 +2030,23 @@ mod tests {
                 true,
                 None,
             ),
-            // Not representable in Windows-1252
+            // The file contains UTF-8, so ASCII lines are treated as UTF-8 as before
             create_search_result_with_replacement(
                 path,
                 3,
                 "autre mini",
                 LineEnding::Lf,
-                "autre 世界",
+                "autre déjà",
+                true,
+                None,
+            ),
+            // Not representable in the encoding of the line
+            create_search_result_with_replacement(
+                path,
+                4,
+                "mini été",
+                LineEnding::Lf,
+                "世界 été",
                 true,
                 None,
             ),
@@ -2034,13 +2056,20 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
         assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
         assert!(matches!(
-            &results[2].replace_result,
+            &results[3].replace_result,
             Some(ReplaceResult::Error(e)) if e.contains("can't be represented")
         ));
         assert_eq!(
             std::fs::read(&file_path).unwrap(),
-            ["maxi été\n".as_bytes(), b"maxi \xe9tait\n", b"autre mini\n",].concat()
+            [
+                "maxi été\n".as_bytes(),
+                b"maxi \xe9tait\n",
+                "autre déjà\n".as_bytes(),
+                b"mini \xe9t\xe9\n",
+            ]
+            .concat()
         );
     }
 

@@ -83,7 +83,7 @@ fn decoded_line_window<R>(
     reader: R,
     start: usize,
     end: usize,
-    mut decoder: LineDecoder,
+    decoder: LineDecoder,
 ) -> impl Iterator<Item = (usize, String)>
 where
     R: BufReadExt,

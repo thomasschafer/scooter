@@ -1617,8 +1617,19 @@ test_with_both_regex_modes_and_fixed_strings!(
             };
 
             let result = run_headless(search_config, dir_config);
-            assert_eq!(result.unwrap(), "Success: 3 files updated\n".to_owned());
+            // In multiline mode, mixed files can't be decoded as a whole so are left untouched
+            let expected = if multiline {
+                "Success: 2 files updated\n"
+            } else {
+                "Success: 3 files updated\n"
+            };
+            assert_eq!(result.unwrap(), expected);
 
+            let expected_mixed: &[u8] = if multiline {
+                binary!("mini été".as_bytes(), b"mini \xff")
+            } else {
+                binary!("maxi été".as_bytes(), b"maxi \xff")
+            };
             assert_test_files!(
                 &temp_dir,
                 "latin1.txt" => binary!(
@@ -1630,10 +1641,7 @@ test_with_both_regex_modes_and_fixed_strings!(
                     "maxi était",
                     "déjà maxi",
                 ),
-                "mixed.txt" => binary!(
-                    "maxi été".as_bytes(),
-                    b"maxi \xff",
-                ),
+                "mixed.txt" => expected_mixed,
             );
         }
 
@@ -1697,6 +1705,68 @@ test_with_both_regex_modes_and_fixed_strings!(
                     b"\xff",
                 ),
             );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_mixed_encoding_non_ascii_replacement,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            // Mostly UTF-8, with a stray invalid byte on one line
+            let temp_dir = create_test_files!(
+                "mixed.txt" => binary!(
+                    "café crème brûlée".as_bytes(),
+                    b"foo",
+                    b"bar \xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "foo",
+                replacement_text: "déjà",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = DirConfig {
+                directory: temp_dir.path().to_path_buf(),
+                include_globs: Some(""),
+                exclude_globs: Some(""),
+                include_hidden: false,
+                include_git_folders: false,
+            };
+
+            let result = run_headless(search_config, dir_config);
+
+            if multiline {
+                // Mixed files can't be decoded as a whole, so are left untouched
+                assert_eq!(result.unwrap(), "Success: 0 files updated\n".to_owned());
+                assert_test_files!(
+                    &temp_dir,
+                    "mixed.txt" => binary!(
+                        "café crème brûlée".as_bytes(),
+                        b"foo",
+                        b"bar \xff",
+                    ),
+                );
+            } else {
+                // The replacement is written as UTF-8, consistent with the rest of the file
+                assert_eq!(result.unwrap(), "Success: 1 file updated\n".to_owned());
+                assert_test_files!(
+                    &temp_dir,
+                    "mixed.txt" => binary!(
+                        "café crème brûlée".as_bytes(),
+                        "déjà".as_bytes(),
+                        b"bar \xff",
+                    ),
+                );
+            }
         }
 
         Ok(())

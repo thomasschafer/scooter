@@ -10,6 +10,10 @@
 //! detected encoding, and detection only happens once such a line is found. This means that UTF-8
 //! files are handled exactly as before, and the lines of files with mixed encodings that were
 //! already searchable continue to be treated as UTF-8.
+//!
+//! A single encoding is used for each file, and the encodings supported are ASCII-compatible with
+//! `\n` never appearing within a multi-byte character, so decoding a whole file gives the same
+//! text as decoding it line by line.
 use std::{
     cell::OnceCell,
     fs::File,
@@ -20,7 +24,7 @@ use std::{
 use anyhow::Context;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use content_inspector::inspect;
-use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
+use encoding_rs::{Encoding, UTF_8};
 
 /// The contents of a file decoded to UTF-8, along with the encoding used by the file on disk
 #[derive(Debug)]
@@ -31,7 +35,8 @@ pub struct DecodedText {
 
 /// Decodes `bytes` as UTF-8 if valid, otherwise using the detected encoding of the content.
 ///
-/// Returns `None` if no suitable encoding could be found, e.g. for UTF-16 content.
+/// Returns `None` if no suitable encoding could be found, e.g. for UTF-16 content, or for content
+/// that mixes UTF-8 with another encoding (which can't be written back as a whole).
 pub fn decode(bytes: Vec<u8>) -> Option<DecodedText> {
     match String::from_utf8(bytes) {
         Ok(text) => Some(DecodedText {
@@ -40,39 +45,54 @@ pub fn decode(bytes: Vec<u8>) -> Option<DecodedText> {
         }),
         Err(e) => {
             let bytes = e.into_bytes();
-            decode_legacy(&bytes, detect_legacy_encoding(&bytes)?)
+            // Text in the ASCII-compatible encodings we support never contains NUL bytes, so
+            // this avoids treating binary data as text (and is fast, exiting at the first NUL)
+            if bytes.contains(&0)
+                || inspect(&bytes).is_binary()
+                || contains_non_ascii_utf8_line(bytes.as_slice()).unwrap_or(true)
+            {
+                return None;
+            }
+            let encoding = detect_legacy_encoding(bytes.as_slice()).ok().flatten()?;
+            decode_legacy(&bytes, encoding)
         }
     }
 }
 
-/// Detects the encoding of `bytes` (typically the full contents of a file), assuming it isn't
-/// UTF-8. Returns `None` if the content looks like binary data, or has a UTF-16 byte order mark.
-fn detect_legacy_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
-    // Text in the ASCII-compatible encodings we support never contains NUL bytes, so this
-    // avoids treating binary data as text (and is fast, exiting at the first NUL)
-    if bytes.contains(&0) || inspect(bytes).is_binary() {
-        return None;
+/// Whether any line read from `reader` contains non-ASCII characters and is valid UTF-8. Content
+/// in a legacy encoding almost never forms valid multi-byte UTF-8 sequences, so this indicates
+/// that non-UTF-8 content is mixed with UTF-8.
+pub fn contains_non_ascii_utf8_line(mut reader: impl BufRead) -> io::Result<bool> {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(false);
+        }
+        if !line.is_ascii() && std::str::from_utf8(&line).is_ok() {
+            return Ok(true);
+        }
     }
-    detect_legacy_encoding_streaming(bytes).ok().flatten()
 }
 
 /// Detects the encoding of the content of `reader`, assuming it isn't UTF-8. Returns `None` if
 /// the content has a UTF-16 byte order mark, or a NUL byte is found (indicating binary data).
 ///
 /// Detection is relatively slow, so only a sample of the content is used: ASCII-only lines don't
-/// affect the result, so only lines containing non-ASCII bytes are included, up to a limit. This
-/// means that only as much of the content as is needed is read.
-fn detect_legacy_encoding_streaming(
-    mut reader: impl BufRead,
-) -> io::Result<Option<&'static Encoding>> {
+/// affect the result, so only lines containing non-ASCII bytes are included, up to a limit. The
+/// amount of content read is also limited, so that large files aren't read in full.
+fn detect_legacy_encoding(reader: impl BufRead) -> io::Result<Option<&'static Encoding>> {
+    let mut reader = reader.take(MAX_DETECTION_READ_BYTES);
     let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
     let mut remaining = MAX_DETECTION_SAMPLE_BYTES;
     let mut line = Vec::new();
     let mut is_first_line = true;
+    let mut reached_end = false;
 
     while remaining > 0 {
         line.clear();
         if reader.read_until(b'\n', &mut line)? == 0 {
+            reached_end = reader.limit() > 0;
             break;
         }
         if line.contains(&0) {
@@ -100,30 +120,31 @@ fn detect_legacy_encoding_streaming(
         detector.feed(sample, false);
         remaining = remaining.saturating_sub(sample.len().max(1));
     }
-    detector.feed(&[], true);
+    // Only signal the end of the stream if we actually reached it, as documented by `chardetng`
+    if reached_end {
+        detector.feed(&[], true);
+    }
     Ok(Some(detector.guess(None, Utf8Detection::Deny)))
 }
 
-/// Maximum number of bytes used to detect the encoding of a file
+/// Maximum number of non-ASCII bytes used to detect the encoding of a file
 const MAX_DETECTION_SAMPLE_BYTES: usize = 1024 * 1024;
+
+/// Maximum number of bytes read from a file when detecting its encoding
+const MAX_DETECTION_READ_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Decodes `bytes` with `encoding`, provided that the result can be encoded back into exactly the
 /// same bytes.
-///
-/// Windows-1252 maps every byte, so is used as a fallback allowing at least ASCII text to be
-/// searched and replaced when `encoding` doesn't round-trip.
 fn decode_legacy(bytes: &[u8], encoding: &'static Encoding) -> Option<DecodedText> {
-    [encoding, WINDOWS_1252].into_iter().find_map(|encoding| {
-        if !encoding.is_ascii_compatible() {
-            return None;
-        }
-        let text = encoding
-            .decode_without_bom_handling_and_without_replacement(bytes)?
-            .into_owned();
-        // Single-byte encodings map each byte to a distinct character, so always round-trip
-        (encoding.is_single_byte() || encode(&text, encoding).ok()? == bytes)
-            .then_some(DecodedText { text, encoding })
-    })
+    if !encoding.is_ascii_compatible() {
+        return None;
+    }
+    let text = encoding
+        .decode_without_bom_handling_and_without_replacement(bytes)?
+        .into_owned();
+    // Single-byte encodings map each byte to a distinct character, so always round-trip
+    (encoding.is_single_byte() || encode(&text, encoding).ok()? == bytes)
+        .then_some(DecodedText { text, encoding })
 }
 
 /// Decodes the lines of a file that aren't valid UTF-8.
@@ -150,7 +171,7 @@ impl<P: AsRef<Path>> LegacyLineDecoder<P> {
         let path = self.path.as_ref();
         *self.encoding.get_or_init(|| {
             File::open(path)
-                .and_then(|file| detect_legacy_encoding_streaming(BufReader::new(file)))
+                .and_then(|file| detect_legacy_encoding(BufReader::new(file)))
                 .ok()
                 .flatten()
         })
@@ -275,7 +296,7 @@ impl LineDecoder {
         }
     }
 
-    pub fn decode(&mut self, bytes: Vec<u8>) -> String {
+    pub fn decode(&self, bytes: Vec<u8>) -> String {
         String::from_utf8(bytes).unwrap_or_else(|e| {
             self.legacy
                 .as_ref()
@@ -291,6 +312,7 @@ impl LineDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use encoding_rs::WINDOWS_1252;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -330,7 +352,7 @@ mod tests {
     fn test_legacy_line_decoder() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"plain\nmini \xe9tait\n").unwrap();
-        let mut decoder = LegacyLineDecoder::new(file.path());
+        let decoder = LegacyLineDecoder::new(file.path());
         let decoded = decoder.decode(b"mini \xe9tait").unwrap();
         assert_eq!(decoded.text, "mini était");
         assert_eq!(decoded.encoding, WINDOWS_1252);
@@ -340,7 +362,7 @@ mod tests {
     fn test_legacy_line_decoder_rejects_utf16() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"\xff\xfem\x00i\x00\n\x00").unwrap();
-        let mut decoder = LegacyLineDecoder::new(file.path());
+        let decoder = LegacyLineDecoder::new(file.path());
         assert!(decoder.decode(b"\xff\xfem\x00i\x00").is_none());
     }
 
@@ -403,6 +425,37 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_rejects_mixed_utf8() {
+        assert!(decode(b"caf\xc3\xa9\nd\xe9j\xe0\n".to_vec()).is_none());
+    }
+
+    #[test]
+    fn test_contains_non_ascii_utf8_line() {
+        assert!(!contains_non_ascii_utf8_line(b"abc\nd\xe9j\xe0\n".as_slice()).unwrap());
+        assert!(contains_non_ascii_utf8_line(b"abc\ncaf\xc3\xa9\n\xff".as_slice()).unwrap());
+        assert!(!contains_non_ascii_utf8_line(b"".as_slice()).unwrap());
+    }
+
+    #[test]
+    fn test_whole_file_decode_matches_line_decode() {
+        // Search and preview decode line by line, whereas multiline search decodes the whole
+        // file, so these must agree
+        let original = "こんにちは\n世界。これは日本語のテキストです。\nascii\n";
+        let (bytes, _, _) = encoding_rs::SHIFT_JIS.encode(original);
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&bytes).unwrap();
+
+        let whole = decode(bytes.to_vec()).unwrap();
+        let decoder = LineDecoder::new(Some(file.path()));
+        let by_line: String = bytes
+            .split_inclusive(|&b| b == b'\n')
+            .map(|line| decoder.decode(line.to_vec()))
+            .collect();
+        assert_eq!(whole.text, by_line);
+        assert_eq!(whole.text, original);
+    }
+
+    #[test]
     fn test_decode_rejects_utf16() {
         assert!(decode(b"\xff\xfem\x00i\x00".to_vec()).is_none());
         assert!(decode(b"\xfe\xff\x00m\x00i".to_vec()).is_none());
@@ -461,13 +514,13 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"plain\nmini \xe9tait\nd\xe9j\xe0\n")
             .unwrap();
-        let mut decoder = LineDecoder::new(Some(file.path()));
+        let decoder = LineDecoder::new(Some(file.path()));
         assert_eq!(decoder.decode(b"plain".to_vec()), "plain");
         assert_eq!(decoder.decode("été".as_bytes().to_vec()), "été");
         assert_eq!(decoder.decode(b"mini \xe9tait".to_vec()), "mini était");
         assert_eq!(decoder.decode(b"d\xe9j\xe0".to_vec()), "déjà");
 
-        let mut decoder = LineDecoder::new(None);
+        let decoder = LineDecoder::new(None);
         assert_eq!(
             decoder.decode(b"mini \xe9tait".to_vec()),
             "mini \u{FFFD}tait"
