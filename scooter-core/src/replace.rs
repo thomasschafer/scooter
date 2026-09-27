@@ -422,6 +422,10 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
         results.iter().all(|r| r.preview_error.is_none()),
         "preview-errored results should not reach replace_in_file"
     );
+    assert!(
+        results.iter().all(|r| r.replace_result.is_none()),
+        "replace_in_file should only be called with results that haven't been replaced"
+    );
     let match_mode =
         search::match_mode_of_results(results).expect("replace_in_file called with empty results");
     if match_mode == MatchMode::ByteRange {
@@ -502,8 +506,7 @@ enum AsciiLineEncoding {
 }
 
 /// Line-mode replacement: replaces each line containing a match with its replacement, reading the
-/// original content from `input` and writing the updated content to `output`. Results that already
-/// have a `replace_result` set are skipped.
+/// original content from `input` and writing the updated content to `output`
 fn replace_lines(
     input: &mut impl Read,
     output: &mut impl Write,
@@ -513,7 +516,6 @@ fn replace_lines(
 ) -> anyhow::Result<()> {
     let mut line_map: HashMap<usize, &mut SearchResultWithReplacement> = results
         .iter_mut()
-        .filter(|res| res.replace_result.is_none())
         .map(|res| (res.search_result.start_line_number(), res))
         .collect();
 

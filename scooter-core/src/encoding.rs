@@ -20,14 +20,18 @@ use std::{
     cell::OnceCell,
     fs::File,
     io::{self, BufRead, BufReader, Read},
+    num::NonZeroUsize,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock, PoisonError},
+    time::SystemTime,
 };
 
 use anyhow::Context;
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use content_inspector::inspect;
 use encoding_rs::{DecoderResult, EncoderResult, Encoding, UTF_8};
+use lru::LruCache;
 
 use crate::{
     line_index::{LineIndex, newline_positions},
@@ -212,12 +216,10 @@ impl<P: AsRef<Path>> FileDecoder<P> {
     fn legacy_encoding(&self) -> Option<&'static Encoding> {
         *self.legacy_encoding.get_or_init(|| {
             let path = self.path.as_ref();
-            File::open(path)
-                .and_then(|file| detect_legacy_encoding(BufReader::new(file)))
-                .unwrap_or_else(|e| {
-                    log::warn!("Failed to detect encoding of {}: {e}", path.display());
-                    None
-                })
+            detect_file_legacy_encoding(path).unwrap_or_else(|e| {
+                log::warn!("Failed to detect encoding of {}: {e}", path.display());
+                None
+            })
         })
     }
 
@@ -249,25 +251,82 @@ impl LineDecoder {
     }
 }
 
+/// The detected legacy encoding of a file, along with the length and modification time of the
+/// file when it was detected
+struct CachedEncoding {
+    len: u64,
+    modified: SystemTime,
+    encoding: Option<&'static Encoding>,
+}
+
+const ENCODING_CACHE_CAPACITY: usize = 256;
+
+/// Detects the legacy encoding of the file at `path` (see [`detect_legacy_encoding`]).
+///
+/// Detected encodings are cached, as detection can require reading much of the file, and is needed
+/// repeatedly for the same file (e.g. for each preview of its search results). A cached encoding is
+/// only used if the file's length and modification time are unchanged.
+fn detect_file_legacy_encoding(path: &Path) -> io::Result<Option<&'static Encoding>> {
+    static CACHE: OnceLock<Mutex<LruCache<PathBuf, CachedEncoding>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
+        let capacity = NonZeroUsize::new(ENCODING_CACHE_CAPACITY)
+            .expect("Encoding cache capacity must be non-zero");
+        Mutex::new(LruCache::new(capacity))
+    });
+
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    let (len, modified) = (metadata.len(), metadata.modified()?);
+    {
+        let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(cached) = cache.get(path)
+            && cached.len == len
+            && cached.modified == modified
+        {
+            return Ok(cached.encoding);
+        }
+    }
+
+    let encoding = detect_legacy_encoding(BufReader::new(file))?;
+    cache.lock().unwrap_or_else(PoisonError::into_inner).put(
+        path.to_path_buf(),
+        CachedEncoding {
+            len,
+            modified,
+            encoding,
+        },
+    );
+    Ok(encoding)
+}
+
 /// Detects the encoding of the content of `reader`, assuming it isn't UTF-8. Returns `None` if
 /// the content has a UTF-16 byte order mark, or a NUL byte is found (indicating binary data).
 ///
-/// Detection is relatively slow, so only a sample of the content is used: ASCII-only lines don't
-/// affect the result, so only lines containing non-ASCII bytes are included, up to a limit. The
-/// amount of content read is also limited, so that large files aren't read in full.
-fn detect_legacy_encoding(reader: impl BufRead) -> io::Result<Option<&'static Encoding>> {
-    let mut reader = reader.take(MAX_DETECTION_READ_BYTES);
+/// Only lines that aren't valid UTF-8 are used, as other lines give no information about the
+/// legacy encoding (and in files mixing UTF-8 with another encoding, would be misleading).
+/// Detection is relatively slow, so only a sample of these lines is used, and reading stops once
+/// enough of the content following the first of them has been read.
+fn detect_legacy_encoding(mut reader: impl BufRead) -> io::Result<Option<&'static Encoding>> {
     let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
-    let mut remaining = MAX_DETECTION_SAMPLE_BYTES;
+    let mut remaining_sample = MAX_DETECTION_SAMPLE_BYTES;
+    // Bytes read from the first line that isn't valid UTF-8 onwards
+    let mut read_since_first_sample: Option<u64> = None;
     let mut line = Vec::new();
     let mut is_first_line = true;
-    let mut reached_end = false;
 
-    while remaining > 0 {
+    let reached_end = loop {
+        if remaining_sample == 0
+            || read_since_first_sample.is_some_and(|read| read >= MAX_DETECTION_READ_BYTES)
+        {
+            break false;
+        }
         line.clear();
-        if reader.read_until(b'\n', &mut line)? == 0 {
-            reached_end = reader.limit() > 0;
-            break;
+        // Limit the length read at once, so that huge lines don't use huge amounts of memory
+        let read = (&mut reader)
+            .take(MAX_DETECTION_SAMPLE_BYTES as u64)
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
+            break true;
         }
         if line.contains(&0) {
             return Ok(None);
@@ -277,23 +336,30 @@ fn detect_legacy_encoding(reader: impl BufRead) -> io::Result<Option<&'static En
             return Ok(None);
         }
         is_first_line = false;
-        if line.is_ascii() {
-            continue;
+        if let Some(read_since) = &mut read_since_first_sample {
+            *read_since += read as u64;
         }
+        match std::str::from_utf8(&line) {
+            Ok(_) => continue,
+            // A multi-byte character split by the limit on the length read at once
+            Err(e) if e.error_len().is_none() => continue,
+            Err(_) => {}
+        }
+        read_since_first_sample.get_or_insert(read as u64);
 
-        let sample = if line.len() > remaining {
+        let sample = if line.len() > remaining_sample {
             // Truncate at an ASCII byte to avoid splitting a multi-byte character
-            let end = line[..remaining]
+            let end = line[..remaining_sample]
                 .iter()
                 .rposition(u8::is_ascii)
-                .map_or(remaining, |i| i + 1);
+                .map_or(remaining_sample, |i| i + 1);
             &line[..end]
         } else {
             &line
         };
         detector.feed(sample, false);
-        remaining = remaining.saturating_sub(sample.len().max(1));
-    }
+        remaining_sample = remaining_sample.saturating_sub(sample.len().max(1));
+    };
     // Only signal the end of the stream if we actually reached it, as documented by `chardetng`
     if reached_end {
         detector.feed(&[], true);
@@ -301,10 +367,12 @@ fn detect_legacy_encoding(reader: impl BufRead) -> io::Result<Option<&'static En
     Ok(Some(detector.guess(None, Utf8Detection::Deny)))
 }
 
-/// Maximum number of non-ASCII bytes used to detect the encoding of a file
+/// Maximum number of bytes, from lines that aren't valid UTF-8, used to detect the encoding of a
+/// file
 const MAX_DETECTION_SAMPLE_BYTES: usize = 1024 * 1024;
 
-/// Maximum number of bytes read from a file when detecting its encoding
+/// Maximum number of bytes read when detecting the encoding of a file, from the first line that
+/// isn't valid UTF-8 onwards
 const MAX_DETECTION_READ_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Splits a line at `\n` into its content and ending, consistent with
@@ -545,8 +613,9 @@ fn touched_lines(text_index: &LineIndex<'_>, range: Range<usize>) -> RangeInclus
 }
 
 /// Appends `text[span]` to `output` with `replacements` applied, which must be sorted,
-/// non-overlapping and within `span`. Replacements containing characters that can't be represented
-/// in `encoding` aren't applied, and their corresponding entry in `outcomes` is set to an error.
+/// non-overlapping and within `span`. Replacements whose corresponding entry in `outcomes` is
+/// already an error aren't applied, nor are replacements containing characters that can't be
+/// represented in `encoding`, whose outcome is then set to an error.
 fn splice(
     output: &mut String,
     text: &str,
@@ -558,10 +627,12 @@ fn splice(
     let mut pos = span.start;
     for (Replacement { range, text: new }, outcome) in replacements.iter().zip(outcomes) {
         output.push_str(&text[pos..range.start]);
-        if can_encode(new, encoding) {
+        if outcome.is_ok() && can_encode(new, encoding) {
             output.push_str(new);
         } else {
-            *outcome = Err(unrepresentable_error(encoding));
+            if outcome.is_ok() {
+                *outcome = Err(unrepresentable_error(encoding));
+            }
             output.push_str(&text[range.clone()]);
         }
         pos = range.end;
@@ -572,27 +643,29 @@ fn splice(
 /// A set of replacements that modify overlapping lines, so must be applied together
 struct LineGroup {
     lines: RangeInclusive<usize>,
-    /// Indices of the replacements in the group, which are consecutive as replacements are sorted
+    encoding: LinesEncoding,
+    /// Indices of the replacements in the group, which are consecutive as replacements are sorted.
+    /// Replacements in this range that couldn't be applied have an error outcome.
     replacements: Range<usize>,
 }
 
-/// Groups sorted, non-overlapping replacements by the lines they modify
-fn group_by_lines(text_index: &LineIndex<'_>, replacements: &[Replacement<'_>]) -> Vec<LineGroup> {
-    let mut groups: Vec<LineGroup> = vec![];
-    for (idx, replacement) in replacements.iter().enumerate() {
-        let lines = touched_lines(text_index, replacement.range.clone());
-        match groups.last_mut() {
-            Some(group) if lines.start() <= group.lines.end() => {
-                group.lines = *group.lines.start()..=*lines.end();
-                group.replacements.end = idx + 1;
-            }
-            _ => groups.push(LineGroup {
-                lines,
-                replacements: idx..idx + 1,
-            }),
+/// The encoding of a set of lines
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinesEncoding {
+    /// Every line is entirely ASCII, which is compatible with any encoding
+    Ascii,
+    /// The encoding shared by every line that isn't entirely ASCII
+    Encoded(&'static Encoding),
+}
+
+impl LinesEncoding {
+    /// The encoding of the union of two sets of lines, or `None` if they are incompatible
+    fn combine(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Ascii, encoding) | (encoding, Self::Ascii) => Some(encoding),
+            (Self::Encoded(a), Self::Encoded(b)) => (a == b).then_some(self),
         }
     }
-    groups
 }
 
 impl NonUtf8File {
@@ -658,38 +731,28 @@ impl NonUtf8File {
     fn apply_replacements(&self, replacements: &[Replacement<'_>]) -> anyhow::Result<ReplacedFile> {
         let mut outcomes = vec![Ok(()); replacements.len()];
         let lines = FileLines::new(self)?;
+        let groups = self.group_by_lines(&lines, replacements, &mut outcomes)?;
+        let ascii_line_encoding = match self.lines {
+            LineEncodings::Uniform(encoding) => encoding,
+            LineEncodings::PerLine {
+                legacy_encoding,
+                has_utf8_lines,
+                ..
+            } => default_encoding(legacy_encoding, has_utf8_lines),
+        };
+
         let mut bytes = Vec::with_capacity(self.original.len());
         let mut original_pos = 0;
         let mut new_text = String::new();
 
-        for group in group_by_lines(&lines.text_index, replacements) {
+        for group in groups {
             let (first, last) = (*group.lines.start(), *group.lines.end());
             let original_range = lines.original_span(first).start..lines.original_span(last).end;
             bytes.extend_from_slice(&self.original[original_pos..original_range.start]);
             original_pos = original_range.end;
-
-            let group_encoding = match &self.lines {
-                // Every line is in this encoding or entirely ASCII, as verified when decoding
-                LineEncodings::Uniform(encoding) => Ok(*encoding),
-                LineEncodings::PerLine {
-                    legacy_encoding,
-                    has_utf8_lines,
-                    ..
-                } => group_encoding(
-                    &lines,
-                    group.lines,
-                    default_encoding(*legacy_encoding, *has_utf8_lines),
-                )?,
-            };
-            let encoding = match group_encoding {
-                Ok(encoding) => encoding,
-                Err(error) => {
-                    for outcome in &mut outcomes[group.replacements] {
-                        *outcome = Err(error.to_owned());
-                    }
-                    bytes.extend_from_slice(&self.original[original_range]);
-                    continue;
-                }
+            let encoding = match group.encoding {
+                LinesEncoding::Ascii => ascii_line_encoding,
+                LinesEncoding::Encoded(encoding) => encoding,
             };
 
             let text_range = lines.text_span(first).start..lines.text_span(last).end;
@@ -708,6 +771,79 @@ impl NonUtf8File {
         bytes.extend_from_slice(&self.original[original_pos..]);
 
         Ok(ReplacedFile { bytes, outcomes })
+    }
+
+    /// Groups sorted, non-overlapping replacements by the lines they modify (see
+    /// [`touched_lines`]). Replacements are considered in order, and a replacement fails (with its
+    /// outcome set to an error) if its lines can't be rewritten, or if it would make the lines of
+    /// its group require different encodings, in which case other replacements aren't affected.
+    fn group_by_lines(
+        &self,
+        lines: &FileLines<'_>,
+        replacements: &[Replacement<'_>],
+        outcomes: &mut [Result<(), String>],
+    ) -> anyhow::Result<Vec<LineGroup>> {
+        let mut groups: Vec<LineGroup> = vec![];
+        for (idx, replacement) in replacements.iter().enumerate() {
+            let touched = touched_lines(&lines.text_index, replacement.range.clone());
+            let encoding = match self.lines_encoding(lines, touched.clone())? {
+                Ok(encoding) => encoding,
+                Err(error) => {
+                    outcomes[idx] = Err(error.to_owned());
+                    continue;
+                }
+            };
+            match groups.last_mut() {
+                Some(group) if touched.start() <= group.lines.end() => {
+                    match group.encoding.combine(encoding) {
+                        Some(combined) => {
+                            group.encoding = combined;
+                            group.lines =
+                                *group.lines.start()..=*touched.end().max(group.lines.end());
+                            group.replacements.end = idx + 1;
+                        }
+                        None => outcomes[idx] = Err(MIXED_ENCODINGS_ERROR.to_owned()),
+                    }
+                }
+                _ => groups.push(LineGroup {
+                    lines: touched,
+                    encoding,
+                    replacements: idx..idx + 1,
+                }),
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Determines the encoding of the lines in `line_indices`, or the reason they can't be
+    /// rewritten.
+    ///
+    /// Returns an error (rather than `Ok(Err(..))`) if the decoded text of a line doesn't match
+    /// the original file, which should be impossible.
+    fn lines_encoding(
+        &self,
+        lines: &FileLines<'_>,
+        line_indices: RangeInclusive<usize>,
+    ) -> anyhow::Result<Result<LinesEncoding, &'static str>> {
+        if let LineEncodings::Uniform(encoding) = self.lines {
+            // Every line is in this encoding or entirely ASCII, as verified when decoding
+            return Ok(Ok(LinesEncoding::Encoded(encoding)));
+        }
+        let mut shared_encoding = LinesEncoding::Ascii;
+        for idx in line_indices {
+            let (line, is_ascii) = lines.decode(idx)?;
+            let line_encoding = match line.kind {
+                LineKind::Opaque => return Ok(Err(OPAQUE_LINE_ERROR)),
+                LineKind::Utf8 if is_ascii => LinesEncoding::Ascii,
+                LineKind::Utf8 => LinesEncoding::Encoded(UTF_8),
+                LineKind::Legacy(encoding) => LinesEncoding::Encoded(encoding),
+            };
+            match shared_encoding.combine(line_encoding) {
+                Some(combined) => shared_encoding = combined,
+                None => return Ok(Err(MIXED_ENCODINGS_ERROR)),
+            }
+        }
+        Ok(Ok(shared_encoding))
     }
 }
 
@@ -773,36 +909,6 @@ impl<'a> FileLines<'a> {
         );
         Ok((line, content.is_ascii()))
     }
-}
-
-/// Determines the encoding to use when rewriting `line_indices`, or the reason they can't be
-/// rewritten. Lines that are entirely ASCII are compatible with any encoding, so the other
-/// lines must all share the same encoding, and `ascii_line_encoding` is used if every line is
-/// entirely ASCII.
-///
-/// Returns an error (rather than `Ok(Err(..))`) if the decoded text of a line doesn't match
-/// the original file, which should be impossible.
-fn group_encoding(
-    lines: &FileLines<'_>,
-    line_indices: RangeInclusive<usize>,
-    ascii_line_encoding: &'static Encoding,
-) -> anyhow::Result<Result<&'static Encoding, &'static str>> {
-    let mut group_encoding = None;
-    for idx in line_indices {
-        let (line, is_ascii) = lines.decode(idx)?;
-        let line_encoding = match line.kind {
-            LineKind::Opaque => return Ok(Err(OPAQUE_LINE_ERROR)),
-            LineKind::Utf8 if is_ascii => continue,
-            LineKind::Utf8 => UTF_8,
-            LineKind::Legacy(encoding) => encoding,
-        };
-        match group_encoding {
-            None => group_encoding = Some(line_encoding),
-            Some(encoding) if encoding == line_encoding => {}
-            Some(_) => return Ok(Err(MIXED_ENCODINGS_ERROR)),
-        }
-    }
-    Ok(Ok(group_encoding.unwrap_or(ascii_line_encoding)))
 }
 
 /// Decodes `bytes` line by line (see [`decode_line`]), returning the text along with the indices
@@ -1178,6 +1284,62 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_legacy_encoding_after_long_prefix() {
+        // Longer than the read limit, which only applies from the first line that isn't UTF-8
+        let mut bytes = "ascii and UTF-8 text: café\n"
+            .repeat(usize::try_from(MAX_DETECTION_READ_BYTES).unwrap() / 20)
+            .into_bytes();
+        bytes.extend(shift_jis(
+            "これは日本語のテキストです。日本語の文章を検索して置換します。\n",
+        ));
+        assert_eq!(
+            detect_legacy_encoding(bytes.as_slice()).unwrap(),
+            Some(SHIFT_JIS)
+        );
+    }
+
+    #[test]
+    fn test_detect_legacy_encoding_ignores_utf8_lines() {
+        // Without ignoring the UTF-8 lines, their bytes would be interpreted as a legacy encoding
+        let mut bytes = "日本語のテキスト、中国語、한국어\n"
+            .repeat(200)
+            .into_bytes();
+        bytes.extend(b"mini \xe9tait d\xe9j\xe0 vu, na\xefve caf\xe9\n");
+        assert_eq!(
+            detect_legacy_encoding(bytes.as_slice()).unwrap(),
+            Some(WINDOWS_1252)
+        );
+    }
+
+    #[test]
+    fn test_detected_encoding_cache_is_invalidated_when_file_changes() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&shift_jis(
+            "これは日本語のテキストです。日本語の文章です。\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            detect_file_legacy_encoding(file.path()).unwrap(),
+            Some(SHIFT_JIS)
+        );
+        // Cached
+        assert_eq!(
+            detect_file_legacy_encoding(file.path()).unwrap(),
+            Some(SHIFT_JIS)
+        );
+
+        std::fs::write(
+            file.path(),
+            b"mini \xe9tait d\xe9j\xe0 vu, na\xefve caf\xe9\n",
+        )
+        .unwrap();
+        assert_eq!(
+            detect_file_legacy_encoding(file.path()).unwrap(),
+            Some(WINDOWS_1252)
+        );
+    }
+
+    #[test]
     fn test_file_decoder_default_encoding() {
         let mut legacy_file = NamedTempFile::new().unwrap();
         legacy_file
@@ -1343,6 +1505,49 @@ mod tests {
         let mut items = matches.to_vec();
         decoded.retain_replaceable(&mut items, Clone::clone);
         assert_eq!(items, &matches[..2]);
+    }
+
+    #[test]
+    fn test_apply_replacements_failure_does_not_affect_others_on_shared_lines() {
+        let decoded = decode_as(b"caf\xc3\xa9 end\nd\xe9j\xe0 mini\n", WINDOWS_1252);
+        let replaced = replace(
+            &decoded,
+            &[
+                // Would join a UTF-8 line and a legacy line
+                (nth_range(&decoded, "end\n", 0), ""),
+                (nth_range(&decoded, "mini", 0), "été"),
+            ],
+        );
+        assert_eq!(
+            replaced.outcomes,
+            [Err(MIXED_ENCODINGS_ERROR.to_owned()), Ok(())]
+        );
+        assert_eq!(
+            replaced.bytes,
+            ["café end\n".as_bytes(), b"d\xe9j\xe0 \xe9t\xe9\n"].concat()
+        );
+    }
+
+    #[test]
+    fn test_apply_replacements_that_together_would_mix_encodings() {
+        // Each replacement is valid alone, but together they would join a UTF-8 line and a legacy
+        // line via the ASCII line between them, so the later one fails
+        let decoded = decode_as(b"caf\xc3\xa9 a\nb\nd\xe9j\xe0 c\n", WINDOWS_1252);
+        let replaced = replace(
+            &decoded,
+            &[
+                (nth_range(&decoded, "a\nb", 0), "a b"),
+                (nth_range(&decoded, "\ndéjà", 0), " déjà"),
+            ],
+        );
+        assert_eq!(
+            replaced.outcomes,
+            [Ok(()), Err(MIXED_ENCODINGS_ERROR.to_owned())]
+        );
+        assert_eq!(
+            replaced.bytes,
+            ["café a b\n".as_bytes(), b"d\xe9j\xe0 c\n"].concat()
+        );
     }
 
     #[test]
