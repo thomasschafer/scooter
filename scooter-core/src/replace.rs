@@ -477,19 +477,33 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
     }
 }
 
-/// Rewrites the file at `file_path` by streaming its contents through `rewrite` into a temporary
-/// file, which replaces the original if `rewrite` succeeds
+/// Rewrites the file at `file_path` by streaming its contents through `rewrite` (see
+/// [`write_file_with`])
 fn rewrite_streaming(
     file_path: &Path,
-    rewrite: impl FnOnce(File, &mut BufWriter<File>) -> anyhow::Result<()>,
+    rewrite: impl FnOnce(File, &mut BufWriter<&mut File>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    write_file_with(file_path, |output| rewrite(File::open(file_path)?, output))
+}
+
+/// Replaces the contents of the file at `file_path` with `bytes` (see [`write_file_with`])
+fn write_file(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    write_file_with(file_path, |output| Ok(output.write_all(bytes)?))
+}
+
+/// Replaces the contents of the file at `file_path` with the output of `write`, via a temporary
+/// file so that the file is never left partially written, or modified at all if `write` fails
+fn write_file_with(
+    file_path: &Path,
+    write: impl FnOnce(&mut BufWriter<&mut File>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
-    let mut output = BufWriter::new(File::create(temp_output_file.path())?);
-    rewrite(File::open(file_path)?, &mut output)?;
+    let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+    let mut output = BufWriter::new(temp_file.as_file_mut());
+    write(&mut output)?;
     output.flush()?;
     drop(output);
-    temp_output_file.persist(file_path)?;
+    temp_file.persist(file_path)?;
     Ok(())
 }
 
@@ -638,8 +652,7 @@ fn replace_byte_ranges(
 
         // Full read - check if content matches
         if actual_bytes != content.as_bytes() {
-            result.replace_result =
-                Some(ReplaceResult::Error("File changed since search".to_owned()));
+            result.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned()));
             output.write_all(&actual_bytes)?;
         } else {
             result.replace_result = Some(ReplaceResult::Success);
@@ -707,16 +720,6 @@ fn replace_in_decoded_file(
     if any_succeeded {
         write_file(file_path, &replaced.bytes)?;
     }
-    Ok(())
-}
-
-/// Replaces the contents of the file at `file_path` with `bytes`, via a temporary file so that the
-/// file is never left partially written
-fn write_file(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
-    temp_file.write_all(bytes)?;
-    temp_file.persist(file_path)?;
     Ok(())
 }
 
@@ -2236,7 +2239,7 @@ mod tests {
         assert_eq!(
             results[0].replace_result,
             Some(ReplaceResult::Error(
-                "File changed since last search".to_owned()
+                crate::replace::FILE_CHANGED_ERROR.to_owned()
             ))
         );
         assert_eq!(std::fs::read(&file_path).unwrap(), b"mini \xe9tait\n");
@@ -2266,7 +2269,7 @@ mod tests {
         assert_eq!(
             results[0].replace_result,
             Some(ReplaceResult::Error(
-                "File changed since last search".to_owned()
+                crate::replace::FILE_CHANGED_ERROR.to_owned()
             ))
         );
 
@@ -5942,7 +5945,7 @@ mod tests {
             assert!(result.is_ok());
             assert!(matches!(
                 &results[0].replace_result,
-                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+                Some(ReplaceResult::Error(msg)) if msg == crate::replace::FILE_CHANGED_ERROR
             ));
             // File should have original (changed) content preserved
             assert_file_content(&file_path, "hello earth");
@@ -6078,7 +6081,7 @@ mod tests {
             // Second replacement should fail (content mismatch)
             assert!(matches!(
                 &results[1].replace_result,
-                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+                Some(ReplaceResult::Error(msg)) if msg == crate::replace::FILE_CHANGED_ERROR
             ));
             // File should have first replacement + original (changed) content preserved
             assert_file_content(&file_path, "AAA bar qux");
