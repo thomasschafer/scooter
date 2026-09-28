@@ -13,6 +13,8 @@ use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
 
 use crate::{
+    encoding::{self, LineKind},
+    line_index::LineIndex,
     line_reader::{BufReadExt, LineEnding},
     replace::{self, ReplaceResult},
 };
@@ -571,17 +573,29 @@ pub fn search_file(
     file.seek(SeekFrom::Start(0))?;
 
     if multiline {
-        let content = std::fs::read_to_string(path).with_context(|| {
+        let decoded = encoding::read_text(path).with_context(|| {
             format!(
-                "Failed to read file as UTF-8 for multiline search: {}",
+                "Failed to read file for multiline search: {}",
                 path.display()
             )
         })?;
-        return Ok(search_multiline(&content, search, Some(path)));
+        let mut results = search_multiline(decoded.text(), search, Some(path));
+        // Matches in lines that couldn't be decoded are excluded, consistent with line-by-line
+        // search, as they couldn't be replaced
+        decoded.retain_replaceable(&mut results, |result| match &result.content {
+            MatchContent::ByteRange {
+                byte_start,
+                byte_end,
+                ..
+            } => *byte_start..*byte_end,
+            MatchContent::Line { .. } => unreachable!("Multiline search returns byte ranges"),
+        });
+        return Ok(results);
     }
 
     // Line-by-line search for non-multiline mode
     let reader = BufReader::with_capacity(16384, file);
+    let decoder = encoding::FileDecoder::new(path);
     let mut results = Vec::new();
 
     let mut read_errors = 0;
@@ -607,9 +621,18 @@ pub fn search_file(
             }
         };
 
-        if let Ok(line_content) = String::from_utf8(line_bytes)
-            && contains_search(&line_content, search)
-        {
+        // UTF-8 lines are handled inline, as this is the hottest loop when searching
+        let line_content = match String::from_utf8(line_bytes) {
+            Ok(line_content) => line_content,
+            Err(e) => {
+                let line = decoder.decode_line(e.into_bytes());
+                if line.kind == LineKind::Opaque {
+                    continue;
+                }
+                line.text
+            }
+        };
+        if contains_search(&line_content, search) {
             let result = SearchResult::new_line(
                 Some(path.to_path_buf()),
                 line_number,
@@ -653,109 +676,6 @@ pub(crate) fn search_multiline(
     matches
         .map(|(start, end)| create_search_result_from_bytes(start, end, path, &line_index))
         .collect()
-}
-
-/// Helper struct to efficiently convert byte offsets to line numbers and extract lines
-pub(crate) struct LineIndex<'a> {
-    content: &'a str,
-    /// Byte positions of newline characters
-    newline_positions: Vec<usize>,
-}
-
-impl<'a> LineIndex<'a> {
-    pub(crate) fn new(content: &'a str) -> Self {
-        let newline_positions: Vec<usize> = content
-            .char_indices()
-            .filter_map(|(i, c)| if c == '\n' { Some(i) } else { None })
-            .collect();
-        Self {
-            content,
-            newline_positions,
-        }
-    }
-
-    /// Get line number (1-indexed) for a byte offset
-    pub(crate) fn line_number_at(&self, byte_offset: usize) -> usize {
-        // Binary search to find how many newlines come before this offset
-        // Both Ok and Err return the same value: the number of newlines before/at this position + 1.
-        // If `byte_offset` lands on a '\n', we treat it as part of the line it terminates.
-        match self.newline_positions.binary_search(&byte_offset) {
-            Ok(idx) | Err(idx) => idx + 1,
-        }
-    }
-
-    /// Get the byte offset where a line starts (`line_num` is 1-indexed)
-    pub(crate) fn line_start_byte(&self, line_num: usize) -> usize {
-        assert!(line_num >= 1, "Line numbers are 1-indexed");
-        if line_num == 1 {
-            0
-        } else {
-            // Line N starts after the (N-1)th newline
-            self.newline_positions[line_num - 2] + 1
-        }
-    }
-
-    /// Get the byte offset where a line ends (exclusive of line ending).
-    /// For `CrLf` lines this excludes the `\r`, matching `BufReadExt::lines_with_endings` behaviour.
-    fn line_end_byte(&self, line_num: usize) -> usize {
-        assert!(line_num >= 1, "Line numbers are 1-indexed");
-        // The end of line N is at the N-1 index in newline_positions (0-indexed)
-        if line_num <= self.newline_positions.len() {
-            let newline_pos = self.newline_positions[line_num - 1];
-            if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
-                newline_pos - 1
-            } else {
-                newline_pos
-            }
-        } else {
-            // Last line without trailing newline
-            self.content.len()
-        }
-    }
-
-    /// Returns the total number of lines in the content
-    fn total_lines(&self) -> usize {
-        // Number of newlines + 1, unless the file is empty
-        if self.content.is_empty() {
-            0
-        } else {
-            self.newline_positions.len() + 1
-        }
-    }
-
-    /// Extract full lines from `start_line` to `end_line` (both 1-indexed, inclusive)
-    pub(crate) fn extract_lines(&self, start_line: usize, end_line: usize) -> Vec<(usize, Line)> {
-        assert!(start_line >= 1, "Line numbers are 1-indexed");
-        assert!(start_line <= end_line, "start_line must be <= end_line");
-
-        (start_line..=end_line)
-            .map(|line_num| {
-                let start = self.line_start_byte(line_num);
-                let end = self.line_end_byte(line_num);
-                let content = self.content[start..end].to_string();
-
-                // Determine line ending
-                let line_ending = if line_num <= self.newline_positions.len() {
-                    let newline_pos = self.newline_positions[line_num - 1];
-                    if newline_pos > 0 && self.content.as_bytes()[newline_pos - 1] == b'\r' {
-                        LineEnding::CrLf
-                    } else {
-                        LineEnding::Lf
-                    }
-                } else {
-                    LineEnding::None
-                };
-
-                (
-                    line_num,
-                    Line {
-                        content,
-                        line_ending,
-                    },
-                )
-            })
-            .collect()
-    }
 }
 
 /// Create a `SearchResult` from byte offsets in the content.
@@ -806,7 +726,7 @@ fn create_search_result_from_bytes(
     let lines = line_index.extract_lines(start_line_num, end_line_num);
 
     // Extract the matched content
-    let expected_content = line_index.content[start_byte..end_byte].to_string();
+    let expected_content = line_index.content()[start_byte..end_byte].to_string();
 
     SearchResult::new_byte_range(ByteRangeParams {
         path: path.map(Path::to_path_buf),
@@ -1350,50 +1270,6 @@ mod tests {
 
     mod multiline_tests {
         use super::*;
-
-        #[test]
-        fn test_line_index_single_line() {
-            let content = "single line";
-            let index = LineIndex::new(content);
-            assert_eq!(index.line_number_at(0), 1);
-            assert_eq!(index.line_number_at(6), 1);
-            assert_eq!(index.line_number_at(11), 1);
-        }
-
-        #[test]
-        fn test_line_index_multiple_lines() {
-            let content = "line 1\nline 2\nline 3";
-            let index = LineIndex::new(content);
-
-            // Line 1 (bytes 0-5)
-            assert_eq!(index.line_number_at(0), 1);
-            assert_eq!(index.line_number_at(5), 1);
-
-            // Newline at byte 6
-            assert_eq!(index.line_number_at(6), 1);
-
-            // Line 2 (bytes 7-12)
-            assert_eq!(index.line_number_at(7), 2);
-            assert_eq!(index.line_number_at(12), 2);
-
-            // Newline at byte 13
-            assert_eq!(index.line_number_at(13), 2);
-
-            // Line 3 (bytes 14-19)
-            assert_eq!(index.line_number_at(14), 3);
-            assert_eq!(index.line_number_at(19), 3);
-        }
-
-        #[test]
-        fn test_line_index_empty_lines() {
-            let content = "line 1\n\nline 3";
-            let index = LineIndex::new(content);
-
-            assert_eq!(index.line_number_at(0), 1); // "l" in line 1
-            assert_eq!(index.line_number_at(6), 1); // first newline
-            assert_eq!(index.line_number_at(7), 2); // second newline (empty line)
-            assert_eq!(index.line_number_at(8), 3); // "l" in line 3
-        }
 
         #[test]
         fn test_search_multiline_fixed_string() {

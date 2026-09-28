@@ -13,7 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.102"
-scooter-core = { version = "0.4.0", path = "../scooter-core", features = [
+scooter-core = { version = "0.4.1", path = "../scooter-core", features = [
   "term",
 ] }
 clap = { version = "4.6.1", features = ["derive"] }
@@ -43,6 +43,7 @@ crossterm = { version = "0.29.0", features = [
 ] }
 
 [dev-dependencies]
+encoding_rs = "0.8.42"
 indoc = "2.0.7"
 insta = { version = "1.47.2", features = ["filters"] }
 rand = "0.10.1"

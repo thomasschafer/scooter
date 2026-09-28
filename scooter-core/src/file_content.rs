@@ -49,9 +49,9 @@ impl FileContentProvider for CachedFileContentProvider {
         }
         drop(cache_guard);
 
-        let contents = std::fs::read_to_string(path)
+        let contents = crate::encoding::read_text(path)
             .with_context(|| format!("Failed to read file contents: {}", path.display()))?;
-        let contents = Arc::new(contents);
+        let contents = Arc::new(contents.into_text());
 
         let mut cache_guard = self.cache.lock().unwrap();
         cache_guard.put(path.to_path_buf(), Arc::clone(&contents));

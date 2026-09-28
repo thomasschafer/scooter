@@ -1,9 +1,10 @@
 use anyhow::Context;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Read, Write},
     num::NonZero,
     path::{Path, PathBuf},
     sync::{
@@ -22,7 +23,9 @@ use tokio::{
 use crate::{
     app::{BackgroundProcessingEvent, Event, EventHandlingResult},
     commands::CommandResults,
+    encoding::{self, DecodedFile, LineKind, Replacement},
     file_content::FileContentProvider,
+    line_index::LineIndex,
     line_reader::BufReadExt,
     replace,
     search::{
@@ -415,156 +418,309 @@ pub fn replace_in_file(results: &mut [SearchResultWithReplacement]) -> anyhow::R
 
     let file_path = file_path.expect("File path must be present when searching in files");
 
-    match search::match_mode_of_results(results).expect("replace_in_file called with empty results")
-    {
-        MatchMode::Line => replace_line_mode(&file_path, results),
-        MatchMode::ByteRange => replace_byte_mode(&file_path, results),
+    debug_assert!(
+        results.iter().all(|r| r.preview_error.is_none()),
+        "preview-errored results should not reach replace_in_file"
+    );
+    assert!(
+        results.iter().all(|r| r.replace_result.is_none()),
+        "replace_in_file should only be called with results that haven't been replaced"
+    );
+    let match_mode =
+        search::match_mode_of_results(results).expect("replace_in_file called with empty results");
+    if match_mode == MatchMode::ByteRange {
+        mark_conflicting_replacements(results);
+        if results.iter().all(|r| r.replace_result.is_some()) {
+            return Ok(());
+        }
+    }
+    let initial_results: Vec<_> = results.iter().map(|r| r.replace_result.clone()).collect();
+
+    let decoder = encoding::FileDecoder::new(file_path.as_path());
+
+    // Stream the file on the assumption that it's UTF-8 (which is checked as it's read), so that
+    // the whole file doesn't need to be read into memory in the common case
+    let streamed = rewrite_streaming(&file_path, |input, output| {
+        let mut input = encoding::Utf8ValidatingReader::new(input);
+        match match_mode {
+            MatchMode::Line => replace_lines(
+                &mut input,
+                output,
+                results,
+                &decoder,
+                AsciiLineEncoding::Utf8,
+            ),
+            MatchMode::ByteRange => replace_byte_ranges(&mut input, output, results),
+        }
+    });
+    match streamed {
+        Ok(()) => return Ok(()),
+        Err(e) if encoding::is_invalid_utf8_error(&e) => {}
+        Err(e) => return Err(e),
+    }
+
+    for (res, initial) in results.iter_mut().zip(initial_results) {
+        res.replace_result = initial;
+    }
+    match match_mode {
+        // Lines are replaced independently, so the file can still be streamed
+        MatchMode::Line => rewrite_streaming(&file_path, |mut input, output| {
+            replace_lines(
+                &mut input,
+                output,
+                results,
+                &decoder,
+                AsciiLineEncoding::FileDefault,
+            )
+        }),
+        MatchMode::ByteRange => replace_in_decoded_file(&file_path, results),
     }
 }
 
-/// Line-mode replacement: Replace ALL occurrences on the line
-fn replace_line_mode(
+/// Rewrites the file at `file_path` by streaming its contents through `rewrite` (see
+/// [`write_file_with`])
+fn rewrite_streaming(
     file_path: &Path,
-    results: &mut [SearchResultWithReplacement],
+    rewrite: impl FnOnce(File, &mut BufWriter<&mut File>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    debug_assert!(
-        results.iter().all(|r| r.preview_error.is_none()),
-        "preview-errored results should not reach replace_line_mode"
-    );
+    write_file_with(file_path, |output| rewrite(File::open(file_path)?, output))
+}
+
+/// Replaces the contents of the file at `file_path` with `bytes` (see [`write_file_with`])
+fn write_file(file_path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    write_file_with(file_path, |output| Ok(output.write_all(bytes)?))
+}
+
+/// Replaces the contents of the file at `file_path` with the output of `write`, via a temporary
+/// file so that the file is never left partially written, or modified at all if `write` fails
+fn write_file_with(
+    file_path: &Path,
+    write: impl FnOnce(&mut BufWriter<&mut File>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
+    let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+    let mut output = BufWriter::new(temp_file.as_file_mut());
+    write(&mut output)?;
+    output.flush()?;
+    drop(output);
+    temp_file.persist(file_path)?;
+    encoding::forget_file_encoding(file_path);
+    Ok(())
+}
+
+const FILE_CHANGED_ERROR: &str = "File changed since last search";
+
+/// How to encode non-ASCII replacements on lines that are entirely ASCII
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AsciiLineEncoding {
+    /// As UTF-8, as the file is assumed to be valid UTF-8
+    Utf8,
+    /// Consistently with the rest of the file, which isn't valid UTF-8 (see
+    /// [`encoding::FileDecoder::default_encoding`])
+    FileDefault,
+}
+
+/// Line-mode replacement: replaces each line containing a match with its replacement, reading the
+/// original content from `input` and writing the updated content to `output`
+fn replace_lines(
+    input: &mut impl Read,
+    output: &mut impl Write,
+    results: &mut [SearchResultWithReplacement],
+    decoder: &encoding::FileDecoder<&Path>,
+    ascii_line_encoding: AsciiLineEncoding,
+) -> anyhow::Result<()> {
     let mut line_map: HashMap<usize, &mut SearchResultWithReplacement> = results
         .iter_mut()
         .map(|res| (res.search_result.start_line_number(), res))
         .collect();
 
-    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+    for (idx, line_result) in BufReader::new(input).lines_with_endings().enumerate() {
+        let line_number = idx + 1;
+        let (mut line_bytes, line_ending) = line_result?;
 
-    {
-        let input = File::open(file_path)?;
-        let reader = BufReader::new(input);
+        if let Some(res) = line_map.get_mut(&line_number) {
+            let MatchContent::Line { content, .. } = &res.search_result.content else {
+                unreachable!("Line-mode must have Lines content")
+            };
 
-        let output = File::create(temp_output_file.path())?;
-        let mut writer = BufWriter::new(output);
-
-        for (idx, line_result) in reader.lines_with_endings().enumerate() {
-            let line_number = idx + 1;
-            let (mut line_bytes, line_ending) = line_result?;
-
-            if let Some(res) = line_map.get_mut(&line_number) {
-                let MatchContent::Line { content, .. } = &res.search_result.content else {
-                    unreachable!("Line-mode must have Lines content")
-                };
-
-                if line_bytes == content.as_bytes() {
-                    line_bytes = res.replacement.as_bytes().to_vec();
-                    res.replace_result = Some(ReplaceResult::Success);
-                } else {
-                    res.replace_result = Some(ReplaceResult::Error(
-                        "File changed since last search".to_owned(),
-                    ));
-                }
-            }
-
-            line_bytes.extend(line_ending.as_bytes());
-            writer.write_all(&line_bytes)?;
+            res.replace_result = Some(
+                match replace_line(
+                    &line_bytes,
+                    content,
+                    &res.replacement,
+                    decoder,
+                    ascii_line_encoding,
+                ) {
+                    Ok(replaced) => {
+                        line_bytes = replaced;
+                        ReplaceResult::Success
+                    }
+                    Err(e) => ReplaceResult::Error(e),
+                },
+            );
         }
 
-        writer.flush()?;
+        line_bytes.extend(line_ending.as_bytes());
+        output.write_all(&line_bytes)?;
     }
 
-    temp_output_file.persist(file_path)?;
     Ok(())
 }
 
-/// Byte-mode replacement: Replace only the specific byte range for each match
-fn replace_byte_mode(
-    file_path: &Path,
+/// Returns the bytes that `line` (excluding its line ending) should be replaced with, provided that
+/// it still decodes to `expected`. The replacement is encoded in the same encoding as the line
+/// (see [`encoding`]).
+fn replace_line(
+    line: &[u8],
+    expected: &str,
+    replacement: &str,
+    decoder: &encoding::FileDecoder<&Path>,
+    ascii_line_encoding: AsciiLineEncoding,
+) -> Result<Vec<u8>, String> {
+    let line_encoding = if line == expected.as_bytes() {
+        if line.is_ascii() && !replacement.is_ascii() {
+            match ascii_line_encoding {
+                AsciiLineEncoding::Utf8 => encoding_rs::UTF_8,
+                AsciiLineEncoding::FileDefault => decoder
+                    .default_encoding()
+                    .map_err(|e| format!("Failed to determine the encoding of the file: {e}"))?,
+            }
+        } else {
+            encoding_rs::UTF_8
+        }
+    } else {
+        let decoded_line = decoder.decode_line(line.to_vec());
+        match decoded_line.kind {
+            LineKind::Legacy(encoding) if decoded_line.text == expected => encoding,
+            LineKind::Opaque => return Err(encoding::OPAQUE_LINE_ERROR.to_owned()),
+            LineKind::Utf8 | LineKind::Legacy(_) => return Err(FILE_CHANGED_ERROR.to_owned()),
+        }
+    };
+    encoding::encode(replacement, line_encoding).map_err(|e| e.to_string())
+}
+
+/// Byte-mode replacement: replaces the byte range of each result, reading the original content
+/// from `input` and writing the updated content to `output`. Results that already have a
+/// `replace_result` set (e.g. conflicting replacements) are skipped.
+fn replace_byte_ranges(
+    input: &mut impl Read,
+    output: &mut impl Write,
     results: &mut [SearchResultWithReplacement],
 ) -> anyhow::Result<()> {
-    use std::io::Read;
-
-    debug_assert!(
-        results.iter().all(|r| r.preview_error.is_none()),
-        "preview-errored results should not reach replace_byte_mode"
-    );
-
-    mark_conflicting_replacements(results);
-
     let mut to_replace: Vec<_> = results
         .iter_mut()
         .filter(|r| r.replace_result.is_none())
         .collect();
-
-    if to_replace.is_empty() {
-        return Ok(());
-    }
 
     to_replace.sort_by_key(|r| match &r.search_result.content {
         MatchContent::ByteRange { byte_start, .. } => *byte_start,
         MatchContent::Line { .. } => unreachable!(),
     });
 
-    let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-    let temp_output_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
+    let mut current_pos: usize = 0;
 
-    {
-        let mut input = File::open(file_path)?;
-        let output = File::create(temp_output_file.path())?;
-        let mut writer = BufWriter::new(output);
-        let mut current_pos: usize = 0;
+    for result in to_replace {
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            content,
+            ..
+        } = &result.search_result.content
+        else {
+            unreachable!()
+        };
 
-        for result in to_replace {
-            let MatchContent::ByteRange {
-                byte_start,
-                byte_end,
-                content,
-                ..
-            } = &result.search_result.content
-            else {
-                unreachable!()
-            };
-
-            // Copy bytes from current_pos to byte_start
-            if *byte_start > current_pos {
-                let bytes_to_copy = byte_start - current_pos;
-                std::io::copy(
-                    &mut Read::by_ref(&mut input).take(bytes_to_copy as u64),
-                    &mut writer,
-                )?;
-            }
-
-            // Read the expected match bytes
-            let match_len = byte_end - byte_start;
-            let mut actual_bytes = Vec::with_capacity(match_len);
-            let bytes_read = Read::by_ref(&mut input)
-                .take(match_len as u64)
-                .read_to_end(&mut actual_bytes)?;
-
-            if bytes_read < match_len {
-                // Hit EOF before reading full match - write what we got and break
-                // Leave replace_result as None, `calculate_statistics` will mark as error
-                writer.write_all(&actual_bytes)?;
-                break;
-            }
-
-            // Full read - check if content matches
-            if actual_bytes != content.as_bytes() {
-                result.replace_result =
-                    Some(ReplaceResult::Error("File changed since search".to_owned()));
-                writer.write_all(&actual_bytes)?;
-            } else {
-                result.replace_result = Some(ReplaceResult::Success);
-                writer.write_all(result.replacement.as_bytes())?;
-            }
-            current_pos = *byte_end;
+        // Copy bytes from current_pos to byte_start
+        if *byte_start > current_pos {
+            let bytes_to_copy = byte_start - current_pos;
+            std::io::copy(&mut input.by_ref().take(bytes_to_copy as u64), output)?;
         }
 
-        // Copy remaining bytes
-        std::io::copy(&mut input, &mut writer)?;
-        writer.flush()?;
+        // Read the expected match bytes
+        let match_len = byte_end - byte_start;
+        let mut actual_bytes = Vec::with_capacity(match_len);
+        let bytes_read = input
+            .by_ref()
+            .take(match_len as u64)
+            .read_to_end(&mut actual_bytes)?;
+
+        if bytes_read < match_len {
+            // Hit EOF before reading full match - write what we got and break
+            // Leave replace_result as None, `calculate_statistics` will mark as error
+            output.write_all(&actual_bytes)?;
+            break;
+        }
+
+        // Full read - check if content matches
+        if actual_bytes != content.as_bytes() {
+            result.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned()));
+            output.write_all(&actual_bytes)?;
+        } else {
+            result.replace_result = Some(ReplaceResult::Success);
+            output.write_all(result.replacement.as_bytes())?;
+        }
+        current_pos = *byte_end;
     }
 
-    temp_output_file.persist(file_path)?;
+    // Copy remaining bytes
+    std::io::copy(input, output)?;
+    Ok(())
+}
+
+/// Performs byte-range replacements in a file that isn't valid UTF-8, by decoding it (see
+/// [`encoding`]). The search results must have been computed against the decoded text.
+fn replace_in_decoded_file(
+    file_path: &Path,
+    results: &mut [SearchResultWithReplacement],
+) -> anyhow::Result<()> {
+    let decoded = encoding::decode(fs::read(file_path)?);
+    let text = decoded.text();
+
+    // Locate each match in the decoded text, checking that it hasn't changed since the search
+    let mut located = vec![];
+    for (idx, res) in results.iter_mut().enumerate() {
+        if res.replace_result.is_some() {
+            continue;
+        }
+        let MatchContent::ByteRange {
+            byte_start,
+            byte_end,
+            content,
+            ..
+        } = &res.search_result.content
+        else {
+            unreachable!("Line-mode results are replaced by streaming the file")
+        };
+        let range = *byte_start..*byte_end;
+        if text.get(range.clone()) == Some(content.as_str()) {
+            located.push((idx, range));
+        } else {
+            res.replace_result = Some(ReplaceResult::Error(FILE_CHANGED_ERROR.to_owned()));
+        }
+    }
+    located.sort_by_key(|(_, range)| range.start);
+
+    let replaced = {
+        let replacements: Vec<_> = located
+            .iter()
+            .map(|(idx, range)| Replacement {
+                range: range.clone(),
+                text: Cow::Borrowed(results[*idx].replacement.as_str()),
+            })
+            .collect();
+        decoded.apply_replacements(&replacements)?
+    };
+    let any_succeeded = replaced.outcomes.iter().any(Result::is_ok);
+    for ((idx, _), outcome) in located.iter().zip(replaced.outcomes) {
+        results[*idx].replace_result = Some(match outcome {
+            Ok(()) => ReplaceResult::Success,
+            Err(e) => ReplaceResult::Error(e),
+        });
+    }
+
+    if any_succeeded {
+        write_file(file_path, &replaced.bytes)?;
+    }
     Ok(())
 }
 
@@ -655,28 +811,110 @@ fn replace_line_by_line(
             })
             .collect::<Vec<_>>();
         replace_in_file(&mut replacement_results)?;
-        return Ok(true);
+
+        let mut replaced = false;
+        for res in &replacement_results {
+            match &res.replace_result {
+                Some(ReplaceResult::Success) => replaced = true,
+                Some(ReplaceResult::Error(e)) => log::error!(
+                    "Failed to replace on line {} of {}: {e}",
+                    res.search_result.start_line_number(),
+                    file_path.display()
+                ),
+                None => {}
+            }
+        }
+        return Ok(replaced);
     }
 
     Ok(false)
 }
 
 fn replace_in_memory(file_path: &Path, search: &SearchType, replace: &str) -> anyhow::Result<bool> {
-    let content = fs::read_to_string(file_path).with_context(|| {
+    let decoded = encoding::read_text(file_path).with_context(|| {
         format!(
-            "Failed to read file as UTF-8 for in-memory replacement: {}",
+            "Failed to read file for in-memory replacement: {}",
             file_path.display()
         )
     })?;
-    if let Some(new_content) = replace_all_if_match(&content, search, replace) {
-        let parent_dir = file_path.parent().unwrap_or(Path::new("."));
-        let mut temp_file = create_temp_file_in_with_permissions(parent_dir, file_path)?;
-        temp_file.write_all(new_content.as_bytes())?;
-        temp_file.persist(file_path)?;
-        Ok(true)
-    } else {
-        Ok(false)
+    let new_content = match &decoded {
+        DecodedFile::Utf8(content) => match replace_all_if_match(content, search, replace) {
+            Some(new_content) => new_content.into_bytes(),
+            None => return Ok(false),
+        },
+        DecodedFile::NonUtf8(_) => {
+            let mut replacements = replacements_in(decoded.text(), search, replace)?;
+            // Consistent with searching, matches in lines that couldn't be decoded are skipped
+            decoded.retain_replaceable(&mut replacements, |r| r.range.clone());
+            if replacements.is_empty() {
+                return Ok(false);
+            }
+            let replaced = decoded.apply_replacements(&replacements)?;
+
+            let text_index = LineIndex::new(decoded.text());
+            let mut any_succeeded = false;
+            for (replacement, outcome) in replacements.iter().zip(&replaced.outcomes) {
+                match outcome {
+                    Ok(()) => any_succeeded = true,
+                    Err(e) => log::error!(
+                        "Failed to replace on line {} of {}: {e}",
+                        text_index.line_number_at(replacement.range.start),
+                        file_path.display()
+                    ),
+                }
+            }
+            if !any_succeeded {
+                return Ok(false);
+            }
+            replaced.bytes
+        }
+    };
+    write_file(file_path, &new_content)?;
+    Ok(true)
+}
+
+/// Finds every match of `search` in `haystack` along with its replacement, in a single pass.
+/// Applying all of the replacements is equivalent to [`replace_all_if_match`].
+fn replacements_in<'a>(
+    haystack: &str,
+    search: &SearchType,
+    replace: &'a str,
+) -> anyhow::Result<Vec<Replacement<'a>>> {
+    if haystack.is_empty() || search.is_empty() {
+        return Ok(vec![]);
     }
+    Ok(match search {
+        SearchType::Fixed(fixed_str) => haystack
+            .match_indices(fixed_str.as_str())
+            .map(|(start, matched)| Replacement {
+                range: start..start + matched.len(),
+                text: Cow::Borrowed(replace),
+            })
+            .collect(),
+        SearchType::Pattern(pattern) => pattern
+            .captures_iter(haystack)
+            .map(|caps| {
+                let mut text = String::new();
+                caps.expand(replace, &mut text);
+                Replacement {
+                    range: caps.get(0).expect("Group 0 is always present").range(),
+                    text: Cow::Owned(text),
+                }
+            })
+            .collect(),
+        SearchType::PatternAdvanced(pattern) => pattern
+            .captures_iter(haystack)
+            .map(|caps| {
+                let caps = caps?;
+                let mut text = String::new();
+                caps.expand(replace, &mut text);
+                Ok(Replacement {
+                    range: caps.get(0).expect("Group 0 is always present").range(),
+                    text: Cow::Owned(text),
+                })
+            })
+            .collect::<anyhow::Result<_>>()?,
+    })
 }
 
 /// Calculate replacement text for a line containing matches.
@@ -1649,14 +1887,6 @@ mod tests {
         );
     }
 
-    mod test_helpers {
-        use crate::search::SearchType;
-
-        pub fn create_fixed_search(term: &str) -> SearchType {
-            SearchType::Fixed(term.to_string())
-        }
-    }
-
     fn create_test_file(temp_dir: &TempDir, name: &str, content: &str) -> PathBuf {
         let file_path = temp_dir.path().join(name);
         std::fs::write(&file_path, content).unwrap();
@@ -1863,6 +2093,160 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_in_file_mixed_encoding_lines() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("mixed.txt");
+        // UTF-8 line followed by Windows-1252 lines
+        std::fs::write(
+            &file_path,
+            [
+                "mini été\n".as_bytes(),
+                b"mini \xe9tait\n",
+                b"autre mini\n",
+                b"mini \xe9t\xe9\n",
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let path = file_path.to_str().unwrap();
+
+        let mut results = vec![
+            create_search_result_with_replacement(
+                path,
+                1,
+                "mini été",
+                LineEnding::Lf,
+                "maxi été",
+                true,
+                None,
+            ),
+            create_search_result_with_replacement(
+                path,
+                2,
+                "mini était",
+                LineEnding::Lf,
+                "maxi était",
+                true,
+                None,
+            ),
+            // The file contains UTF-8, so ASCII lines are treated as UTF-8 as before
+            create_search_result_with_replacement(
+                path,
+                3,
+                "autre mini",
+                LineEnding::Lf,
+                "autre déjà",
+                true,
+                None,
+            ),
+            // Not representable in the encoding of the line
+            create_search_result_with_replacement(
+                path,
+                4,
+                "mini été",
+                LineEnding::Lf,
+                "世界 été",
+                true,
+                None,
+            ),
+        ];
+
+        let result = replace_in_file(&mut results);
+        assert!(result.is_ok());
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
+        assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
+        assert!(matches!(
+            &results[3].replace_result,
+            Some(ReplaceResult::Error(e)) if e.contains("can't be represented")
+        ));
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            [
+                "maxi été\n".as_bytes(),
+                b"maxi \xe9tait\n",
+                "autre déjà\n".as_bytes(),
+                b"mini \xe9t\xe9\n",
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn test_replace_in_file_non_utf8_ascii_line_non_ascii_replacement() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("latin1.txt");
+        std::fs::write(&file_path, b"mini \xe9tait\nmini\n").unwrap();
+
+        let mut results = vec![create_search_result_with_replacement(
+            file_path.to_str().unwrap(),
+            2,
+            "mini",
+            LineEnding::Lf,
+            "été",
+            true,
+            None,
+        )];
+
+        let result = replace_in_file(&mut results);
+        assert!(result.is_ok());
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        // The replacement must be encoded as Windows-1252 to match the rest of the file
+        assert_eq!(
+            std::fs::read(&file_path).unwrap(),
+            b"mini \xe9tait\n\xe9t\xe9\n"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_file_utf8_ascii_line_non_ascii_replacement() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "test.txt", "mini\nétait\n");
+
+        let mut results = vec![create_search_result_with_replacement(
+            file_path.to_str().unwrap(),
+            1,
+            "mini",
+            LineEnding::Lf,
+            "été",
+            true,
+            None,
+        )];
+
+        let result = replace_in_file(&mut results);
+        assert!(result.is_ok());
+        assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+        assert_file_content(&file_path, "été\nétait\n");
+    }
+
+    #[test]
+    fn test_replace_in_file_non_utf8_line_changed() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("latin1.txt");
+        std::fs::write(&file_path, b"mini \xe9tait\n").unwrap();
+
+        let mut results = vec![create_search_result_with_replacement(
+            file_path.to_str().unwrap(),
+            1,
+            "mini etait",
+            LineEnding::Lf,
+            "maxi etait",
+            true,
+            None,
+        )];
+
+        let result = replace_in_file(&mut results);
+        assert!(result.is_ok());
+        assert_eq!(
+            results[0].replace_result,
+            Some(ReplaceResult::Error(
+                crate::replace::FILE_CHANGED_ERROR.to_owned()
+            ))
+        );
+        assert_eq!(std::fs::read(&file_path).unwrap(), b"mini \xe9tait\n");
+    }
+
+    #[test]
     fn test_replace_in_file_line_mismatch() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = create_test_file(&temp_dir, "test.txt", "line 1\nactual text\nline 3\n");
@@ -1886,7 +2270,7 @@ mod tests {
         assert_eq!(
             results[0].replace_result,
             Some(ReplaceResult::Error(
-                "File changed since last search".to_owned()
+                crate::replace::FILE_CHANGED_ERROR.to_owned()
             ))
         );
 
@@ -2149,7 +2533,7 @@ mod tests {
             writeln!(temp_file, "line 3").unwrap();
             temp_file.flush().unwrap();
 
-            let search = test_helpers::create_fixed_search("search");
+            let search = fixed_search("search");
             let replacement = "replace";
             let results = search_file(temp_file.path(), &search, false)
                 .unwrap()
@@ -2174,7 +2558,7 @@ mod tests {
             writeln!(temp_file, "test line 4").unwrap();
             temp_file.flush().unwrap();
 
-            let search = test_helpers::create_fixed_search("test");
+            let search = fixed_search("test");
             let replacement = "replaced";
             let results = search_file(temp_file.path(), &search, false)
                 .unwrap()
@@ -2298,7 +2682,7 @@ mod tests {
         #[test]
         fn test_search_file_nonexistent() {
             let nonexistent_path = PathBuf::from("/this/file/does/not/exist.txt");
-            let search = test_helpers::create_fixed_search("test");
+            let search = fixed_search("test");
             let results = search_file(&nonexistent_path, &search, false);
             assert!(results.is_err());
         }
@@ -2331,7 +2715,7 @@ mod tests {
             temp_file.write_all(&binary_data).unwrap();
             temp_file.flush().unwrap();
 
-            let search = test_helpers::create_fixed_search("test");
+            let search = fixed_search("test");
             let replacement = "replace";
             let results = search_file(temp_file.path(), &search, false)
                 .unwrap()
@@ -2340,6 +2724,52 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(results.len(), 0);
+        }
+
+        #[test]
+        fn test_search_file_non_utf8_encoding() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            // "mini était" in Windows-1252, as in https://github.com/thomasschafer/scooter/issues/433
+            temp_file.write_all(b"mini \xe9tait\nmini etait\n").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = fixed_search("mini");
+            let results = search_file(temp_file.path(), &search, false).unwrap();
+
+            assert_eq!(results.len(), 2);
+            assert_eq!(line_content(&results[0]).0, "mini était");
+            assert_eq!(line_content(&results[1]).0, "mini etait");
+
+            let search = fixed_search("é");
+            let results = search_file(temp_file.path(), &search, false).unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].start_line_number(), 1);
+        }
+
+        #[test]
+        fn test_search_file_non_utf8_encoding_multiline() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            temp_file.write_all(b"mini \xe9tait\nmini").unwrap();
+            temp_file.flush().unwrap();
+
+            let search = fixed_search("était\nmini");
+            let results = search_file(temp_file.path(), &search, true).unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].content.matched_text(), "était\nmini");
+        }
+
+        #[test]
+        fn test_search_file_utf16_skipped() {
+            let mut temp_file = NamedTempFile::new().unwrap();
+            let mut bytes = vec![0xFF, 0xFE];
+            bytes.extend("mini\n".encode_utf16().flat_map(u16::to_le_bytes));
+            temp_file.write_all(&bytes).unwrap();
+            temp_file.flush().unwrap();
+
+            let search = fixed_search("mini");
+            let results = search_file(temp_file.path(), &search, false).unwrap();
+            assert!(results.is_empty());
         }
 
         #[test]
@@ -5152,6 +5582,174 @@ mod tests {
         }
     }
 
+    mod non_utf8_tests {
+        use super::*;
+        use crate::{encoding, replace::replacements_in, search::search_file};
+        use encoding_rs::SHIFT_JIS;
+        use fancy_regex::Regex as FancyRegex;
+
+        fn shift_jis(text: &str) -> Vec<u8> {
+            let (bytes, _, had_errors) = SHIFT_JIS.encode(text);
+            assert!(!had_errors);
+            bytes.into_owned()
+        }
+
+        /// `Shift_JIS` text, followed by a line containing "needle" that can't be decoded: the
+        /// bytes `ED 40` decode to a character that encodes back to `FA 5C`, so the line doesn't
+        /// round-trip
+        fn shift_jis_with_opaque_line() -> Vec<u8> {
+            let mut bytes = shift_jis(
+                "これは日本語のテキストです。needle\r\n日本語の文章を検索して置換します。\n",
+            );
+            bytes.extend(b"\xed\x40 needle\n");
+            bytes.extend(shift_jis("最後の行です。needle\n"));
+            bytes
+        }
+
+        fn search_and_replace(
+            path: &Path,
+            search: &SearchType,
+            replace: &str,
+            multiline: bool,
+        ) -> Vec<SearchResultWithReplacement> {
+            let mut results: Vec<_> = search_file(path, search, multiline)
+                .unwrap()
+                .into_iter()
+                .map(|r| add_replacement(r, search, replace).unwrap())
+                .collect();
+            replace_in_file(&mut results).unwrap();
+            results
+        }
+
+        #[test]
+        fn test_search_and_replace_mixed_file() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("mixed.txt");
+            std::fs::write(
+                &file_path,
+                [
+                    "café crème mini\n".as_bytes(),
+                    b"d\xe9j\xe0 vu mini\r\n",
+                    b"ascii mini\n",
+                ]
+                .concat(),
+            )
+            .unwrap();
+
+            for multiline in [false, true] {
+                let original = std::fs::read(&file_path).unwrap();
+                let results =
+                    search_and_replace(&file_path, &fixed_search("mini"), "été", multiline);
+                assert_eq!(results.len(), 3);
+                assert!(
+                    results
+                        .iter()
+                        .all(|r| r.replace_result == Some(ReplaceResult::Success))
+                );
+                // Each line keeps its encoding, and the ASCII line uses UTF-8 like the rest of
+                // the file
+                assert_eq!(
+                    std::fs::read(&file_path).unwrap(),
+                    [
+                        "café crème été\n".as_bytes(),
+                        b"d\xe9j\xe0 vu \xe9t\xe9\r\n",
+                        "ascii été\n".as_bytes(),
+                    ]
+                    .concat()
+                );
+                std::fs::write(&file_path, original).unwrap();
+            }
+        }
+
+        #[test]
+        fn test_opaque_lines_are_not_searched_or_modified() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("shift_jis.txt");
+            let original = shift_jis_with_opaque_line();
+            std::fs::write(&file_path, &original).unwrap();
+
+            for multiline in [false, true] {
+                let results =
+                    search_and_replace(&file_path, &fixed_search("needle"), "置換", multiline);
+                assert_eq!(
+                    results
+                        .iter()
+                        .map(|r| r.search_result.start_line_number())
+                        .collect::<Vec<_>>(),
+                    [1, 4],
+                    "multiline={multiline}"
+                );
+                let mut expected = shift_jis(
+                    "これは日本語のテキストです。置換\r\n日本語の文章を検索して置換します。\n",
+                );
+                expected.extend(b"\xed\x40 needle\n");
+                expected.extend(shift_jis("最後の行です。置換\n"));
+                assert_eq!(std::fs::read(&file_path).unwrap(), expected);
+                std::fs::write(&file_path, &original).unwrap();
+            }
+        }
+
+        #[test]
+        fn test_multiline_match_joining_opaque_line_is_excluded() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("shift_jis.txt");
+            let original = shift_jis_with_opaque_line();
+            std::fs::write(&file_path, &original).unwrap();
+
+            // Replacing the line ending before the opaque line would join them, so only the
+            // other line ending matches
+            let results = search_and_replace(&file_path, &regex_search("needle\n"), "", true);
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].search_result.start_line_number(), 4);
+            let mut expected = shift_jis(
+                "これは日本語のテキストです。needle\r\n日本語の文章を検索して置換します。\n",
+            );
+            expected.extend(b"\xed\x40 needle\n");
+            expected.extend(shift_jis("最後の行です。"));
+            assert_eq!(std::fs::read(&file_path).unwrap(), expected);
+        }
+
+        #[test]
+        fn test_replacements_in_matches_replace_all_if_match() {
+            let cases = [
+                ("aaaaa", fixed_search("aa"), "b"),
+                ("one two\nthree", fixed_search("\n"), " "),
+                ("no match", fixed_search("xyz"), "b"),
+                ("", fixed_search("a"), "b"),
+                ("abc", regex_search("x*"), "-"),
+                ("a@b c@d", regex_search(r"(\w)@(\w)"), "$2 at $1"),
+                ("line1\nline2\n", regex_search(r"(?m)^"), "> "),
+                ("café résumé", regex_search(r"\w+"), "[$0]"),
+                (
+                    "foo-123-bar foo-4-baz",
+                    SearchType::PatternAdvanced(
+                        FancyRegex::new(r"(?<=foo-)(\d+)(?=-bar)").unwrap(),
+                    ),
+                    "<$1>",
+                ),
+                (
+                    "aabbcd",
+                    SearchType::PatternAdvanced(FancyRegex::new(r"(\w)\1").unwrap()),
+                    "$1",
+                ),
+            ];
+            for (haystack, search, replace) in cases {
+                let replacements = replacements_in(haystack, &search, replace).unwrap();
+                let replaced = encoding::decode(haystack.as_bytes().to_vec())
+                    .apply_replacements(&replacements)
+                    .unwrap();
+                assert!(replaced.outcomes.iter().all(Result::is_ok));
+                let expected = replace_all_if_match(haystack, &search, replace)
+                    .unwrap_or_else(|| haystack.to_owned());
+                assert_eq!(
+                    String::from_utf8(replaced.bytes).unwrap(),
+                    expected,
+                    "haystack={haystack:?}, search={search:?}"
+                );
+            }
+        }
+    }
+
     mod byte_mode_replace_tests {
         use super::*;
         use crate::search::{ByteRangeParams, Line};
@@ -5348,7 +5946,7 @@ mod tests {
             assert!(result.is_ok());
             assert!(matches!(
                 &results[0].replace_result,
-                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+                Some(ReplaceResult::Error(msg)) if msg == crate::replace::FILE_CHANGED_ERROR
             ));
             // File should have original (changed) content preserved
             assert_file_content(&file_path, "hello earth");
@@ -5484,7 +6082,7 @@ mod tests {
             // Second replacement should fail (content mismatch)
             assert!(matches!(
                 &results[1].replace_result,
-                Some(ReplaceResult::Error(msg)) if msg.contains("File changed since search")
+                Some(ReplaceResult::Error(msg)) if msg == crate::replace::FILE_CHANGED_ERROR
             ));
             // File should have first replacement + original (changed) content preserved
             assert_file_content(&file_path, "AAA bar qux");
@@ -5693,6 +6291,33 @@ mod tests {
             assert_eq!(results[1].replace_result, Some(ReplaceResult::Success));
             assert_eq!(results[2].replace_result, Some(ReplaceResult::Success));
             assert_file_content(&file_path, "日 本 語");
+        }
+
+        #[test]
+        fn test_byte_mode_non_utf8_file() {
+            let temp_dir = TempDir::new().unwrap();
+            let file_path = temp_dir.path().join("latin1.txt");
+            // "déjà mini ici" in Windows-1252
+            std::fs::write(&file_path, b"d\xe9j\xe0 mini ici").unwrap();
+
+            // Byte offsets are relative to the decoded (UTF-8) text, as produced by the search:
+            // "déjà " is 7 bytes in UTF-8, so "mini" is 7-11 and "ici" is 12-15
+            let mut results = vec![
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 7, 11, "mini", "été"),
+                create_byte_range_result(file_path.to_str().unwrap(), 1, 1, 12, 15, "ici", "世界"),
+            ];
+
+            let result = replace_in_file(&mut results);
+            assert!(result.is_ok());
+            assert_eq!(results[0].replace_result, Some(ReplaceResult::Success));
+            assert!(matches!(
+                &results[1].replace_result,
+                Some(ReplaceResult::Error(e)) if e.contains("can't be represented")
+            ));
+            assert_eq!(
+                std::fs::read(&file_path).unwrap(),
+                b"d\xe9j\xe0 \xe9t\xe9 ici"
+            );
         }
     }
 }

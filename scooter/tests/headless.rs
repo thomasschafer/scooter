@@ -5,6 +5,17 @@ use serial_test::serial;
 
 mod utils;
 
+/// Searches all non-hidden files in `directory`
+fn default_dir_config(directory: &std::path::Path) -> DirConfig<'static> {
+    DirConfig {
+        directory: directory.to_path_buf(),
+        include_globs: Some(""),
+        exclude_globs: Some(""),
+        include_hidden: false,
+        include_git_folders: false,
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 async fn run_headless_file_case(
     file_contents: &[u8],
@@ -30,13 +41,7 @@ async fn run_headless_file_case(
         advanced_regex,
         interpret_escape_sequences,
     };
-    let dir_config = DirConfig {
-        directory: temp_dir.path().to_path_buf(),
-        include_globs: Some(""),
-        exclude_globs: Some(""),
-        include_hidden: false,
-        include_git_folders: false,
-    };
+    let dir_config = default_dir_config(temp_dir.path());
 
     let result = run_headless(search_config, dir_config);
     assert!(result.is_ok());
@@ -79,13 +84,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -142,13 +141,7 @@ test_with_both_regex_modes!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -199,13 +192,7 @@ test_with_both_regex_modes!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -557,13 +544,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -612,13 +593,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir1.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir1.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -660,13 +635,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir2.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir2.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -710,13 +679,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -763,13 +726,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -810,13 +767,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -1084,13 +1035,7 @@ test_with_both_regex_modes!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_err());
@@ -1577,6 +1522,294 @@ test_with_both_regex_modes_and_fixed_strings!(
 );
 
 test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_encodings,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                // Latin-1 / Windows-1252, where "é" is the single byte 0xE9
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                    b"d\xe9j\xe0 mini",
+                    b"nothing here",
+                ),
+                "utf8.txt" => text!(
+                    "mini était",
+                    "déjà mini",
+                ),
+                // Mostly UTF-8, with a stray invalid byte on one line
+                "mixed.txt" => binary!(
+                    "mini été".as_bytes(),
+                    b"mini \xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "mini",
+                replacement_text: "maxi",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = default_dir_config(temp_dir.path());
+
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 3 files updated\n");
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"maxi \xe9tait",
+                    b"d\xe9j\xe0 maxi",
+                    b"nothing here",
+                ),
+                "utf8.txt" => text!(
+                    "maxi était",
+                    "déjà maxi",
+                ),
+                "mixed.txt" => binary!(
+                    "maxi été".as_bytes(),
+                    b"maxi \xff",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_non_ascii_search,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                    b"caf\xe9",
+                ),
+                // Valid UTF-8 lines are treated as UTF-8, even when other lines of the file aren't
+                "mixed.txt" => binary!(
+                    "été".as_bytes(),
+                    b"\xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "é",
+                replacement_text: "è",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = default_dir_config(temp_dir.path());
+
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 2 files updated\n");
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"mini \xe8tait",
+                    b"caf\xe8",
+                ),
+                "mixed.txt" => binary!(
+                    "ètè".as_bytes(),
+                    b"\xff",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_mixed_encoding_non_ascii_replacement,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            // Mostly UTF-8, with a stray invalid byte on one line
+            let temp_dir = create_test_files!(
+                "mixed.txt" => binary!(
+                    "café crème brûlée".as_bytes(),
+                    b"foo",
+                    b"bar \xff",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "foo",
+                replacement_text: "déjà",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = default_dir_config(temp_dir.path());
+
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 1 file updated\n");
+
+            // The replacement is written as UTF-8, consistent with the rest of the file
+            assert_test_files!(
+                &temp_dir,
+                "mixed.txt" => binary!(
+                    "café crème brûlée".as_bytes(),
+                    "déjà".as_bytes(),
+                    b"bar \xff",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+fn shift_jis(text: &str) -> Vec<u8> {
+    let (bytes, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
+    assert!(!had_errors);
+    bytes.into_owned()
+}
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_undecodable_lines,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            // The third line can't be decoded: the bytes `ED 40` decode to a character that
+            // encodes back to `FA 5C` in Shift_JIS, so the line doesn't round-trip
+            let contents = [
+                shift_jis("これは日本語のテキストです。needle\n日本語の文章を検索します。\n"),
+                b"\xed\x40 needle\n".to_vec(),
+                shift_jis("最後の行です。needle\n"),
+            ]
+            .concat();
+            let temp_dir = create_test_files!(
+                "shift_jis.txt" => &contents,
+            );
+
+            let search_config = SearchConfig {
+                search_text: "needle",
+                replacement_text: "置換",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let result = run_headless(search_config, default_dir_config(temp_dir.path()));
+            assert_eq!(result.unwrap(), "Success: 1 file updated\n");
+
+            // The line that couldn't be decoded is left untouched
+            let expected = [
+                shift_jis("これは日本語のテキストです。置換\n日本語の文章を検索します。\n"),
+                b"\xed\x40 needle\n".to_vec(),
+                shift_jis("最後の行です。置換\n"),
+            ]
+            .concat();
+            assert_test_files!(
+                &temp_dir,
+                "shift_jis.txt" => &expected,
+            );
+        }
+
+        Ok(())
+    }
+);
+
+#[tokio::test]
+async fn test_headless_non_utf8_multiline_regex() -> anyhow::Result<()> {
+    for advanced_regex in [false, true] {
+        let temp_dir = create_test_files!(
+            "latin1.txt" => binary!(
+                b"start",
+                b"d\xe9j\xe0 vu",
+                b"end",
+            ),
+        );
+
+        let search_text = if advanced_regex {
+            r"(?<=start\n)(\w+) (\w+)(?=\nend)"
+        } else {
+            r"start\n(\w+) (\w+)\nend"
+        };
+        let replacement_text = if advanced_regex {
+            "$2 $1"
+        } else {
+            "start\n$2 $1\nend"
+        };
+        let search_config = SearchConfig {
+            search_text,
+            replacement_text,
+            fixed_strings: false,
+            match_case: true,
+            multiline: true,
+            match_whole_word: false,
+            advanced_regex,
+            interpret_escape_sequences: true,
+        };
+        let result = run_headless(search_config, default_dir_config(temp_dir.path()));
+        assert_eq!(result.unwrap(), "Success: 1 file updated\n");
+
+        assert_test_files!(
+            &temp_dir,
+            "latin1.txt" => binary!(
+                b"start",
+                b"vu d\xe9j\xe0",
+                b"end",
+            ),
+        );
+    }
+
+    Ok(())
+}
+
+test_with_both_regex_modes_and_fixed_strings!(
+    test_headless_non_utf8_unrepresentable_replacement,
+    |advanced_regex, fixed_strings| async move {
+        for multiline in [false, true] {
+            let temp_dir = create_test_files!(
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                ),
+            );
+
+            let search_config = SearchConfig {
+                search_text: "mini",
+                replacement_text: "世界",
+                fixed_strings,
+                match_case: true,
+                multiline,
+                match_whole_word: false,
+                advanced_regex,
+                interpret_escape_sequences: false,
+            };
+            let dir_config = default_dir_config(temp_dir.path());
+
+            // The replacement can't be represented in Windows-1252, so the file must be left
+            // untouched rather than corrupted
+            let result = run_headless(search_config, dir_config);
+            assert_eq!(result.unwrap(), "Success: 0 files updated\n".to_owned());
+
+            assert_test_files!(
+                &temp_dir,
+                "latin1.txt" => binary!(
+                    b"mini \xe9tait",
+                ),
+            );
+        }
+
+        Ok(())
+    }
+);
+
+test_with_both_regex_modes_and_fixed_strings!(
     test_headless_binary_detection,
     |advanced_regex, fixed_strings| async move {
         let temp_dir = create_test_files!(
@@ -1618,13 +1851,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -1634,7 +1861,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             &temp_dir,
             "contains_binary.txt" => binary!(
                 b"Some content REPLACED in a file",
-                b"with \xFF invalid PATTERN UTF-8",
+                b"with \xFF invalid REPLACED UTF-8",
                 b"and some REPLACED valid UTF-8 too.",
             ),
             "text.txt" => text!(
@@ -2157,13 +2384,7 @@ async fn test_headless_multiline_crlf_file_replacement() -> anyhow::Result<()> {
         advanced_regex: false,
         interpret_escape_sequences: false,
     };
-    let dir_config = DirConfig {
-        directory: temp_dir.path().to_path_buf(),
-        include_globs: Some(""),
-        exclude_globs: Some(""),
-        include_hidden: false,
-        include_git_folders: false,
-    };
+    let dir_config = default_dir_config(temp_dir.path());
 
     let result = run_headless(search_config, dir_config);
     assert!(result.is_ok());
@@ -2587,13 +2808,7 @@ test_with_both_regex_modes_and_fixed_strings!(
             advanced_regex,
             interpret_escape_sequences: true,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());
@@ -2771,13 +2986,7 @@ test_with_both_regex_modes!(
             advanced_regex,
             interpret_escape_sequences: false,
         };
-        let dir_config = DirConfig {
-            directory: temp_dir.path().to_path_buf(),
-            include_globs: Some(""),
-            exclude_globs: Some(""),
-            include_hidden: false,
-            include_git_folders: false,
-        };
+        let dir_config = default_dir_config(temp_dir.path());
 
         let result = run_headless(search_config, dir_config);
         assert!(result.is_ok());

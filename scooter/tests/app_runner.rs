@@ -4324,6 +4324,61 @@ test_with_both_regex_modes!(test_multiline_search_preview, |advanced_regex| asyn
 });
 
 test_with_both_regex_modes!(
+    test_multiline_mixed_encoding_file,
+    |advanced_regex| async move {
+        // Mostly UTF-8, with a line in Windows-1252
+        let temp_dir = create_test_files!(
+            "mixed.txt" => binary!(
+                "café crème mini".as_bytes(),
+                b"d\xe9j\xe0 vu mini",
+            ),
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config(app_config)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+        send_chars("mini", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("été", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+        assert!(snapshot.contains("café crème été"), "{snapshot}");
+
+        // The preview of the line in Windows-1252 must be decoded consistently with the search
+        send_key(KeyCode::Down, &event_sender);
+        let snapshot =
+            wait_for_match(&mut snapshot_rx, Pattern::string("déjà vu été"), 1000).await?;
+        assert!(snapshot.contains("déjà vu mini"), "{snapshot}");
+        assert!(!snapshot.contains("File has changed"), "{snapshot}");
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "mixed.txt" => binary!(
+                "café crème été".as_bytes(),
+                b"d\xe9j\xe0 vu \xe9t\xe9",
+            ),
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
     test_multiline_search_single_line_match,
     |advanced_regex| async move {
         // Test multiline mode with matches that only span a single line

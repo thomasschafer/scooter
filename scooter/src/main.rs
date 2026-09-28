@@ -353,7 +353,8 @@ mod tests {
             print_results: false,
             immediate: false,
             no_tui: false,
-            no_stdin: false,
+            // Otherwise tests read stdin, which blocks if it's an open pipe
+            no_stdin: true,
             print_on_exit: false,
             search_text: None,
             replace_text: None,
