@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "scooter-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
