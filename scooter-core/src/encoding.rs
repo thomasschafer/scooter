@@ -261,18 +261,32 @@ struct CachedEncoding {
 
 const ENCODING_CACHE_CAPACITY: usize = 256;
 
+fn encoding_cache() -> &'static Mutex<LruCache<PathBuf, CachedEncoding>> {
+    static CACHE: OnceLock<Mutex<LruCache<PathBuf, CachedEncoding>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let capacity = NonZeroUsize::new(ENCODING_CACHE_CAPACITY)
+            .expect("Encoding cache capacity must be non-zero");
+        Mutex::new(LruCache::new(capacity))
+    })
+}
+
+/// Forgets the cached encoding of the file at `path`, which must be called after modifying it, as
+/// a modification may leave the file's length and modification time unchanged
+pub(crate) fn forget_file_encoding(path: &Path) {
+    encoding_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .pop(path);
+}
+
 /// Detects the legacy encoding of the file at `path` (see [`detect_legacy_encoding`]).
 ///
 /// Detected encodings are cached, as detection can require reading much of the file, and is needed
 /// repeatedly for the same file (e.g. for each preview of its search results). A cached encoding is
-/// only used if the file's length and modification time are unchanged.
+/// only used if the file's length and modification time are unchanged (see
+/// [`forget_file_encoding`]).
 fn detect_file_legacy_encoding(path: &Path) -> io::Result<Option<&'static Encoding>> {
-    static CACHE: OnceLock<Mutex<LruCache<PathBuf, CachedEncoding>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| {
-        let capacity = NonZeroUsize::new(ENCODING_CACHE_CAPACITY)
-            .expect("Encoding cache capacity must be non-zero");
-        Mutex::new(LruCache::new(capacity))
-    });
+    let cache = encoding_cache();
 
     let file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -713,6 +727,18 @@ impl NonUtf8File {
         }
     }
 
+    /// The encoding used when inserting non-ASCII text into lines that are entirely ASCII
+    fn ascii_line_encoding(&self) -> &'static Encoding {
+        match self.lines {
+            LineEncodings::Uniform(encoding) => encoding,
+            LineEncodings::PerLine {
+                legacy_encoding,
+                has_utf8_lines,
+                ..
+            } => default_encoding(legacy_encoding, has_utf8_lines),
+        }
+    }
+
     fn opaque_lines(&self) -> &[usize] {
         match &self.lines {
             LineEncodings::Uniform(_) => &[],
@@ -731,15 +757,9 @@ impl NonUtf8File {
     fn apply_replacements(&self, replacements: &[Replacement<'_>]) -> anyhow::Result<ReplacedFile> {
         let mut outcomes = vec![Ok(()); replacements.len()];
         let lines = FileLines::new(self)?;
-        let groups = self.group_by_lines(&lines, replacements, &mut outcomes)?;
-        let ascii_line_encoding = match self.lines {
-            LineEncodings::Uniform(encoding) => encoding,
-            LineEncodings::PerLine {
-                legacy_encoding,
-                has_utf8_lines,
-                ..
-            } => default_encoding(legacy_encoding, has_utf8_lines),
-        };
+        let ascii_line_encoding = self.ascii_line_encoding();
+        let groups =
+            self.group_by_lines(&lines, replacements, ascii_line_encoding, &mut outcomes)?;
 
         let mut bytes = Vec::with_capacity(self.original.len());
         let mut original_pos = 0;
@@ -777,10 +797,13 @@ impl NonUtf8File {
     /// [`touched_lines`]). Replacements are considered in order, and a replacement fails (with its
     /// outcome set to an error) if its lines can't be rewritten, or if it would make the lines of
     /// its group require different encodings, in which case other replacements aren't affected.
+    /// Replacements that can't be represented in the encoding of their own lines fail here too, so
+    /// that they don't influence the encoding of their group.
     fn group_by_lines(
         &self,
         lines: &FileLines<'_>,
         replacements: &[Replacement<'_>],
+        ascii_line_encoding: &'static Encoding,
         outcomes: &mut [Result<(), String>],
     ) -> anyhow::Result<Vec<LineGroup>> {
         let mut groups: Vec<LineGroup> = vec![];
@@ -793,6 +816,14 @@ impl NonUtf8File {
                     continue;
                 }
             };
+            let own_encoding = match encoding {
+                LinesEncoding::Ascii => ascii_line_encoding,
+                LinesEncoding::Encoded(encoding) => encoding,
+            };
+            if !can_encode(&replacement.text, own_encoding) {
+                outcomes[idx] = Err(unrepresentable_error(own_encoding));
+                continue;
+            }
             match groups.last_mut() {
                 Some(group) if touched.start() <= group.lines.end() => {
                     match group.encoding.combine(encoding) {
@@ -1435,6 +1466,29 @@ mod tests {
             [Err(unrepresentable_error(WINDOWS_1252)), Ok(())]
         );
         assert_eq!(replaced.bytes, b"mini \xe9tait\n\xe9t\xe9\n");
+    }
+
+    #[test]
+    fn test_apply_replacements_unrepresentable_doesnt_affect_group() {
+        let bytes = b"d\xe9j\xe0 end\nascii end\ncaf\xc3\xa9 x\n";
+        let decoded = decode_as(bytes, WINDOWS_1252);
+        let replaced = replace(
+            &decoded,
+            &[
+                // Joins a legacy line and an ASCII line, but can't be encoded in the legacy encoding
+                (nth_range(&decoded, "end\nascii", 0), "世界"),
+                // Joins the same ASCII line and a UTF-8 line, which is fine on its own
+                (nth_range(&decoded, "end\ncafé", 0), "é"),
+            ],
+        );
+        assert_eq!(
+            replaced.outcomes,
+            [Err(unrepresentable_error(WINDOWS_1252)), Ok(())]
+        );
+        assert_eq!(
+            replaced.bytes,
+            [b"d\xe9j\xe0 end\nascii ".as_slice(), "é x\n".as_bytes()].concat()
+        );
     }
 
     #[test]

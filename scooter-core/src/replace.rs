@@ -504,6 +504,7 @@ fn write_file_with(
     output.flush()?;
     drop(output);
     temp_file.persist(file_path)?;
+    encoding::forget_file_encoding(file_path);
     Ok(())
 }
 
