@@ -4578,6 +4578,51 @@ test_with_both_regex_modes!(
 );
 
 test_with_both_regex_modes!(
+    test_multiline_line_anchors_and_captures,
+    |advanced_regex| async move {
+        // `$` should match at the end of each line in multiline mode, and replacements should
+        // be computed using the surrounding text rather than just the matched text
+        let temp_dir = create_test_files!(
+            "lf.txt" => b"bx\nb\n",
+            "crlf.txt" => b"bx\r\nb\r\n",
+        );
+
+        let app_config = AppConfig {
+            directory: temp_dir.path().to_path_buf(),
+            app_run_config: AppRunConfig {
+                advanced_regex,
+                multiline: true,
+                ..AppRunConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        let (run_handle, event_sender, mut snapshot_rx) =
+            build_test_runner_with_config_and_width(app_config, 50)?;
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+        send_chars(r"(b$)|(b)", &event_sender);
+        send_key(KeyCode::Tab, &event_sender);
+        send_chars("[$1|$2]", &event_sender);
+        send_key(KeyCode::Enter, &event_sender);
+
+        wait_for_match(&mut snapshot_rx, Pattern::string("Search complete"), 1000).await?;
+
+        send_key(KeyCode::Enter, &event_sender);
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+
+        assert_test_files!(
+            temp_dir,
+            "lf.txt" => b"[|b]x\n[b|]\n",
+            "crlf.txt" => b"[|b]x\r\n[b|]\r\n",
+        );
+
+        shutdown(event_sender, run_handle).await
+    }
+);
+
+test_with_both_regex_modes!(
     test_multiline_match_at_file_start,
     |advanced_regex| async move {
         // Test multiline match starting at line 1 (no context before)

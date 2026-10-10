@@ -1,8 +1,8 @@
 #[cfg(feature = "term")]
 use crossterm::style::Stylize;
-use fancy_regex::Regex as FancyRegex;
+use fancy_regex::{Regex as FancyRegex, RegexBuilder as FancyRegexBuilder};
 use ignore::overrides::OverrideBuilder;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::path::PathBuf;
 
 use crate::{
@@ -151,9 +151,9 @@ pub fn parse_search_text(config: &SearchConfig<'_>) -> anyhow::Result<SearchType
         let search = if config.fixed_strings {
             SearchType::Fixed(config.search_text.to_string())
         } else if config.advanced_regex {
-            SearchType::PatternAdvanced(FancyRegex::new(config.search_text)?)
+            SearchType::PatternAdvanced(build_fancy_regex(config.search_text, config.multiline)?)
         } else {
-            SearchType::Pattern(Regex::new(config.search_text)?)
+            SearchType::Pattern(build_regex(config.search_text, config.multiline)?)
         };
         Ok(search)
     } else {
@@ -175,9 +175,26 @@ pub fn parse_search_text(config: &SearchConfig<'_>) -> anyhow::Result<SearchType
 
         // Shouldn't fail as we have already verified that the regex is valid, so `unwrap` here is fine.
         // (Any issues will likely be with the padding we are doing in this function.)
-        let fancy_regex = FancyRegex::new(&search_regex_str).unwrap();
+        let fancy_regex = build_fancy_regex(&search_regex_str, config.multiline).unwrap();
         Ok(SearchType::PatternAdvanced(fancy_regex))
     }
+}
+
+// In multiline mode the whole file is searched at once, so we enable multi-line mode to make `^`
+// and `$` match at line boundaries, consistent with line-by-line search. CRLF mode ensures that
+// `$` also matches before `\r\n`. `\A` and `\z` can be used to match the start and end of the file.
+fn build_regex(pattern: &str, multiline: bool) -> Result<Regex, regex::Error> {
+    RegexBuilder::new(pattern)
+        .multi_line(multiline)
+        .crlf(multiline)
+        .build()
+}
+
+fn build_fancy_regex(pattern: &str, multiline: bool) -> Result<FancyRegex, fancy_regex::Error> {
+    FancyRegexBuilder::new(pattern)
+        .multi_line(multiline)
+        .crlf(multiline)
+        .build()
 }
 
 fn parse_search_text_with_error_handler<H: ValidationErrorHandler>(
@@ -464,6 +481,68 @@ mod tests {
                 &converted,
                 &[r"test\.regex\*\+\?\[chars\]", "(?i)"],
             );
+        }
+
+        fn match_ranges(search: &SearchType, haystack: &str) -> Vec<(usize, usize)> {
+            match search {
+                SearchType::Pattern(regex) => regex
+                    .find_iter(haystack)
+                    .map(|m| (m.start(), m.end()))
+                    .collect(),
+                SearchType::PatternAdvanced(regex) => regex
+                    .find_iter(haystack)
+                    .map(|m| {
+                        let m = m.unwrap();
+                        (m.start(), m.end())
+                    })
+                    .collect(),
+                SearchType::Fixed(_) => panic!("Expected regex, got {search:?}"),
+            }
+        }
+
+        #[test]
+        fn test_line_anchors_depend_on_multiline() {
+            // (pattern, haystack, multiline, expected matches)
+            type Case = (&'static str, &'static str, bool, &'static [(usize, usize)]);
+
+            #[rustfmt::skip]
+            let cases: &[Case] = &[
+                (r"b$", "ab\ncb\n", false, &[]),
+                (r"b$", "ab\ncb\n", true, &[(1, 2), (4, 5)]),
+                (r"b$", "ab\r\ncb\r\n", true, &[(1, 2), (5, 6)]),
+                (r"^c", "ab\ncb\n", false, &[]),
+                (r"^c", "ab\ncb\n", true, &[(3, 4)]),
+                (r"^c", "ab\r\ncb\r\n", true, &[(4, 5)]),
+                // `\A` and `\z` still match the start and end of the haystack
+                (r"\Aa", "ab\nab\n", true, &[(0, 1)]),
+                (r"b\n\z", "ab\ncb\n", true, &[(4, 6)]),
+                // Multi-line mode can be disabled within the pattern
+                (r"(?-m)b$", "ab\ncb\n", true, &[]),
+            ];
+
+            for &(pattern, haystack, multiline, expected) in cases {
+                // Exercise each way of building the regex: default engine, advanced engine, and
+                // the transformed pattern used when matching case-insensitively
+                for (advanced_regex, match_case) in [(false, true), (true, true), (false, false)] {
+                    let search_config = SearchConfig {
+                        search_text: pattern,
+                        replacement_text: "",
+                        fixed_strings: false,
+                        match_whole_word: false,
+                        match_case,
+                        advanced_regex,
+                        multiline,
+                        interpret_escape_sequences: false,
+                    };
+                    let search = parse_search_text(&search_config).unwrap();
+                    assert_eq!(
+                        match_ranges(&search, haystack),
+                        expected,
+                        "pattern={pattern:?}, haystack={haystack:?}, multiline={multiline}, \
+                         advanced_regex={advanced_regex}, match_case={match_case}"
+                    );
+                }
+            }
         }
     }
 }

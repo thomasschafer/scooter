@@ -293,9 +293,9 @@ impl SearchType {
     }
 
     /// Returns true when full-haystack context is required to validate matches/replacements
-    /// (e.g. advanced regex lookarounds that depend on surrounding text).
+    /// (e.g. anchors, word boundaries and lookarounds that depend on surrounding text).
     pub fn needs_haystack_context(&self) -> bool {
-        matches!(self, SearchType::PatternAdvanced(_))
+        !matches!(self, SearchType::Fixed(_))
     }
 }
 

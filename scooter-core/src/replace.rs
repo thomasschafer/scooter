@@ -6,6 +6,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Write},
     num::NonZero,
+    ops::Range,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -999,29 +1000,35 @@ pub fn replacement_for_match_in_haystack(
             }
             Some(replace.to_string())
         }
-        SearchType::Pattern(pattern) => pattern.captures_iter(haystack).find_map(|caps| {
-            let mat = caps.get(0)?;
-            if mat.start() == byte_start && mat.end() == byte_end {
-                let mut out = String::new();
-                caps.expand(replace, &mut out);
-                Some(out)
-            } else {
-                None
-            }
-        }),
+        // Searching from `byte_start` (rather than slicing the haystack) means that anchors and
+        // lookarounds still take the preceding text into account
+        SearchType::Pattern(pattern) => {
+            let caps = pattern.captures_at(haystack, byte_start)?;
+            expand_if_range_matches(caps.get(0)?.range(), byte_start, byte_end, |out| {
+                caps.expand(replace, out);
+            })
+        }
         SearchType::PatternAdvanced(pattern) => {
-            pattern.captures_iter(haystack).flatten().find_map(|caps| {
-                let mat = caps.get(0)?;
-                if mat.start() == byte_start && mat.end() == byte_end {
-                    let mut out = String::new();
-                    caps.expand(replace, &mut out);
-                    Some(out)
-                } else {
-                    None
-                }
+            let caps = pattern.captures_from_pos(haystack, byte_start).ok()??;
+            expand_if_range_matches(caps.get(0)?.range(), byte_start, byte_end, |out| {
+                caps.expand(replace, out);
             })
         }
     }
+}
+
+fn expand_if_range_matches(
+    range: Range<usize>,
+    byte_start: usize,
+    byte_end: usize,
+    expand: impl FnOnce(&mut String),
+) -> Option<String> {
+    if range != (byte_start..byte_end) {
+        return None;
+    }
+    let mut out = String::new();
+    expand(&mut out);
+    Some(out)
 }
 
 /// Interpret escape sequences in replacement text.
@@ -1290,6 +1297,106 @@ mod tests {
             let replacement =
                 replacement_for_match_in_haystack(&search, "ID:$1", haystack, start, end).unwrap();
             assert_eq!(replacement, "ID:123");
+        }
+
+        fn both_engines(pattern: &str) -> [SearchType; 2] {
+            [
+                SearchType::Pattern(Regex::new(pattern).unwrap()),
+                SearchType::PatternAdvanced(FancyRegex::new(pattern).unwrap()),
+            ]
+        }
+
+        #[test]
+        fn test_anchors_use_surrounding_text() {
+            let haystack = "bx\nb\n";
+            for search in both_engines(r"(?m)(b$)|(b)") {
+                assert_eq!(
+                    replacement_for_match_in_haystack(&search, "[$1|$2]", haystack, 0, 1),
+                    Some("[|b]".to_string()),
+                    "{search:?}"
+                );
+                assert_eq!(
+                    replacement_for_match_in_haystack(&search, "[$1|$2]", haystack, 3, 4),
+                    Some("[b|]".to_string()),
+                    "{search:?}"
+                );
+            }
+            for search in both_engines(r"(?m)(^x)|(x)") {
+                assert_eq!(
+                    replacement_for_match_in_haystack(&search, "[$1|$2]", haystack, 1, 2),
+                    Some("[|x]".to_string()),
+                    "{search:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_range_that_is_not_a_match() {
+            let haystack = "abc123def";
+            for search in both_engines(r"\d+") {
+                // Only part of a match
+                assert!(
+                    replacement_for_match_in_haystack(&search, "N", haystack, 3, 5).is_none(),
+                    "{search:?}"
+                );
+                // No match starting here
+                assert!(
+                    replacement_for_match_in_haystack(&search, "N", haystack, 0, 3).is_none(),
+                    "{search:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_consistent_with_replace_all() {
+            let haystack = "foo bar\nbaz\r\n\nfoo\nqux foo";
+            for pattern in [
+                r"(?m)(\w+)$",
+                r"(?m)^(\w*)",
+                r"(?m)$",
+                r"\b(\w)",
+                r"(o*)",
+                r"(?mR)(.)$",
+                r"(?s)(foo).*?(foo)",
+            ] {
+                for search in both_engines(pattern) {
+                    let ranges: Vec<_> = match &search {
+                        SearchType::Pattern(r) => {
+                            r.find_iter(haystack).map(|m| m.range()).collect()
+                        }
+                        SearchType::PatternAdvanced(r) => {
+                            r.find_iter(haystack).map(|m| m.unwrap().range()).collect()
+                        }
+                        SearchType::Fixed(_) => unreachable!(),
+                    };
+                    // Splicing each individual replacement into the haystack should give the
+                    // same result as replacing all matches at once
+                    let mut spliced = String::new();
+                    let mut last_end = 0;
+                    for range in ranges {
+                        spliced.push_str(&haystack[last_end..range.start]);
+                        spliced.push_str(
+                            &replacement_for_match_in_haystack(
+                                &search,
+                                "<$1|$2>",
+                                haystack,
+                                range.start,
+                                range.end,
+                            )
+                            .unwrap_or_else(|| panic!("{pattern}: no match at {range:?}")),
+                        );
+                        last_end = range.end;
+                    }
+                    spliced.push_str(&haystack[last_end..]);
+
+                    let expected = match &search {
+                        SearchType::Pattern(r) => r.replace_all(haystack, "<$1|$2>"),
+                        SearchType::PatternAdvanced(r) => r.replace_all(haystack, "<$1|$2>"),
+                        SearchType::Fixed(_) => unreachable!(),
+                    };
+                    assert_eq!(spliced, expected, "{search:?}");
+                }
+            }
         }
     }
 
