@@ -4027,7 +4027,8 @@ test_with_both_regex_modes!(
         .await;
         assert!(result.is_ok(), "Timed out before preview was updated");
 
-        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 2000).await?;
+        // Replacing in thousands of files can be slow on CI runners
+        wait_for_match(&mut snapshot_rx, Pattern::string("Success!"), 10000).await?;
 
         let (final_foo_count, final_bar_count) = count_occurrences(temp_dir.path())?;
         assert_eq!(
