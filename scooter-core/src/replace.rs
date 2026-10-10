@@ -6,7 +6,6 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Read, Write},
     num::NonZero,
-    ops::Range,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -1001,34 +1000,33 @@ pub fn replacement_for_match_in_haystack(
             Some(replace.to_string())
         }
         // Searching from `byte_start` (rather than slicing the haystack) means that anchors and
-        // lookarounds still take the preceding text into account
+        // word boundaries still take the preceding text into account
         SearchType::Pattern(pattern) => {
             let caps = pattern.captures_at(haystack, byte_start)?;
-            expand_if_range_matches(caps.get(0)?.range(), byte_start, byte_end, |out| {
-                caps.expand(replace, out);
-            })
+            let mat = caps.get(0)?;
+            if mat.start() == byte_start && mat.end() == byte_end {
+                let mut out = String::new();
+                caps.expand(replace, &mut out);
+                Some(out)
+            } else {
+                None
+            }
         }
+        // Unlike the above, we iterate from the start of the haystack, as `\G` matches depend on
+        // where the previous match ended
         SearchType::PatternAdvanced(pattern) => {
-            let caps = pattern.captures_from_pos(haystack, byte_start).ok()??;
-            expand_if_range_matches(caps.get(0)?.range(), byte_start, byte_end, |out| {
-                caps.expand(replace, out);
+            pattern.captures_iter(haystack).flatten().find_map(|caps| {
+                let mat = caps.get(0)?;
+                if mat.start() == byte_start && mat.end() == byte_end {
+                    let mut out = String::new();
+                    caps.expand(replace, &mut out);
+                    Some(out)
+                } else {
+                    None
+                }
             })
         }
     }
-}
-
-fn expand_if_range_matches(
-    range: Range<usize>,
-    byte_start: usize,
-    byte_end: usize,
-    expand: impl FnOnce(&mut String),
-) -> Option<String> {
-    if range != (byte_start..byte_end) {
-        return None;
-    }
-    let mut out = String::new();
-    expand(&mut out);
-    Some(out)
 }
 
 /// Interpret escape sequences in replacement text.
@@ -1328,6 +1326,18 @@ mod tests {
                     "{search:?}"
                 );
             }
+        }
+
+        #[test]
+        fn test_advanced_regex_continuation_anchor() {
+            // `\G` only matches where the previous match ended, so the replacement must be
+            // computed as part of a search from the start of the haystack
+            let haystack = "xfoo";
+            let search = SearchType::PatternAdvanced(FancyRegex::new(r"(\Gfoo)|(foo)").unwrap());
+            assert_eq!(
+                replacement_for_match_in_haystack(&search, "[$1|$2]", haystack, 1, 4),
+                Some("[|foo]".to_string())
+            );
         }
 
         #[test]
