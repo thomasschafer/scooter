@@ -860,10 +860,11 @@ impl<'a> ReplacementContext<'a> {
             return PreviewOutcome::Replacement(replacement.clone());
         }
 
-        // NOTE: advanced regex lookarounds require the full haystack. If we run the
-        // regex against the matched substring only, lookbehind/lookahead checks fail
-        // and we silently "replace" with the original text. Using the full haystack
-        // keeps the TUI preview/replacement consistent with headless mode.
+        // NOTE: anchors, word boundaries and lookarounds require the full haystack. If we
+        // run the regex against the matched substring only, they can evaluate differently
+        // (e.g. `$` always matches at the end of the substring), producing the wrong
+        // replacement. Using the full haystack keeps the TUI preview/replacement consistent
+        // with headless mode.
         if let Some(replacement) = replacement_for_match_in_haystack(
             self.searcher.search(),
             self.searcher.replace(),
