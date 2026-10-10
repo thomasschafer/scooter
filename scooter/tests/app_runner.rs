@@ -1356,6 +1356,121 @@ async fn test_results_calculation_with_files_changed_errors() -> anyhow::Result<
     shutdown(event_sender, run_handle).await
 }
 
+enum FileChange {
+    ReplacedByScooter,
+    OverwrittenExternally,
+}
+
+async fn run_preview_after_file_change_case(
+    file_change: FileChange,
+    syntax_highlighting: bool,
+) -> anyhow::Result<()> {
+    let temp_dir = &create_test_files!(
+        "file1.txt" => text!(
+            "before",
+            "foo",
+            "after",
+        ),
+    );
+
+    let mut user_config = Config::default();
+    user_config.preview.syntax_highlighting = syntax_highlighting;
+    let app_config = AppConfig {
+        directory: temp_dir.path().to_path_buf(),
+        ..AppConfig::default()
+    };
+    let (run_handle, event_sender, mut snapshot_rx) =
+        build_test_runner_with_custom_config(app_config, user_config)?;
+
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 100).await?;
+
+    send_chars("foo", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("bar", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+    wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("+ bar"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
+
+    match file_change {
+        FileChange::ReplacedByScooter => {
+            send_key(KeyCode::Enter, &event_sender);
+            wait_for_match(
+                &mut snapshot_rx,
+                Pattern::final_screen(true, 1, 0, 0),
+                UI_WAIT_TIMEOUT_MS,
+            )
+            .await?;
+            assert_test_files!(
+                &temp_dir,
+                "file1.txt" => text!(
+                    "before",
+                    "bar",
+                    "after",
+                ),
+            );
+        }
+        FileChange::OverwrittenExternally => {
+            overwrite_files!(
+                &temp_dir.path(),
+                "file1.txt" => {
+                    "before",
+                    "bar",
+                    "bar after",
+                },
+            );
+        }
+    }
+
+    send_key_with_modifiers(KeyCode::Char('r'), KeyModifiers::CONTROL, &event_sender);
+    wait_for_match(&mut snapshot_rx, Pattern::string("Search text"), 1000).await?;
+    send_chars("bar", &event_sender);
+    send_key(KeyCode::Tab, &event_sender);
+    send_chars("baz", &event_sender);
+    send_key(KeyCode::Enter, &event_sender);
+    let snapshot = wait_for_match(
+        &mut snapshot_rx,
+        Pattern::string("+ baz"),
+        UI_WAIT_TIMEOUT_MS,
+    )
+    .await?;
+    assert!(
+        !snapshot.contains("Error generating preview"),
+        "Preview should reflect the current file contents:\n{snapshot}"
+    );
+    if matches!(file_change, FileChange::OverwrittenExternally) {
+        assert!(
+            snapshot.contains("bar after"),
+            "Preview should include context from the current file contents:\n{snapshot}"
+        );
+    }
+
+    shutdown(event_sender, run_handle).await
+}
+
+#[tokio::test]
+#[serial]
+async fn test_preview_after_file_replaced_by_scooter() -> anyhow::Result<()> {
+    for syntax_highlighting in [true, false] {
+        run_preview_after_file_change_case(FileChange::ReplacedByScooter, syntax_highlighting)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_preview_after_file_overwritten_externally() -> anyhow::Result<()> {
+    for syntax_highlighting in [true, false] {
+        run_preview_after_file_change_case(FileChange::OverwrittenExternally, syntax_highlighting)
+            .await?;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn test_results_calculation_with_files_deleted_errors() -> anyhow::Result<()> {

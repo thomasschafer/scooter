@@ -12,6 +12,7 @@ use scooter_core::{
     diff::{Diff, DiffColour, line_diff},
     errors::AppError,
     fields::{Field, NUM_SEARCH_FIELDS, SearchField, SearchFields},
+    file_content::FileStamp,
     replace::{PerformingReplacementState, ReplaceState},
     search,
     utils::{
@@ -553,7 +554,12 @@ fn to_line_plain(line: &str) -> StyledLine {
     )]
 }
 
-fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: UnboundedSender<Event>) {
+fn spawn_highlight_full_file(
+    path: PathBuf,
+    stamp: FileStamp,
+    theme: Theme,
+    event_sender: UnboundedSender<Event>,
+) {
     tokio::spawn(async move {
         match fs::metadata(&path) {
             Ok(metadata) => {
@@ -581,8 +587,7 @@ fn spawn_highlight_full_file(path: PathBuf, theme: Theme, event_sender: Unbounde
             }
         };
 
-        let mut cache_guard = cache::highlighted_file_cache().lock().unwrap();
-        cache_guard.put(path, full);
+        cache::put_file_derived(cache::highlighted_file_cache(), path, stamp, full);
 
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::Rerender);
@@ -727,21 +732,32 @@ fn read_lines_range_highlighted_with_cache(
     long_lines: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<LinesOrLoading<HighlightedLine>> {
+    let stamp = FileStamp::of(path)?;
+
     // Check highlighted file cache
-    let mut cache_guard = cache::highlighted_file_cache().lock().unwrap();
-    if let Some(cached_lines) = cache_guard.get(path) {
-        let lines = cached_lines
-            .iter()
-            .skip(start)
-            .take(end - start + 1)
-            .cloned()
-            .collect::<Vec<_>>();
+    if let Some(lines) = cache::get_if_unchanged(
+        cache::highlighted_file_cache(),
+        path,
+        stamp,
+        |cached_lines| {
+            cached_lines
+                .iter()
+                .skip(start)
+                .take(end - start + 1)
+                .cloned()
+                .collect::<Vec<_>>()
+        },
+    ) {
         return Ok(LinesOrLoading::Lines(lines));
     }
-    drop(cache_guard);
 
     // Not in cache, so kick off background job to populate
-    spawn_highlight_full_file(path.to_path_buf(), theme.clone(), event_sender.clone());
+    spawn_highlight_full_file(
+        path.to_path_buf(),
+        stamp,
+        theme.clone(),
+        event_sender.clone(),
+    );
 
     // Check highlighted window cache
     let window = FileWindow {
@@ -749,15 +765,18 @@ fn read_lines_range_highlighted_with_cache(
         start,
         end,
     };
-    let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
-    if let Some(cached_window) = cache_guard.get(&window) {
-        return Ok(LinesOrLoading::Lines(cached_window.clone()));
+    if let Some(lines) = cache::get_if_unchanged(
+        cache::highlighted_window_cache(),
+        &window,
+        stamp,
+        Clone::clone,
+    ) {
+        return Ok(LinesOrLoading::Lines(lines));
     }
-    drop(cache_guard);
 
     if long_lines {
         // Kick off job to populate, and render loading
-        spawn_highlight_window(path.to_path_buf(), start, end, theme.clone(), event_sender);
+        spawn_highlight_window(window, stamp, theme.clone(), event_sender);
         Ok(LinesOrLoading::Loading)
     } else {
         // Read highlighted window synchronously
@@ -766,9 +785,12 @@ fn read_lines_range_highlighted_with_cache(
             read_lines_range_highlighted(path, Some(start), Some(end), theme, syntax_set, false)?
                 .collect::<Vec<_>>();
 
-        let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
-        cache_guard.put(window, lines.clone());
-        drop(cache_guard);
+        cache::put_file_derived(
+            cache::highlighted_window_cache(),
+            window,
+            stamp,
+            lines.clone(),
+        );
 
         Ok(LinesOrLoading::Lines(lines))
     }
@@ -781,6 +803,7 @@ fn read_lines_range_plain_with_cache(
     long_lines: bool,
     event_sender: UnboundedSender<Event>,
 ) -> anyhow::Result<LinesOrLoading<String>> {
+    let stamp = FileStamp::of(path)?;
     let window = FileWindow {
         path: path.to_path_buf(),
         start,
@@ -788,41 +811,39 @@ fn read_lines_range_plain_with_cache(
     };
 
     // Check plain window cache
-    let mut cache_guard = cache::plain_window_cache().lock().unwrap();
-    if let Some(cached_window) = cache_guard.get(&window) {
-        return Ok(LinesOrLoading::Lines(cached_window.clone()));
+    if let Some(lines) =
+        cache::get_if_unchanged(cache::plain_window_cache(), &window, stamp, Clone::clone)
+    {
+        return Ok(LinesOrLoading::Lines(lines));
     }
-    drop(cache_guard);
 
     if long_lines {
         // Kick off job to populate, and render loading
-        spawn_read_plain_window(path.to_path_buf(), start, end, event_sender);
+        spawn_read_plain_window(window, stamp, event_sender);
         Ok(LinesOrLoading::Loading)
     } else {
         // Read plain window synchronously
         let lines: Vec<(usize, String)> = read_lines_range(path, start, end)?.collect();
 
         // Cache it for future navigation
-        let mut cache_guard = cache::plain_window_cache().lock().unwrap();
-        cache_guard.put(window, lines.clone());
+        cache::put_file_derived(cache::plain_window_cache(), window, stamp, lines.clone());
 
         Ok(LinesOrLoading::Lines(lines))
     }
 }
 
 fn spawn_highlight_window(
-    path: PathBuf,
-    start: usize,
-    end: usize,
+    window: FileWindow,
+    stamp: FileStamp,
     theme: Theme,
     event_sender: UnboundedSender<Event>,
 ) {
     tokio::spawn(async move {
         let syntax_set = SYNTAX_SET.get_or_init(two_face::syntax::extra_no_newlines);
         let lines = match read_lines_range_highlighted(
-            &path,
-            Some(start),
-            Some(end),
+            &window.path,
+            Some(window.start),
+            Some(window.end),
             &theme,
             syntax_set,
             false,
@@ -834,8 +855,7 @@ fn spawn_highlight_window(
             }
         };
 
-        let mut cache_guard = cache::highlighted_window_cache().lock().unwrap();
-        cache_guard.put(FileWindow { path, start, end }, lines);
+        cache::put_file_derived(cache::highlighted_window_cache(), window, stamp, lines);
 
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::Rerender);
@@ -843,13 +863,12 @@ fn spawn_highlight_window(
 }
 
 fn spawn_read_plain_window(
-    path: PathBuf,
-    start: usize,
-    end: usize,
+    window: FileWindow,
+    stamp: FileStamp,
     event_sender: UnboundedSender<Event>,
 ) {
     tokio::spawn(async move {
-        let lines = match read_lines_range(&path, start, end) {
+        let lines = match read_lines_range(&window.path, window.start, window.end) {
             Ok(lines) => lines.collect(),
             Err(e) => {
                 log::error!("Error reading plain window: {e}");
@@ -857,8 +876,7 @@ fn spawn_read_plain_window(
             }
         };
 
-        let mut cache_guard = cache::plain_window_cache().lock().unwrap();
-        cache_guard.put(FileWindow { path, start, end }, lines);
+        cache::put_file_derived(cache::plain_window_cache(), window, stamp, lines);
 
         // Ignore error - likely app has closed
         let _ = event_sender.send(Event::Rerender);

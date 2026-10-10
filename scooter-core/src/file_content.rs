@@ -1,10 +1,46 @@
 use anyhow::{Context, Result};
 use lru::LruCache;
 use std::{
+    fs::{self, Metadata},
+    io,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
+    time::SystemTime,
 };
+
+/// Identifies a version of a file's contents using its metadata, so that data derived from a file
+/// can be cached and discarded once the file changes.
+///
+/// To avoid caching data derived from a newer version of the file than the stamp describes, take
+/// the stamp before reading the file.
+///
+/// A modification that leaves the file's metadata unchanged isn't detected, so code that modifies
+/// files should also invalidate any caches explicitly where possible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStamp {
+    len: u64,
+    modified: SystemTime,
+    // Files are replaced by renaming a new file over them, which gives them a new inode, so this
+    // detects replacements made by scooter even if the length and modification time are unchanged
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl FileStamp {
+    pub fn of(path: &Path) -> io::Result<Self> {
+        Self::from_metadata(&fs::metadata(path)?)
+    }
+
+    pub fn from_metadata(metadata: &Metadata) -> io::Result<Self> {
+        Ok(Self {
+            len: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            inode: std::os::unix::fs::MetadataExt::ino(metadata),
+        })
+    }
+}
 
 /// Provides file contents for features that need full-text context.
 pub trait FileContentProvider: Send + Sync {
@@ -120,5 +156,60 @@ mod tests {
         provider.clear();
         let refreshed = provider.read_to_string(file.path()).unwrap();
         assert_eq!(refreshed.as_str(), "second");
+    }
+
+    #[test]
+    fn test_file_stamp_unchanged_if_file_unchanged() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "contents").unwrap();
+
+        let stamp = FileStamp::of(file.path()).unwrap();
+        std::fs::read(file.path()).unwrap();
+        assert_eq!(FileStamp::of(file.path()).unwrap(), stamp);
+    }
+
+    #[test]
+    fn test_file_stamp_changes_when_length_changes() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "contents").unwrap();
+        let modified = file.as_file().metadata().unwrap().modified().unwrap();
+
+        let stamp = FileStamp::of(file.path()).unwrap();
+        write!(file, " and more").unwrap();
+        file.as_file().set_modified(modified).unwrap();
+        assert_ne!(FileStamp::of(file.path()).unwrap(), stamp);
+    }
+
+    #[test]
+    fn test_file_stamp_changes_when_modification_time_changes() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "contents").unwrap();
+        let modified = file.as_file().metadata().unwrap().modified().unwrap();
+
+        let stamp = FileStamp::of(file.path()).unwrap();
+        file.as_file()
+            .set_modified(modified + std::time::Duration::from_secs(1))
+            .unwrap();
+        assert_ne!(FileStamp::of(file.path()).unwrap(), stamp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_file_stamp_changes_when_file_replaced_with_same_length_and_modification_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        std::fs::write(&path, "foo").unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let stamp = FileStamp::of(&path).unwrap();
+
+        let mut replacement = NamedTempFile::new_in(dir.path()).unwrap();
+        write!(replacement, "bar").unwrap();
+        replacement.as_file().set_modified(modified).unwrap();
+        replacement.persist(&path).unwrap();
+
+        let new_metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(new_metadata.len(), 3);
+        assert_eq!(new_metadata.modified().unwrap(), modified);
+        assert_ne!(FileStamp::of(&path).unwrap(), stamp);
     }
 }
