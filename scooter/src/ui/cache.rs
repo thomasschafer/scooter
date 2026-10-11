@@ -1,6 +1,7 @@
 use lru::LruCache;
-use scooter_core::{search::MatchContent, utils::HighlightedLine};
+use scooter_core::{file_content::FileStamp, search::MatchContent, utils::HighlightedLine};
 use std::{
+    borrow::Borrow,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     num::NonZeroUsize,
@@ -38,19 +39,59 @@ macro_rules! define_cache {
     };
 }
 
+/// Data derived from the contents of a file, along with the stamp of the file taken before it was
+/// read
+pub(crate) struct FileDerived<T> {
+    stamp: FileStamp,
+    value: T,
+}
+
+type FileDerivedCache<K, T> = Mutex<LruCache<K, FileDerived<T>>>;
+
+/// Applies `f` to the value cached for `key`, unless the file it was derived from has changed since
+/// (as determined by comparing with `current_stamp`), in which case the stale value is evicted
+pub(crate) fn get_if_unchanged<K, Q, T, R>(
+    cache: &FileDerivedCache<K, T>,
+    key: &Q,
+    current_stamp: FileStamp,
+    f: impl FnOnce(&T) -> R,
+) -> Option<R>
+where
+    K: Hash + Eq + Borrow<Q>,
+    Q: Hash + Eq + ?Sized,
+{
+    let mut cache_guard = cache.lock().unwrap();
+    let cached = cache_guard.get(key)?;
+    if cached.stamp == current_stamp {
+        return Some(f(&cached.value));
+    }
+    cache_guard.pop(key);
+    None
+}
+
+/// Caches `value`, which must have been derived from the file contents described by `stamp`
+pub(crate) fn put_file_derived<K: Hash + Eq, T>(
+    cache: &FileDerivedCache<K, T>,
+    key: K,
+    stamp: FileStamp,
+    value: T,
+) {
+    cache.lock().unwrap().put(key, FileDerived { stamp, value });
+}
+
 define_cache! {
     /// Cache of sections of files (plain text)
-    plain_window_cache: FileWindow => Vec<(usize, String)>
+    plain_window_cache: FileWindow => FileDerived<Vec<(usize, String)>>
 }
 
 define_cache! {
     /// Cache of sections of files (with syntax highlighting)
-    highlighted_window_cache: FileWindow => Vec<(usize, HighlightedLine)>
+    highlighted_window_cache: FileWindow => FileDerived<Vec<(usize, HighlightedLine)>>
 }
 
 define_cache! {
     /// Cache of entire files (with syntax highlighting)
-    highlighted_file_cache: PathBuf => Vec<(usize, HighlightedLine)>
+    highlighted_file_cache: PathBuf => FileDerived<Vec<(usize, HighlightedLine)>>
 }
 
 define_cache! {

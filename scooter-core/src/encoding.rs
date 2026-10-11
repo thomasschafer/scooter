@@ -24,7 +24,6 @@ use std::{
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock, PoisonError},
-    time::SystemTime,
 };
 
 use anyhow::Context;
@@ -34,6 +33,7 @@ use encoding_rs::{DecoderResult, EncoderResult, Encoding, UTF_8};
 use lru::LruCache;
 
 use crate::{
+    file_content::FileStamp,
     line_index::{LineIndex, newline_positions},
     line_reader::LineEnding,
 };
@@ -251,11 +251,9 @@ impl LineDecoder {
     }
 }
 
-/// The detected legacy encoding of a file, along with the length and modification time of the
-/// file when it was detected
+/// The detected legacy encoding of a file, along with the stamp of the file when it was detected
 struct CachedEncoding {
-    len: u64,
-    modified: SystemTime,
+    stamp: FileStamp,
     encoding: Option<&'static Encoding>,
 }
 
@@ -271,7 +269,7 @@ fn encoding_cache() -> &'static Mutex<LruCache<PathBuf, CachedEncoding>> {
 }
 
 /// Forgets the cached encoding of the file at `path`, which must be called after modifying it, as
-/// a modification may leave the file's length and modification time unchanged
+/// a modification may leave the file's stamp unchanged
 pub(crate) fn forget_file_encoding(path: &Path) {
     encoding_cache()
         .lock()
@@ -283,33 +281,26 @@ pub(crate) fn forget_file_encoding(path: &Path) {
 ///
 /// Detected encodings are cached, as detection can require reading much of the file, and is needed
 /// repeatedly for the same file (e.g. for each preview of its search results). A cached encoding is
-/// only used if the file's length and modification time are unchanged (see
-/// [`forget_file_encoding`]).
+/// only used if the file's stamp is unchanged (see [`forget_file_encoding`]).
 fn detect_file_legacy_encoding(path: &Path) -> io::Result<Option<&'static Encoding>> {
     let cache = encoding_cache();
 
     let file = File::open(path)?;
-    let metadata = file.metadata()?;
-    let (len, modified) = (metadata.len(), metadata.modified()?);
+    let stamp = FileStamp::from_metadata(&file.metadata()?)?;
     {
         let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(cached) = cache.get(path)
-            && cached.len == len
-            && cached.modified == modified
+            && cached.stamp == stamp
         {
             return Ok(cached.encoding);
         }
     }
 
     let encoding = detect_legacy_encoding(BufReader::new(file))?;
-    cache.lock().unwrap_or_else(PoisonError::into_inner).put(
-        path.to_path_buf(),
-        CachedEncoding {
-            len,
-            modified,
-            encoding,
-        },
-    );
+    cache
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .put(path.to_path_buf(), CachedEncoding { stamp, encoding });
     Ok(encoding)
 }
 
