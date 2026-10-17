@@ -4,12 +4,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: monday
     open-pull-requests-limit: 5
     groups:
       cargo-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
-          - "minor"
-          - "patch"
+          - minor
+          - patch
     ignore:
       # ratatui-core 0.1.2 made Terminal::clear() query the backend's cursor
       # position even for Viewport::Fullscreen, which we call on every TUI
@@ -18,13 +22,21 @@ updates:
       # Known upstream bug: https://github.com/ratatui/ratatui/issues/2640
       # Remove this once that's fixed and a new patch release is out.
       - dependency-name: "ratatui"
-
+    cooldown:
+      default-days: 5
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: monday
     open-pull-requests-limit: 5
     groups:
-      github-actions:
+      github-actions-minor-and-patch:
+        applies-to: version-updates
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
+    cooldown:
+      default-days: 5
