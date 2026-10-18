@@ -1,6 +1,8 @@
-# Enables auto-merge on Dependabot's patch and minor pull requests, so they merge once
-# required checks pass. Majors, and anything whose update type can't be determined,
-# wait for review. Without required checks on the default branch this merges immediately.
+# Enables auto-merge on Dependabot pull requests whose every update is semver-compatible,
+# so they merge once required checks pass. That means patch updates, and minor updates
+# from 1.0 up: on 0.x a minor bump (0.4 to 0.5) is breaking, and on 0.0.x any bump is.
+# Everything else, including updates whose type can't be determined, waits for review.
+# Without required checks on the default branch this merges immediately.
 name: Dependabot
 
 on: pull_request
@@ -19,10 +21,19 @@ jobs:
       - id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
+      - name: Check every update is compatible
+        id: compatible
+        env:
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          compatible=$(jq -r 'length > 0 and all(.[];
+            (.newVersion // "" | ltrimstr("v")) as $v
+            | (.updateType == "version-update:semver-patch" and ($v | startswith("0.0.") | not))
+              or (.updateType == "version-update:semver-minor" and ($v | test("^[1-9][0-9]*\\."))))' <<<"$UPDATES")
+          echo "compatible=$compatible" >>"$GITHUB_OUTPUT"
+
       - name: Merge when CI passes
-        if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        if: steps.compatible.outputs.compatible == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
