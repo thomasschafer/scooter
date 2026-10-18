@@ -28,7 +28,7 @@ jobs:
           UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
         run: |
           compatible=$(jq -r 'length > 0 and all(.[];
-            ([(.newVersion // "") | ltrimstr("v") | capture("^(?<major>[0-9]+)\\.(?<minor>[0-9]+)")?] | first) as $v
+            ([(.newVersion // "") | ltrimstr("v") | capture("^(?<major>[0-9]+)\\.(?<minor>[0-9]+)(\\.[0-9]+)?([-+][0-9A-Za-z.+-]+)?$")?] | first) as $v
             | $v != null
               and ((.updateType == "version-update:semver-patch" and ($v.major != "0" or $v.minor != "0"))
                 or (.updateType == "version-update:semver-minor" and $v.major != "0")))' <<<"$UPDATES")
